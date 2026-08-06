@@ -27,3 +27,4 @@ serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
+

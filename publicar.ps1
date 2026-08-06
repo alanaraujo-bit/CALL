@@ -96,7 +96,16 @@ $manifesto = [ordered]@{
 }
 
 $destino = "target\release\bundle\nsis\latest.json"
-$manifesto | ConvertTo-Json -Depth 5 | Set-Content $destino -Encoding utf8
+
+# Sem BOM: o `Set-Content -Encoding utf8` do PowerShell 5.1 grava a marca de
+# ordem de bytes, e o leitor de JSON do atualizador recusa o arquivo inteiro
+# por causa dela — silenciosamente, do ponto de vista de quem usa.
+$semBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+  (Join-Path $PSScriptRoot $destino),
+  ($manifesto | ConvertTo-Json -Depth 5),
+  $semBom
+)
 Write-Output "  latest.json gerado"
 
 # ─── Release ────────────────────────────────────────────────────────────

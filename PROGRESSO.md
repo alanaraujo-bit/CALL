@@ -178,13 +178,67 @@ instalador em 1,44 MB.
 
 ---
 
+## Iteração 8 — Atualização automática e página do projeto
+
+**Construído:** o aplicativo passou a procurar versões novas sozinho. Consulta
+o manifesto da última release a cada meia hora, mostra um cartão discreto e
+instala com um clique. A verificação e a instalação ficaram do lado do Rust
+(`procurar_atualizacao`, `instalar_atualizacao`), não do JavaScript: assim não
+dependem de um pacote npm em um projeto que não tem empacotador.
+
+O pacote é assinado com uma chave que não está no repositório. O aplicativo
+confere a assinatura contra a chave pública embutida nele antes de executar
+qualquer coisa — um instalador trocado no caminho é recusado.
+
+**Custo em disco, medido:** o plugin com as opções padrão levaria o instalador
+de 1,44 MB a **2,03 MB** — ele arrasta `rustls` com os certificados embutidos e
+`zip`/`tar`/`flate2` para formatos de pacote que o Windows não usa. Com
+`default-features = false, features = ["native-tls"]` o TLS passa a vir do
+Schannel do próprio sistema e o instalador ficou em **1,61 MB**. O atualizador
+custou 0,17 MB, não 0,59 MB.
+
+**Três defeitos encontrados só porque foi testado de verdade:**
+
+1. *A compilação travava sem dizer nada.* A chave gerada com `-p ""` sai
+   criptografada, e o `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` vazio não chega ao
+   processo — no Windows não existe variável de ambiente com valor vazio. O
+   build parava esperando uma senha digitada que nunca viria. A chave foi
+   regerada com senha real, guardada ao lado dela em `~/.tauri/`.
+
+2. *O `latest.json` saía com BOM.* `Set-Content -Encoding utf8` no PowerShell
+   5.1 grava a marca de ordem de bytes, e o leitor de JSON recusa o arquivo
+   inteiro por causa dela. O sintoma era o pior possível: nenhum erro, nenhum
+   aviso, apenas nada acontecendo. O mesmo BOM quebrou o `tauri.conf.json` em
+   outra etapa.
+
+3. *O gradiente do diagrama do site não aparecia.* Numa linha horizontal a
+   caixa delimitadora tem altura zero, e um gradiente em `objectBoundingBox`
+   simplesmente não renderiza. Resolvido com `gradientUnits="userSpaceOnUse"`.
+
+**Verificado na compilação real:** uma versão 0.0.9 compilada localmente
+detectou a 0.1.0 publicada e exibiu o cartão de atualização. É por isso que os
+dois primeiros defeitos apareceram — a asserção de que "o código está certo"
+não prova que a atualização chega.
+
+**Página do projeto:** `docs/`, servida pelo GitHub Pages. A maquete do topo
+não é captura de tela: é a interface em HTML, que se comporta como o
+aplicativo. O fundo é a topologia em malha do projeto, projetada em
+perspectiva. O botão de download pergunta ao GitHub qual é o instalador mais
+recente, porque o nome do arquivo carrega a versão e um link fixo apontaria
+para um arquivo que deixa de existir na publicação seguinte.
+
+**Publicação:** `publicar.ps1` faz o caminho inteiro — compila assinado, monta
+o manifesto e cria a release.
+
+---
+
 ## Estado final medido
 
 ### Peso em disco
 
 | Artefato | Tamanho |
 | --- | --- |
-| Instalador `CALL_0.1.0_x64-setup.exe` | **1,44 MB** |
+| Instalador `CALL_0.1.0_x64-setup.exe` | **1,61 MB** |
 | `call.exe` | 3,77 MB |
 | `sinalizacao.exe` (sidecar) | 0,39 MB |
 
@@ -220,7 +274,7 @@ restante da árvore e não pode ser reduzido a essa faixa por nenhum aplicativo
 que renderize HTML. O ganho frente ao Electron continua real e grande: o
 Electron embarcaria o seu próprio Chromium e um runtime Node, resultando em
 instalador na casa das dezenas de megabytes e consumo tipicamente maior,
-enquanto aqui o instalador tem 1,44 MB e reaproveita um componente que já
+enquanto aqui o instalador tem 1,61 MB e reaproveita um componente que já
 existe no sistema.
 
 ---

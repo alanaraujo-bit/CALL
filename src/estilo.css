@@ -914,7 +914,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 12px;
-  max-width: 420px;
+  max-width: 480px;
   padding: 12px 13px;
   background: var(--superficie-3);
   border: 1px solid var(--borda-forte);
