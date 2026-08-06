@@ -430,6 +430,85 @@ página que oferece o instalador — foi exatamente para este dia.
 
 ---
 
+## Iteração 12 — O servidor sai da máquina de quem conversa
+
+**Motivo:** para falar com alguém era preciso que uma das pessoas clicasse em
+"Hospedar", deixasse a máquina ligada e passasse o próprio IP. Isso não é um
+detalhe de configuração, é o produto pedindo que o usuário seja administrador
+de servidor.
+
+**Construído:** o servidor de sinalização passou a rodar hospedado, no Railway,
+em `wss://sinalizacao-production.up.railway.app`. O aplicativo já vem apontado
+para ele; "Usar um servidor próprio" virou uma seção recolhida, e "Hospedar"
+continua lá para quem quiser rodar na rede local.
+
+O servidor praticamente não precisou mudar para isso — ele já lia `PORT` do
+ambiente, já lia `DADOS` para a pasta de dados, já escutava em `0.0.0.0` e já
+respondia a um GET comum para não ser dado como morto pelo health check. Metade
+do trabalho estava feita desde a iteração 1.
+
+**A imagem é o binário e mais nada.** Como o servidor não fala TLS — quem
+termina TLS é a borda do Railway — o binário é ligado estaticamente contra a
+musl e a imagem final parte de `scratch`. Não há sistema operacional dentro
+dela. O `Dockerfile` reescreve a raiz do workspace para conter só `servidor`:
+o membro `src-tauri` arrastaria o Tauri inteiro e as bibliotecas de interface
+do Linux, que não têm nada a ver com este binário.
+
+A persistência é um volume montado em `/dados`. Foi verificada do jeito que
+tem de ser: criar um grupo, reiniciar o serviço, e entrar no grupo de novo
+pelo código. Ele voltou com nome, dono e histórico.
+
+### O defeito que só a hospedagem revelou
+
+Com tudo no ar, o aplicativo real dizia **"Não foi possível falar com o
+servidor"** — enquanto um cliente Node conectava ao mesmo endereço sem
+reclamar.
+
+A primeira suspeita foi a CSP, que já tinha mordido este projeto na iteração 4.
+Era falsa: autorizar o host explicitamente não mudou nada, e o ouvinte de
+`securitypolicyviolation` seguia calado. A segunda medição separou as coisas —
+o mesmo motor Chromium, fora do Tauri e sem CSP nenhuma, também não conectava.
+Logo, não era o Tauri: era navegador contra Node.
+
+A causa estava em `responder_se_for_http`, no nosso servidor. Ele decidia se a
+conexão era WebSocket **espiando os primeiros 512 bytes** e procurando
+`upgrade: websocket`. O aperto de mão do Node é curto e cabe. O de um navegador
+é bem maior — e o proxy do Railway ainda acrescenta os `X-Forwarded-*`. O
+`Upgrade` era empurrado para além da janela, o servidor concluía "isto é um GET
+comum", respondia texto e fechava. Do lado do cliente isso aparece como código
+1006, que não diz nada.
+
+Pior: o código já tinha a intenção certa — *"só decide que não é WebSocket com
+o cabeçalho inteiro em mãos"* — mas a condição `lidos == espiada.len()`
+desfazia exatamente isso, tratando "a janela encheu" como "o cabeçalho acabou".
+O comentário estava certo e o código não o cumpria.
+
+Agora a janela vai a 8 KB, a decisão negativa só é tomada depois do `\r\n\r\n`,
+e a busca pelo `Upgrade` acontece no bloco de cabeçalhos e não no que couber.
+
+**Por que os testes não pegaram:** todos usavam o `WebSocket` do Node, cujo
+aperto de mão tem uns 200 bytes. A suíte ganhou um teste que faz o aperto de
+mão à mão, com `User-Agent` longo e `X-Forwarded-*`, na ordem em que um
+navegador manda — e outro que confere que um GET comum continua recebendo 200,
+para o health check não quebrar na próxima vez.
+
+### Verificado
+
+- 49 verificações do protocolo, incluindo as três novas do aperto de mão.
+- O motor Chromium abre `wss://` no servidor hospedado e cria grupo.
+- O aplicativo real, compilado, conecta na nuvem e cria grupo — sem nada
+  rodando na máquina.
+- O volume sobrevive a um reinício do serviço.
+
+**Ressalva:** o `duas-instancias.ps1` passou a apontar para o servidor local de
+propósito, para não depender da internet nem criar grupos de verdade no
+servidor que as pessoas usam. Nesta execução a segunda instância ficou com o
+apelido da primeira — as duas compartilham o perfil do WebView2, e a digitação
+do apelido de B não pegou. Isso torna a captura confusa, mas não afeta o que o
+teste prova: texto e voz atravessam entre duas janelas distintas.
+
+---
+
 ## Estado final medido
 
 ### Peso em disco

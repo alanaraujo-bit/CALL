@@ -73,9 +73,19 @@ function AbrirInstancia($apelido, $x, $y) {
   $c = Cliente $h
   # Coordenadas medidas na tela de entrada com a janela em 1080x740. Ela nao
   # muda de tamanho durante o teste, e o cartao e centrado.
-  [J]::Clique($h, 380, 303)          # campo de apelido
+  [J]::Clique($h, 794, 311)          # campo de apelido
   Digitar "^a"; Digitar $apelido
-  [J]::Clique($h, 540, 480)          # Continuar
+
+  # O padrao do aplicativo e o servidor hospedado. O teste tem de apontar para
+  # o servidor local: senao ele depende da internet, e pior, cria grupos de
+  # verdade no servidor que os amigos usam.
+  [J]::Clique($h, 727, 356)          # "Usar um servidor proprio"
+  Start-Sleep -Milliseconds 500
+  [J]::Clique($h, 735, 357)          # campo do servidor
+  Digitar "^a"; Digitar "ws://127.0.0.1:8787"
+  Start-Sleep -Milliseconds 300
+
+  [J]::Clique($h, 794, 476)          # Continuar
   Start-Sleep -Seconds 2
   return @{ proc = $p; h = $h; cli = $c }
 }

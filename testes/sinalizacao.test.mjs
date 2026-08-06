@@ -6,6 +6,7 @@
  *   node testes/sinalizacao.test.mjs
  */
 
+import { connect } from "node:net";
 import { spawn } from "node:child_process";
 import { setTimeout as esperar } from "node:timers/promises";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
@@ -117,6 +118,55 @@ async function cliente(saudacao) {
   return eu;
 }
 
+/**
+ * Faz o aperto de mao na mao, com o cabecalho do tamanho que um navegador
+ * produz. O `WebSocket` do Node manda um pedido curto, e foi por isso que o
+ * servidor pode passar tanto tempo decidindo pela janela errada: com o
+ * `Upgrade` empurrado para depois dos primeiros bytes, ele respondia como se
+ * fosse um GET comum. Devolve a primeira linha da resposta.
+ */
+function apertoDeMaoLongo(recheio) {
+  return new Promise((resolver, rejeitar) => {
+    const soquete = connect(porta, "127.0.0.1");
+    let resposta = "";
+
+    soquete.on("connect", () => {
+      // A ordem imita a de um navegador: o Upgrade vem depois do User-Agent.
+      soquete.write(
+        "GET / HTTP/1.1\r\n" +
+          `Host: 127.0.0.1:${porta}\r\n` +
+          "Connection: Upgrade\r\n" +
+          "Pragma: no-cache\r\n" +
+          "Cache-Control: no-cache\r\n" +
+          `User-Agent: ${recheio}\r\n` +
+          `X-Forwarded-For: 203.0.113.7\r\n` +
+          "X-Forwarded-Proto: https\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Origin: http://tauri.localhost\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          "Accept-Encoding: gzip, deflate, br\r\n" +
+          "Accept-Language: pt-BR,pt;q=0.9\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Extensions: permessage-deflate\r\n" +
+          "\r\n"
+      );
+    });
+
+    soquete.on("data", (pedaco) => {
+      resposta += pedaco.toString();
+      if (resposta.includes("\r\n")) {
+        soquete.destroy();
+        resolver(resposta.split("\r\n")[0]);
+      }
+    });
+    soquete.on("error", rejeitar);
+    soquete.setTimeout(4000, () => {
+      soquete.destroy();
+      resolver("SEM RESPOSTA");
+    });
+  });
+}
+
 const canalPorTipo = (grupo, tipo) =>
   grupo.categorias.flatMap((c) => c.canais).find((c) => c.tipo === tipo);
 
@@ -128,6 +178,37 @@ let canalTexto;
 let canalVoz;
 
 try {
+  console.log("\nAperto de mão de navegador, atrás de proxy");
+  const curto = await apertoDeMaoLongo("Node");
+  conferir(curto.startsWith("HTTP/1.1 101"), `cabeçalho curto sobe para WebSocket (${curto})`);
+
+  // Um Chromium real manda perto de 1 KB de cabeçalho; com os `X-Forwarded-*`
+  // de um proxy de hospedagem, passa disso.
+  const longo = await apertoDeMaoLongo("M".repeat(900));
+  conferir(
+    longo.startsWith("HTTP/1.1 101"),
+    `cabeçalho de 1 KB também sobe para WebSocket (${longo})`
+  );
+
+  console.log("\nHealth check continua sendo HTTP");
+  const semUpgrade = await new Promise((resolver) => {
+    const s = connect(porta, "127.0.0.1");
+    let r = "";
+    s.on("connect", () => s.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`));
+    s.on("data", (p) => {
+      r += p.toString();
+      if (r.includes("\r\n")) {
+        s.destroy();
+        resolver(r.split("\r\n")[0]);
+      }
+    });
+    s.setTimeout(4000, () => {
+      s.destroy();
+      resolver("SEM RESPOSTA");
+    });
+  });
+  conferir(semUpgrade.startsWith("HTTP/1.1 200"), `GET comum recebe 200 (${semUpgrade})`);
+
   console.log("\nCriação de grupo");
   const ana = await cliente({
     tipo: "criar-grupo",

@@ -149,13 +149,27 @@ async fn main() {
     }
 }
 
+/// Cabecalho HTTP maior que isto e recusado. Um aperto de mao de WebSocket de
+/// navegador, ja acrescido dos `X-Forwarded-*` que um proxy de hospedagem
+/// insere, fica na casa de 1 KB; 8 KB e o limite usual dos servidores HTTP.
+const CABECALHO_MAX: usize = 8192;
+
 /// Servicos de hospedagem verificam a saude do processo com um GET comum.
 /// O aperto de mao do WebSocket recusaria esse GET, e o servico concluiria
 /// que o servidor esta morto. Respondemos a ele antes de entregar o fluxo ao
 /// WebSocket — sem consumir nada, para o aperto de mao seguir intacto.
+///
+/// A decisao so pode ser tomada com o bloco de cabecalhos inteiro em maos.
+/// Espiar uma janela curta parece equivalente e nao e: `Upgrade` nao tem
+/// posicao fixa, vem depois do `User-Agent` (que num navegador e longo), e um
+/// proxy ainda empurra tudo para baixo com os cabecalhos que acrescenta. Um
+/// aperto de mao de navegador atras de proxy passava de 512 bytes sem que o
+/// `Upgrade` aparecesse na janela — e era servido como se fosse um GET comum,
+/// fechando a conexao com o codigo 1006 do lado do cliente.
 async fn responder_se_for_http(fluxo: &TcpStream) -> Result<bool, String> {
-    let mut espiada = [0u8; 512];
-    for _ in 0..40 {
+    let mut espiada = vec![0u8; CABECALHO_MAX];
+
+    for _ in 0..200 {
         // `peek` nao consome: o aperto de mao do WebSocket relera os mesmos
         // bytes logo em seguida.
         let lidos = match fluxo.peek(&mut espiada).await {
@@ -164,15 +178,23 @@ async fn responder_se_for_http(fluxo: &TcpStream) -> Result<bool, String> {
             Err(e) => return Err(e.to_string()),
         };
 
-        let inicio = String::from_utf8_lossy(&espiada[..lidos]).to_lowercase();
-        if inicio.contains("upgrade: websocket") {
+        let visto = String::from_utf8_lossy(&espiada[..lidos]).to_lowercase();
+
+        // Com o bloco inteiro em maos a resposta e definitiva.
+        if let Some(fim) = visto.find("\r\n\r\n") {
+            return Ok(!visto[..fim].contains("upgrade: websocket"));
+        }
+
+        // Sem o fim do bloco, so uma resposta e segura: achar o Upgrade prova
+        // que e WebSocket. Nao acha-lo ainda nao prova nada.
+        if visto.contains("upgrade: websocket") {
             return Ok(false);
         }
-        // So decide "nao e WebSocket" com o cabecalho inteiro em maos: o
-        // Upgrade pode nao ter chegado no primeiro pacote.
-        if inicio.contains("\r\n\r\n") || lidos == espiada.len() {
+
+        if lidos >= CABECALHO_MAX {
             return Ok(true);
         }
+
         // O cabecalho chegou pela metade. `peek` devolveria os mesmos bytes na
         // hora, entao esperar um instante e o que evita girar em falso.
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;

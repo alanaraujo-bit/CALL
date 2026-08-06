@@ -10,7 +10,14 @@ const invocar = (comando, args) =>
     : Promise.reject(new Error("Recurso disponível apenas no aplicativo."));
 
 const CHAVE = "call.preferencias";
-const SERVIDOR_PADRAO = "ws://127.0.0.1:8787";
+/** Servidor oficial do CALL, hospedado. É o padrão para que ninguém precise
+ *  subir nada na própria máquina para conversar com os amigos. */
+const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
+
+/** Padrão das versões anteriores. Quem já usou o CALL tem este endereço
+ *  gravado, e sem a troca continuaria preso a um servidor local que na maioria
+ *  das máquinas nem está de pé. */
+const SERVIDOR_ANTIGO = "ws://127.0.0.1:8787";
 
 const HORA = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
 const DIA = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
@@ -71,7 +78,12 @@ function carregarPreferencias() {
   try {
     const bruto = JSON.parse(localStorage.getItem(CHAVE) ?? "{}");
     estado.apelido = bruto.apelido ?? "";
-    estado.servidor = bruto.servidor || SERVIDOR_PADRAO;
+    // Quem escolheu um servidor próprio continua com ele; só o padrão antigo,
+    // que a pessoa nunca escolheu de fato, é levado ao servidor hospedado.
+    estado.servidor =
+      !bruto.servidor || bruto.servidor === SERVIDOR_ANTIGO
+        ? SERVIDOR_PADRAO
+        : bruto.servidor;
     estado.usuario = bruto.usuario || "";
     estado.atalhos = Array.isArray(bruto.atalhos)
       ? bruto.atalhos.filter((a) => a && typeof a.codigo === "string")
@@ -279,6 +291,11 @@ function prepararEntrada() {
   $("campo-apelido").value = estado.apelido;
   $("campo-servidor").value = estado.servidor;
 
+  // O campo de servidor some atrás de "Usar um servidor próprio" para quem
+  // já está no padrão hospedado — mas quem tem um servidor próprio salvo
+  // precisa continuar vendo qual é, não descobrir escondido.
+  if (estado.servidor !== SERVIDOR_PADRAO) $("avancado-servidor").open = true;
+
   $("botao-hospedar").addEventListener("click", hospedar);
 
   $("formulario-entrada").addEventListener("submit", (evento) => {
@@ -311,7 +328,9 @@ async function hospedar() {
     $("campo-servidor").value = endereco;
     $("dica-servidor").textContent =
       "Servidor ativo nesta máquina. Compartilhe seu IP na porta 8787 com o grupo.";
-    botao.textContent = "Hospedando";
+    // Só o rótulo muda — o botão carrega um ícone antes do texto, e
+    // `textContent` no elemento inteiro o apagaria junto.
+    botao.querySelector("span").textContent = "Hospedando";
     avisar("Servidor iniciado nesta máquina.", "bom");
   } catch (erro) {
     botao.disabled = false;

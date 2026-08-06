@@ -119,28 +119,49 @@ svg {
 /* ─── Tela de entrada ──────────────────────────────────────────── */
 
 .entrada {
+  position: relative;
   height: 100%;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 22px;
-  padding: 32px;
+  padding: 40px;
+  overflow: auto;
+  background: var(--fundo);
+}
+
+/* Mancha de luz fixa atrás de tudo — não é decoração isolada, é a mesma
+   cor de acento que marca o item ativo lá dentro do app, aqui só mais
+   fraca e mais larga. É o que faz a tela de entrada parecer parte do
+   mesmo produto, e não uma folha de rosto genérica. */
+.entrada__mancha {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   background: radial-gradient(
-      120% 90% at 50% -10%,
-      rgba(95, 106, 217, 0.08),
-      transparent 62%
+      64% 56% at 18% 22%,
+      rgba(95, 106, 217, 0.16),
+      transparent 60%
     ),
+    radial-gradient(50% 46% at 88% 82%, rgba(79, 201, 140, 0.05), transparent 62%),
     var(--fundo);
 }
 
-.entrada__cartao {
+.entrada__moldura {
+  position: relative;
+  z-index: 1;
   width: 100%;
-  max-width: 372px;
-  background: var(--superficie-1);
-  border: 1px solid var(--borda);
-  border-radius: var(--raio-g);
-  padding: 30px 28px 28px;
+  max-width: 860px;
+  display: grid;
+  grid-template-columns: 1fr 336px;
+  align-items: center;
+  gap: 56px;
+}
+
+/* ─── Vitrine (identidade e recursos) ──────────────────────────── */
+
+.entrada__vitrine {
+  min-width: 0;
+  padding-right: 8px;
 }
 
 .marca {
@@ -160,6 +181,7 @@ svg {
   width: 3px;
   border-radius: 999px;
   background: var(--texto-3);
+  transition: height var(--transicao), background var(--transicao);
 }
 .marca__glifo i:nth-child(1),
 .marca__glifo i:nth-child(5) {
@@ -181,19 +203,119 @@ svg {
   letter-spacing: 0.14em;
 }
 
+.marca--grande .marca__glifo {
+  height: 30px;
+  gap: 4px;
+}
+.marca--grande .marca__glifo i {
+  width: 4px;
+}
+.marca--grande .marca__glifo i:nth-child(1),
+.marca--grande .marca__glifo i:nth-child(5) {
+  height: 11px;
+}
+.marca--grande .marca__glifo i:nth-child(2),
+.marca--grande .marca__glifo i:nth-child(4) {
+  height: 19px;
+  background: #a8b0f2;
+}
+.marca--grande .marca__glifo i:nth-child(3) {
+  height: 29px;
+  background: var(--acento);
+}
+.marca--grande .marca__nome {
+  font-size: 22px;
+}
+
+.entrada__slogan {
+  margin-top: 22px;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.28;
+}
+
 .entrada__lead {
-  margin-top: 8px;
+  margin-top: 10px;
+  max-width: 40ch;
   color: var(--texto-2);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.entrada__recursos {
+  list-style: none;
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.entrada__recurso {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.entrada__recurso-glifo {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--raio-m);
+  background: var(--acento-suave);
+  border: 1px solid rgba(95, 106, 217, 0.22);
+  color: #a8b0f2;
+}
+
+.entrada__recurso-glifo svg {
+  width: 17px;
+  height: 17px;
+}
+
+.entrada__recurso div {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+
+.entrada__recurso strong {
   font-size: 13px;
+  font-weight: 600;
+  color: var(--texto);
+}
+
+.entrada__recurso span {
+  font-size: 12px;
+  color: var(--texto-3);
+}
+
+/* ─── Cartão de entrada ────────────────────────────────────────── */
+
+.entrada__cartao {
+  min-width: 0;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-g);
+  padding: 26px 24px 22px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+}
+
+.entrada__cartao-titulo {
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .entrada__rodape {
+  margin-top: 18px;
   color: var(--texto-3);
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .formulario {
-  margin-top: 24px;
+  margin-top: 18px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -256,6 +378,49 @@ svg {
   line-height: 1.45;
 }
 
+/* ─── Avançado (servidor próprio) ──────────────────────────────── */
+
+/* Fechado por padrão: o servidor oficial já vem preenchido, e a maioria
+   de quem abre o CALL não precisa decidir nada aqui. Fica visível só para
+   quem clica, ou para quem já tinha um servidor próprio salvo. */
+.avancado {
+  margin-top: -2px;
+}
+
+.avancado__gatilho {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--texto-3);
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--transicao);
+  width: fit-content;
+}
+.avancado__gatilho::-webkit-details-marker {
+  display: none;
+}
+.avancado__gatilho:hover {
+  color: var(--texto-2);
+}
+
+.avancado__seta {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  transition: transform var(--transicao);
+}
+.avancado[open] .avancado__seta {
+  transform: rotate(90deg);
+}
+
+.avancado__corpo {
+  margin-top: 14px;
+  animation: surgir 160ms ease;
+}
+
 /* ─── Botões ───────────────────────────────────────────────────── */
 
 .botao {
@@ -300,6 +465,39 @@ svg {
 .botao:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+#botao-continuar {
+  margin-top: 6px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13.5px;
+}
+#botao-continuar svg {
+  width: 15px;
+  height: 15px;
+  transition: transform var(--transicao);
+}
+#botao-continuar:hover svg {
+  transform: translateX(2px);
+}
+
+.botao--hospedar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.botao--hospedar svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.botao--hospedar svg circle {
+  fill: currentColor;
+  stroke: none;
 }
 
 .icone {
@@ -349,9 +547,29 @@ svg {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 9px;
   padding: 0 12px 0 16px;
   border-bottom: 1px solid var(--borda);
+}
+
+.marca--minima .marca__glifo {
+  height: 15px;
+  gap: 2px;
+}
+.marca--minima .marca__glifo i {
+  width: 2px;
+}
+.marca--minima .marca__glifo i:nth-child(1),
+.marca--minima .marca__glifo i:nth-child(5) {
+  height: 5px;
+}
+.marca--minima .marca__glifo i:nth-child(2),
+.marca--minima .marca__glifo i:nth-child(4) {
+  height: 10px;
+}
+.marca--minima .marca__glifo i:nth-child(3) {
+  height: 15px;
+  background: var(--acento);
 }
 
 .grupos__titulo {
@@ -394,6 +612,7 @@ svg {
 .grupo--ativo {
   background: var(--superficie-3);
   color: var(--texto);
+  box-shadow: inset 2px 0 0 0 var(--acento);
 }
 
 .grupo__marca {
@@ -1540,6 +1759,33 @@ svg {
 @media (max-width: 880px) {
   .aplicacao {
     grid-template-columns: 152px 186px 1fr;
+  }
+}
+
+/* A vitrine só cabe ao lado do cartão quando sobra largura para as duas
+   coisas com folga; abaixo disso ela empilha em cima, compacta. */
+@media (max-width: 760px) {
+  .entrada__moldura {
+    grid-template-columns: 1fr;
+    max-width: 400px;
+    gap: 28px;
+  }
+  .entrada__vitrine {
+    padding-right: 0;
+    text-align: center;
+  }
+  .marca--grande {
+    justify-content: center;
+  }
+  .entrada__lead {
+    max-width: none;
+    margin-inline: auto;
+  }
+  .entrada__recursos {
+    margin-top: 22px;
+  }
+  .entrada__recurso {
+    text-align: left;
   }
 }
 

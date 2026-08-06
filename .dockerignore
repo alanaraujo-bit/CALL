@@ -1,0 +1,11 @@
+# A imagem so precisa do servidor. Sem isto, a arvore de compilacao do Rust e
+# o front-end inteiro viajariam para o construtor a cada deploy.
+target/
+node_modules/
+docs/
+src/
+src-tauri/
+testes/
+.git/
+build.log
+*.md
