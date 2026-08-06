@@ -10,7 +10,8 @@ empacotador e sem Electron. O instalador tem 1,61 MB e o executável ocupa
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
 instala com um clique, sem sair da tela. Página do projeto:
-**https://alanaraujo-bit.github.io/CALL/**
+**https://call-rho-dusky.vercel.app/** — e o mesmo conteúdo em
+https://alanaraujo-bit.github.io/CALL/
 
 ---
 

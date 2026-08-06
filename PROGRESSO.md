@@ -269,6 +269,40 @@ compilado localmente.
 
 ---
 
+## Iteração 10 — Publicação na Vercel a cada envio
+
+**Construído:** o site em `docs/` também é publicado pela Vercel, ligada ao
+repositório. Cada envio para `main` dispara uma construção sem nenhum comando
+manual.
+
+**A armadilha evitada:** o `package.json` deste repositório declara
+`"build": "tauri build"`. A Vercel executa o script de construção do projeto
+por padrão — ela teria tentado compilar o aplicativo Rust inteiro, em um
+servidor Linux sem o alvo do Windows, para publicar três arquivos estáticos.
+`vercel.json` zera os comandos de instalação e de construção e aponta a saída
+direto para `docs/`; não há nada a compilar.
+
+**Do lado do envio:** `.vercelignore` mantém fora `target/`, `node_modules/` e
+`build.log`. Sem ele, um deploy pela linha de comando enviaria a árvore de
+compilação do Rust inteira.
+
+**Sobre as URLs:** os endereços com o sufixo da equipe
+(`call-git-main-aionixdev.vercel.app`) respondem 302 para o login da Vercel —
+é assim que a Proteção de Implantação funciona, e ela não alcança o domínio
+público do projeto. Nenhuma configuração precisou ser afrouxada.
+
+**Verificado:** o envio do commit `a2fb540` gerou sozinho uma implantação de
+produção (`Ready`, 1 s), e `index.html`, `estilo.css` e `site.js` servidos em
+`call-rho-dusky.vercel.app` são byte a byte idênticos aos de `docs/`. Os
+cabeçalhos `X-Content-Type-Options` e `Referrer-Policy` declarados no
+`vercel.json` chegam na resposta.
+
+**Por que os dois:** o GitHub Pages continua no ar com o mesmo conteúdo. Publicar
+nos dois custa zero — a mesma pasta, dois consumidores — e nenhum dos dois é
+ponto único de falha para a página que oferece o instalador.
+
+---
+
 ## Estado final medido
 
 ### Peso em disco
