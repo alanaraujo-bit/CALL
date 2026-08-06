@@ -50,6 +50,17 @@
 
       const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
+      // rtc.js relata falhas de negociação no console; sem recolhê-las, uma
+      // conexão que não fecha vira um número sem explicação.
+      const errosDoConsole = [];
+      for (const nivel of ["error", "warn"]) {
+        const original = console[nivel].bind(console);
+        console[nivel] = (...args) => {
+          errosDoConsole.push(args.map((a) => a?.message ?? String(a)).join(" "));
+          original(...args);
+        };
+      }
+
       /** Espera uma condição virar verdadeira, em vez de apostar num tempo fixo. */
       async function aguardar(condicao, limite = 15000) {
         const fim = Date.now() + limite;
@@ -109,16 +120,60 @@
       /** Um participante completo: sinalização + malha. */
       function participante(apelido, registro) {
         const sinal = new Sinal();
+        const contagem = { enviados: 0, recebidos: 0, saida: [], entrada: [] };
         const malha = new Malha({
-          enviarSinal: (para, dados) => sinal.enviar({ tipo: "sinal", para, dados }),
+          enviarSinal: (para, dados) => {
+            contagem.enviados++;
+            contagem.saida.push(dados.descricao ? `>${dados.descricao.type}` : ">cand");
+            sinal.enviar({ tipo: "sinal", para, dados });
+          },
           aoTrilha: (id, trilha) => registro.push({ apelido, evento: "trilha", tipo: trilha.kind, id }),
           aoFimDeTrilha: (id, trilha) => registro.push({ apelido, evento: "fim", tipo: trilha.kind, id }),
           aoEstado: (id, estado) => registro.push({ apelido, evento: "estado", estado, id }),
         });
-        sinal.addEventListener("entrou", (e) => malha.abrir(e.detail.id, false));
+        // A malha se forma dentro de um canal de voz, e não no grupo inteiro.
+        // O servidor anuncia entradas e saídas de voz ao grupo todo: só
+        // interessam as do canal em que este participante está — abrir um elo
+        // com quem entrou em outro canal criaria uma conexão que ninguém
+        // negocia do outro lado.
+        const eu = { canalVoz: null };
+        sinal.addEventListener("entrou-voz", (e) => {
+          if (e.detail.canal === eu.canalVoz) malha.abrir(e.detail.membro.id, false);
+        });
+        sinal.addEventListener("saiu-voz", (e) => {
+          if (e.detail.canal === eu.canalVoz) malha.fechar(e.detail.id);
+        });
         sinal.addEventListener("saiu", (e) => malha.fechar(e.detail.id));
-        sinal.addEventListener("sinal", (e) => malha.receberSinal(e.detail.de, e.detail.dados));
-        return { apelido, sinal, malha };
+        sinal.addEventListener("sinal", (e) => {
+          contagem.recebidos++;
+          contagem.entrada.push(
+            e.detail.dados?.descricao ? `<${e.detail.dados.descricao.type}` : "<cand"
+          );
+          malha.receberSinal(e.detail.de, e.detail.dados);
+        });
+        return { apelido, sinal, malha, contagem, eu };
+      }
+
+      function diagnostico(participantes) {
+        return participantes
+          .map((p) => {
+            const estados = [...p.malha.conexoes.values()]
+              .map((pc) => `${pc.connectionState}/${pc.iceConnectionState}/${pc.iceGatheringState}`)
+              .join(" ");
+            return `${p.apelido} [${estados || "sem elos"}] saída:${p.contagem.saida.join(",")} entrada:${p.contagem.entrada.join(",")}`;
+          })
+          .join(" | ");
+      }
+
+      /** Entra no canal de voz e resolve com quem já estava lá. */
+      async function entrarNaVoz(participante, canal) {
+        const pronto = new Promise((resolver) =>
+          participante.sinal.addEventListener("voz", (e) => resolver(e.detail), { once: true })
+        );
+        participante.sinal.enviar({ tipo: "entrar-voz", canal });
+        const resposta = await pronto;
+        participante.eu.canalVoz = resposta.canal;
+        return resposta;
       }
 
       const ENDERECO = "ws://127.0.0.1:8899";
@@ -133,23 +188,52 @@
         const audioAna = await audioSintetico();
         const audioBruno = await audioSintetico();
 
-        const bvAna = await ana.sinal.conectar(ENDERECO, "malha", "Ana");
+        const bvAna = await ana.sinal.conectar(ENDERECO, {
+          tipo: "criar-grupo",
+          nome: "Malha",
+          apelido: "Ana",
+          usuario: "malha-ana",
+        });
+        ana.malha.definirIdentidade(bvAna.eu.id);
         ana.malha.definirAudioLocal(audioAna.getAudioTracks()[0], audioAna);
-        conferir(!!bvAna.id, "Ana entrou na sala");
+        conferir(!!bvAna.eu.id, "Ana criou o grupo");
 
-        const bvBruno = await bruno.sinal.conectar(ENDERECO, "malha", "Bruno");
+        const canalVoz = bvAna.grupo.categorias
+          .flatMap((c) => c.canais)
+          .find((c) => c.tipo === "voz");
+        conferir(!!canalVoz, "o grupo novo já traz um canal de voz");
+
+        const bvBruno = await bruno.sinal.conectar(ENDERECO, {
+          tipo: "entrar",
+          codigo: bvAna.grupo.codigo,
+          apelido: "Bruno",
+          usuario: "malha-bruno",
+        });
+        bruno.malha.definirIdentidade(bvBruno.eu.id);
         bruno.malha.definirAudioLocal(audioBruno.getAudioTracks()[0], audioBruno);
-        conferir(bvBruno.pares.length === 1, "Bruno enxerga Ana ao entrar");
+        conferir(bvBruno.presentes.length === 1, "Bruno enxerga Ana ao entrar no grupo");
+
+        const vozAna = await entrarNaVoz(ana, canalVoz.id);
+        conferir(vozAna.pares.length === 0, "Ana chega primeiro ao canal de voz");
+
+        const vozBruno = await entrarNaVoz(bruno, canalVoz.id);
+        conferir(vozBruno.pares.length === 1, "Bruno encontra Ana no canal de voz");
 
         // Bruno chegou depois: é ele quem oferta.
-        for (const par of bvBruno.pares) bruno.malha.abrir(par.id, true);
+        for (const par of vozBruno.pares) bruno.malha.abrir(par.id, true);
 
         const ligadas = () =>
           [...ana.malha.conexoes.values(), ...bruno.malha.conexoes.values()].filter(
             (pc) => pc.connectionState === "connected"
           ).length;
 
-        conferir(await aguardar(async () => ligadas() === 2), `conexão estabelecida nos dois lados (${ligadas()}/2)`);
+        const ligou = await aguardar(async () => ligadas() === 2);
+        conferir(ligou, `conexão estabelecida nos dois lados (${ligadas()}/2)`);
+        if (!ligou) {
+          conferir(false, `diagnóstico — ${diagnostico([ana])}`);
+          conferir(false, `diagnóstico — ${diagnostico([bruno])}`);
+          for (const erro of errosDoConsole) conferir(false, `console — ${erro}`);
+        }
 
         const audiosRecebidos = registro.filter((r) => r.evento === "trilha" && r.tipo === "audio");
         conferir(

@@ -1,5 +1,9 @@
-# Sobe duas instancias reais do aplicativo na mesma sala e comprova
-# que elas se enxergam e estabelecem a conexao ponto a ponto.
+# Sobe duas instancias reais do aplicativo no mesmo grupo e comprova que elas
+# se enxergam, conversam por texto e estabelecem a conexao de voz.
+#
+# As instancias compartilham o perfil do WebView2, e portanto o localStorage:
+# o grupo criado pela primeira ja aparece na lista da segunda, que entra nele
+# sem precisar digitar o codigo do convite.
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -52,6 +56,12 @@ function Capturar($h, $nome) {
 
 function Digitar($t) { [System.Windows.Forms.SendKeys]::SendWait($t); Start-Sleep -Milliseconds 250 }
 
+function Cliente($h) {
+  $r = New-Object J+RECT
+  [void][J]::GetClientRect($h, [ref]$r)
+  return @{ w = $r.R - $r.L; h = $r.B - $r.T }
+}
+
 function AbrirInstancia($apelido, $x, $y) {
   $p = Start-Process "target\release\call.exe" -PassThru
   Start-Sleep -Seconds 6
@@ -60,12 +70,21 @@ function AbrirInstancia($apelido, $x, $y) {
   [void][J]::MoveWindow($h, $x, $y, 1080, 740, $true)
   Start-Sleep -Milliseconds 600
 
-  [J]::Clique($h, 380, 300)          # campo de apelido
+  $c = Cliente $h
+  # Coordenadas medidas na tela de entrada com a janela em 1080x740. Ela nao
+  # muda de tamanho durante o teste, e o cartao e centrado.
+  [J]::Clique($h, 380, 303)          # campo de apelido
   Digitar "^a"; Digitar $apelido
-  [J]::Clique($h, 540, 470)          # Continuar
+  [J]::Clique($h, 540, 480)          # Continuar
   Start-Sleep -Seconds 2
-  return @{ proc = $p; h = $h }
+  return @{ proc = $p; h = $h; cli = $c }
 }
+
+# A coluna de grupos tem 190 px; "Criar grupo" e o primeiro dos dois botoes
+# empilhados logo acima do rodape do perfil. Medir a janela em vez de fixar
+# coordenadas evita que o teste quebre a cada ajuste de altura.
+function PontoCriarGrupo($c) { return @{ x = 95; y = $c.h - 106 } }
+function PontoPrimeiroGrupo() { return @{ x = 95; y = 74 } }
 
 Get-Process call, sinalizacao -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 800
@@ -79,23 +98,49 @@ Start-Sleep -Seconds 1
 
 Write-Output "Instancia A (ana)"
 $a = AbrirInstancia "ana ribeiro" 0 0
-[J]::Clique($a.h, 196, 24)           # novo grupo
-Start-Sleep -Milliseconds 600
-Digitar "reuniao"; Start-Sleep -Milliseconds 300; Digitar "{ENTER}"
+$criar = PontoCriarGrupo $a.cli
+[J]::Clique($a.h, $criar.x, $criar.y)
+Start-Sleep -Milliseconds 700
+Digitar "reuniao de equipe"; Start-Sleep -Milliseconds 300; Digitar "{ENTER}"
 Start-Sleep -Seconds 4
 Capturar $a.h "10-A-sozinha"
 
 Write-Output "Instancia B (bruno)"
 $b = AbrirInstancia "bruno salles" 760 40
-# O grupo ja existe na lista (preferencias compartilhadas): e o primeiro item.
-[J]::Clique($b.h, 100, 74)
-Start-Sleep -Seconds 6
+$primeiro = PontoPrimeiroGrupo
+[J]::Clique($b.h, $primeiro.x, $primeiro.y)
+Start-Sleep -Seconds 5
 
-Capturar $b.h "11-B-na-sala"
+Capturar $b.h "11-B-no-grupo"
 Capturar $a.h "12-A-com-companhia"
+
+Write-Output "Conversa por texto"
+# O canal de texto ja abre sozinho ao entrar no grupo; o redator fica no rodape
+# da coluna central.
+$redator = @{ x = [int]($a.cli.w * 0.6); y = $a.cli.h - 40 }
+[J]::Clique($a.h, $redator.x, $redator.y)
+Digitar "bom dia, bruno"; Digitar "{ENTER}"
+Start-Sleep -Seconds 2
+Capturar $b.h "13-B-recebeu-a-mensagem"
+
+Write-Output "Entrada no canal de voz"
+# Segundo canal da arvore: "Sala de voz", logo abaixo de "geral". Medido na
+# captura: o bloco do convite acima dele define esta altura.
+$canalVoz = @{ x = 300; y = 198 }
+[J]::Clique($a.h, $canalVoz.x, $canalVoz.y)
+Start-Sleep -Seconds 2
+[J]::Clique($b.h, $canalVoz.x, $canalVoz.y)
+Start-Sleep -Seconds 6
+Capturar $a.h "14-A-na-voz"
+Capturar $b.h "15-B-na-voz"
 
 Write-Output "`n--- memoria com dois participantes ---"
 foreach ($i in @(@{n="A"; p=$a.proc}, @{n="B"; p=$b.proc})) {
   $i.p.Refresh()
   Write-Output ("  {0}: WS={1:N1} MB  Private={2:N1} MB" -f $i.n, ($i.p.WorkingSet64/1MB), ($i.p.PrivateMemorySize64/1MB))
 }
+
+# Deixar as instancias vivas prende o call.exe e faz a proxima compilacao
+# falhar com "acesso negado" — um erro que nao tem nada a ver com o codigo.
+Get-Process call, sinalizacao -ErrorAction SilentlyContinue | Stop-Process -Force
+Write-Output "`nInstancias encerradas."

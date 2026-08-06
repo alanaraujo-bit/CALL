@@ -303,15 +303,119 @@ ponto único de falha para a página que oferece o instalador.
 
 ---
 
+## Iteração 11 — De salas planas a grupos com canais
+
+**Construído:** o modelo do aplicativo mudou de "uma sala por nome" para
+grupos persistentes com categorias, canais de texto e canais de voz. O
+servidor deixou de ser só um encaminhador de sinais: agora guarda a estrutura
+dos grupos e o histórico dos canais de texto.
+
+**Persistência sem banco de dados.** O servidor é o mesmo binário que viaja
+dentro do instalador como sidecar, e o projeto é medido em quilobytes:
+embutir um SQLite custaria cerca de 1 MB para guardar algumas dezenas de
+linhas de estrutura. São dois arquivos, com perfis de escrita opostos —
+`grupos.json`, reescrito inteiro por arquivo temporário e *rename* a cada
+mudança, e `mensagens.jsonl`, só acréscimo, compactado quando passa de 20 mil
+linhas. Sem a variável `DADOS` o servidor funciona igual e esquece tudo ao
+fechar, que é o caso do sidecar numa partida na rede local.
+
+**A malha passou a ser por canal, e não por grupo.** Estar no mesmo servidor
+não é estar na mesma conversa: o encaminhamento de sinais só acontece entre
+quem está no mesmo canal de voz, e o microfone só é pedido ao entrar num
+canal de voz — ler o histórico de um canal de texto não é motivo para abrir o
+microfone.
+
+**Convite em vez de nome combinado.** O grupo é identificado por um código de
+dez caracteres sorteado com entropia do sistema (cerca de 49 bits), num
+alfabeto sem `I`, `L`, `O`, `0` e `1` — os caracteres que se confundem lidos
+em voz alta ou copiados de uma captura de tela.
+
+**O campo `dono` deixou de ser enfeite.** Ele já existia no modelo e não era
+verificado em lugar nenhum: qualquer pessoa com o convite podia apagar canais
+e histórico do grupo inteiro. O servidor agora recusa alterações de estrutura
+de quem não é o dono, e a interface esconde os botões — mas é a recusa do
+servidor que vale, porque esconder botão não é permissão.
+
+### Três defeitos encontrados por medição, não por leitura
+
+**1. A negociação perfeita não tinha quem desempatasse.** A polidez vinha de
+quem tinha pedido para abrir o elo. Parece equivalente a um desempate estável
+e não é: quando a oferta do outro lado chega antes de eu abrir o elo,
+`receberSinal` o abre como respondedor — e os dois lados ficam polidos. Sem
+ninguém para ceder, a colisão de ofertas travava a conexão em `stable` e nada
+mais trafegava. A polidez passou a sair da comparação dos identificadores,
+que os dois lados enxergam igual.
+
+**2. O rollback do Chromium deixa a coleta de candidatos ICE parada.** Com o
+desempate corrigido, o lado polido fazia o rollback previsto pela negociação
+perfeita — e daí em diante não emitia um único candidato, ficando em
+`gathering` para sempre. O rollback explícito consertava, mas ele redispara
+`negotiationneeded`, e a segunda oferta recriava a colisão: o teste passou
+duas vezes e falhou na terceira.
+
+A correção não foi um rollback melhor, foi não precisar dele: quem sabe de
+antemão que só vai responder simplesmente não oferta. Assim a colisão de
+abertura — o único caso em que ela é garantida, porque os dois lados adicionam
+a trilha local ao mesmo tempo — deixa de existir. A negociação perfeita
+continua no lugar para as renegociações seguintes, onde a colisão é rara e o
+estado, estável. Quatro execuções seguidas da suíte passaram.
+
+Houve ainda uma correção a mais que se provou errada e foi desfeita. O
+raciocínio parecia sólido: se o ouvinte de `negotiationneeded` ignora o
+evento, uma tela publicada naquele instante ficaria sem negociação para
+sempre — então a pendência foi anotada para ser ofertada depois. A suíte
+respondeu na hora: a conexão fechava, o áudio fluía, e o vídeo deixava de
+chegar. A premissa estava errada. A marca de "precisa negociar" só é baixada
+por um `setLocalDescription` bem-sucedido, e o navegador redispara o evento
+sozinho quando o estado volta a `stable`; ignorar não perde nada. A anotação
+apenas acrescentava uma renegociação a mais logo depois da resposta, e era ela
+que atrapalhava. Sem a suíte, seria uma proteção plausível contra um problema
+inexistente — cobrando um preço real.
+
+**3. Uma coluna a mais que o layout declarava.** A interface passou a ter
+quatro colunas, e a regra de janela estreita que escondia a lista de presentes
+estava no topo da folha de estilo — perdendo, por ordem, para o `display: flex`
+que a própria coluna declara depois. O resultado não foi um erro visível: a
+quarta coluna desceu para uma segunda linha do *grid*, e as três de cima
+encolheram para caber. As regras responsivas foram para o fim da folha, e o
+`grid-template-rows: 100%` faz um excedente futuro estourar de forma visível
+em vez de se acomodar em silêncio.
+
+Também apareceram, e foram corrigidos: `[hidden]` não escondia nada, porque o
+`display` das regras de componente vence o da folha do navegador; e o código
+do convite era truncado justamente na parte que se copia.
+
+### Verificado
+
+| O quê | Como |
+| --- | --- |
+| Protocolo do servidor | 46 verificações, incluindo persistência entre execuções: o servidor é morto e reaberto, e grupo, dono e histórico voltam |
+| Malha WebRTC | 17 verificações no motor Chromium real, medindo bytes recebidos e quadros decodificados — não apenas "a trilha chegou" |
+| Aplicativo real | Duas instâncias: criação de grupo, convite, árvore de canais, mensagem de texto entregue de uma janela a outra, e os dois participantes aninhados sob o canal de voz |
+
+A ressalva honesta: o tráfego de mídia é medido na suíte da malha, que roda o
+mesmo `rtc.js` no mesmo motor. O teste de duas janelas prova a sinalização, a
+interface e a associação ao canal de voz — não mede bytes de áudio.
+
+Antes de acusar o código, foi medido o ambiente: dois pares ligados à mão na
+mesma página, sem servidor nenhum, fecharam ICE com candidatos reais. Só
+depois disso a investigação foi para dentro do projeto.
+
+**Custo em disco:** o instalador foi de 1,61 MB para **1,65 MB**, e o servidor
+de 0,39 MB para 0,48 MB — o preço de `getrandom`, da persistência e do modelo
+de grupos.
+
+---
+
 ## Estado final medido
 
 ### Peso em disco
 
 | Artefato | Tamanho |
 | --- | --- |
-| Instalador `CALL_0.1.0_x64-setup.exe` | **1,61 MB** |
-| `call.exe` | 3,77 MB |
-| `sinalizacao.exe` (sidecar) | 0,39 MB |
+| Instalador `CALL_0.1.0_x64-setup.exe` | **1,65 MB** |
+| `call.exe` | 4,26 MB |
+| `sinalizacao.exe` (sidecar) | 0,48 MB |
 
 ### Memória
 
@@ -322,12 +426,17 @@ contagem por nome de processo somaria os deles.
 | Cenário | `call.exe` | Árvore completa |
 | --- | --- | --- |
 | Em repouso | **26 MB** WS / 5,7 MB privado | 338 MB WS / 172 MB privado (7 processos) |
-| Em chamada, 2 participantes | ~4 MB WS / 6 MB privado | — |
+| Num grupo, 2 participantes (iteração 11) | **31,4 MB** WS / 7,3 MB privado | — |
+| Num canal de voz, uma instância (iteração 11) | **31,6 MB** WS / 7,7 MB privado | — |
 | Transmitindo a tela | ~7 MB WS / 6 MB privado | 665 MB WS (9 processos) |
 
-As duas últimas linhas vêm da iteração 2 e ainda incluíam o `EmptyWorkingSet`;
-o número de `call.exe` nelas está subestimado pelo mesmo motivo e precisa ser
-remedido em uma chamada real.
+As medições de dois participantes vêm da iteração 11 e são reais. A linha da
+transmissão de tela ainda vem da iteração 2, quando o `EmptyWorkingSet`
+mascarava o número: ela está subestimada e precisa ser remedida.
+
+O crescimento de 26 MB para 31 MB entre uma janela vazia e uma janela em um
+grupo é o custo da conversa: a árvore de canais, a lista de mensagens e o
+`AudioContext` da detecção de fala.
 
 ### CPU
 
@@ -338,14 +447,17 @@ proporcionalmente mais.
 
 ### Limites honestos
 
-O teto de 30 MB é cumprido pelo executável do CALL, que é o que o projeto
-controla — com 26 MB, e não com a folga que o `EmptyWorkingSet` aparentava dar.
+O teto de 30 MB é cumprido pelo executável do CALL em repouso, com 26 MB — e
+não com a folga que o `EmptyWorkingSet` aparentava dar. Em uso, num grupo com
+outra pessoa, ele passa para 31 MB e portanto **estoura o teto por pouco**.
+Registrado como está, e não arredondado para dentro da meta: o número que
+importa é o do aplicativo trabalhando, não o da janela vazia.
 O WebView2 — o motor Chromium do próprio Windows — responde pelo
 restante da árvore e não pode ser reduzido a essa faixa por nenhum aplicativo
 que renderize HTML. O ganho frente ao Electron continua real e grande: o
 Electron embarcaria o seu próprio Chromium e um runtime Node, resultando em
 instalador na casa das dezenas de megabytes e consumo tipicamente maior,
-enquanto aqui o instalador tem 1,61 MB e reaproveita um componente que já
+enquanto aqui o instalador tem 1,65 MB e reaproveita um componente que já
 existe no sistema.
 
 ---
@@ -354,7 +466,14 @@ existe no sistema.
 
 | Suíte | Comando | Cobertura |
 | --- | --- | --- |
-| Protocolo de sinalização | `node testes/sinalizacao.test.mjs` | 15 verificações: entrada, lista de pares, encaminhamento de sinais, difusão de estado, isolamento entre salas, saída |
-| Malha WebRTC | `powershell -File testes/rodar-malha.ps1` | 14 verificações no próprio motor Chromium: conexão nos dois lados, áudio com bytes recebidos, vídeo com quadros decodificados, renegociação ao encerrar a tela, limpeza de elos |
+| Protocolo de sinalização | `node testes/sinalizacao.test.mjs` | 46 verificações: criação de grupo, convite recusado, entrada por código, voz isolada por canal, encaminhamento de sinais, difusão de estado, mensagens e histórico, regra de dono, remoção que tira gente da voz, e persistência entre execuções do servidor |
+| Malha WebRTC | `powershell -File testes/rodar-malha.ps1` | 17 verificações no próprio motor Chromium: entrada no canal de voz, conexão nos dois lados, áudio com bytes recebidos, vídeo com quadros decodificados, renegociação ao encerrar a tela, limpeza de elos |
 
 Ambas passam integralmente na última execução.
+
+Além delas, dois roteiros dirigem a janela real e deixam capturas em
+`testes/capturas`: `testes/inspecionar.ps1` (uma instância, da tela de entrada
+até o canal de voz) e `testes/duas-instancias.ps1` (duas janelas, com mensagem
+de texto entregue de uma a outra). Eles clicam por coordenada, então quebram
+quando o layout muda de altura — e foi assim que o convite truncado e a coluna
+que descia de linha apareceram.

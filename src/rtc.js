@@ -33,27 +33,37 @@ async function limitarTela(remetente) {
 }
 
 class Elo {
-  constructor(id, polido, malha) {
+  constructor(id, polido, malha, esperandoOferta) {
     this.id = id;
     this.polido = polido;
     this.malha = malha;
     this.fazendoOferta = false;
     this.ignorandoOferta = false;
+    this.aplicandoDescricao = false;
+    /** Este lado combinou de só responder: a primeira oferta vem do outro. */
+    this.esperandoOferta = esperandoOferta;
     this.remetenteTela = null;
 
     const pc = new RTCPeerConnection(CONFIGURACAO);
     this.pc = pc;
 
-    pc.onnegotiationneeded = async () => {
-      try {
-        this.fazendoOferta = true;
-        await pc.setLocalDescription();
-        malha.enviarSinal(id, { descricao: pc.localDescription });
-      } catch (erro) {
-        console.error("[rtc] falha ao ofertar", erro);
-      } finally {
-        this.fazendoOferta = false;
-      }
+    pc.onnegotiationneeded = () => {
+      // Adicionar a trilha local dispara isto nos dois lados ao mesmo tempo, e
+      // uma colisão de ofertas logo na abertura é o caso em que a negociação
+      // perfeita mais custa: ela exige um rollback, e no Chromium o rollback
+      // deixa a coleta de candidatos ICE parada. Quem já sabe que vai apenas
+      // responder simplesmente não oferta, e a colisão nunca acontece.
+      //
+      // Um rollback também devolve o estado a `stable` e redispara este
+      // evento; sem a segunda guarda, a resposta que estamos montando viraria
+      // uma segunda oferta.
+      //
+      // Ignorar o evento não perde nada: a marca de "precisa negociar" só é
+      // baixada por um `setLocalDescription` bem-sucedido, e o navegador
+      // redispara isto sozinho assim que o estado volta a `stable`. Anotar a
+      // pendência à mão, e ofertar depois, só produz uma renegociação a mais.
+      if (this.esperandoOferta || this.aplicandoDescricao) return;
+      this.ofertar();
     };
 
     pc.onicecandidate = ({ candidate }) => {
@@ -70,6 +80,18 @@ class Elo {
     };
   }
 
+  async ofertar() {
+    try {
+      this.fazendoOferta = true;
+      await this.pc.setLocalDescription();
+      this.malha.enviarSinal(this.id, { descricao: this.pc.localDescription });
+    } catch (erro) {
+      console.error("[rtc] falha ao ofertar", erro);
+    } finally {
+      this.fazendoOferta = false;
+    }
+  }
+
   async receber({ descricao, candidato }) {
     const pc = this.pc;
     try {
@@ -81,11 +103,21 @@ class Elo {
         this.ignorandoOferta = !this.polido && colisao;
         if (this.ignorandoOferta) return;
 
-        await pc.setRemoteDescription(descricao);
-        if (descricao.type === "offer") {
-          await pc.setLocalDescription();
-          this.malha.enviarSinal(this.id, { descricao: pc.localDescription });
+        this.aplicandoDescricao = true;
+        try {
+          if (colisao) await pc.setLocalDescription({ type: "rollback" });
+          await pc.setRemoteDescription(descricao);
+          if (descricao.type === "offer") {
+            await pc.setLocalDescription();
+            this.malha.enviarSinal(this.id, { descricao: pc.localDescription });
+          }
+        } finally {
+          this.aplicandoDescricao = false;
         }
+
+        // A partir daqui este lado pode ofertar por conta própria: a espera
+        // valia só para a primeira negociação.
+        this.esperandoOferta = false;
       } else if (candidato) {
         try {
           await pc.addIceCandidate(candidato);
@@ -111,18 +143,37 @@ class Elo {
   }
 }
 
+/**
+ * Desempate de colisão de ofertas. Precisa dar respostas opostas nos dois
+ * lados a partir do mesmo par de identificadores — é essa a única garantia
+ * que a negociação perfeita pede.
+ */
+function souOPolido(meuId, outroId) {
+  const meu = Number(meuId);
+  const outro = Number(outroId);
+  if (Number.isFinite(meu) && Number.isFinite(outro)) return meu < outro;
+  return String(meuId) < String(outroId);
+}
+
 export class Malha {
   #elos = new Map();
+  #meuId = null;
   #trilhaAudio = null;
   #fluxoAudio = null;
   #trilhaTela = null;
   #fluxoTela = null;
 
-  constructor({ enviarSinal, aoTrilha, aoFimDeTrilha, aoEstado }) {
+  constructor({ enviarSinal, aoTrilha, aoFimDeTrilha, aoEstado, meuId }) {
     this.enviarSinal = enviarSinal;
     this.aoTrilha = aoTrilha;
     this.aoFimDeTrilha = aoFimDeTrilha;
     this.aoEstado = aoEstado ?? (() => {});
+    this.#meuId = meuId ?? null;
+  }
+
+  /** O servidor só diz quem eu sou depois que a malha já existe. */
+  definirIdentidade(id) {
+    this.#meuId = id;
   }
 
   get pares() {
@@ -144,13 +195,21 @@ export class Malha {
   }
 
   /**
-   * Abre a conexão com um participante.
-   * `iniciar` decide quem oferta primeiro; a polidez desempata colisões.
+   * Abre a conexão com um participante. `iniciar` decide apenas quem oferta
+   * primeiro.
+   *
+   * A polidez, essa, vem dos identificadores. Amarrá-la a quem criou o elo
+   * primeiro parece equivalente e não é: se a oferta do outro chega antes de
+   * eu abrir o elo, `receberSinal` o abre como respondedor, e os dois lados
+   * acabam polidos. Sem ninguém para desempatar, uma colisão de ofertas trava
+   * a conexão em `stable` e nada mais trafega.
    */
   abrir(id, iniciar) {
     if (this.#elos.has(id)) return this.#elos.get(id);
 
-    const elo = new Elo(id, !iniciar, this);
+    const polido =
+      this.#meuId == null ? !iniciar : souOPolido(this.#meuId, id);
+    const elo = new Elo(id, polido, this, !iniciar);
     this.#elos.set(id, elo);
 
     if (this.#trilhaAudio) elo.pc.addTrack(this.#trilhaAudio, this.#fluxoAudio);

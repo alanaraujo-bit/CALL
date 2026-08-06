@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CALL — voz e tela para o seu grupo, em 1,61 MB</title>
+    <title>CALL — voz e tela para o seu grupo, em 1,65 MB</title>
     <meta
       name="description"
-      content="Aplicativo de comunicação para Windows com três recursos: grupos, chat de voz e transmissão de tela. Instalador de 1,61 MB, sem Electron, sem conta, sem servidor no meio."
+      content="Aplicativo de comunicação para Windows com quatro recursos: grupos com canais, chat de texto, chat de voz e transmissão de tela. Instalador de 1,65 MB, sem Electron, sem conta, sem servidor no meio."
     />
     <meta name="theme-color" content="#0e0f11" />
     <meta property="og:title" content="CALL — voz e tela para o seu grupo" />
     <meta
       property="og:description"
-      content="Grupos, voz e transmissão de tela. Instalador de 1,61 MB. O áudio vai direto de uma máquina para a outra."
+      content="Grupos com canais, texto, voz e transmissão de tela. Instalador de 1,65 MB. O áudio vai direto de uma máquina para a outra."
     />
     <meta property="og:type" content="website" />
     <link rel="stylesheet" href="estilo.css" />
@@ -58,10 +58,10 @@
         </h1>
 
         <p class="hero__lead" data-revelar>
-          Três recursos: grupos, chat de voz e transmissão de tela. O áudio vai
+          Quatro recursos: grupos com canais, chat de texto, chat de voz e transmissão de tela. O áudio vai
           direto da sua máquina para a do outro — sem passar por servidor de
           ninguém. O instalador tem
-          <strong class="destaque">1,61 MB</strong>.
+          <strong class="destaque">1,65 MB</strong>.
         </p>
 
         <div class="hero__acoes" data-revelar>
@@ -158,7 +158,7 @@
         <div class="barra" data-largura="1.9">
           <div class="barra__topo">
             <span class="barra__nome">CALL</span>
-            <span class="barra__valor" data-contar="1.61" data-sufixo=" MB" data-casas="2">0 MB</span>
+            <span class="barra__valor" data-contar="1.65" data-sufixo=" MB" data-casas="2">0 MB</span>
           </div>
           <div class="barra__trilho"><div class="barra__preenchimento barra__preenchimento--nosso"></div></div>
         </div>
@@ -180,7 +180,7 @@
 
       <div class="numeros">
         <div class="numero" data-revelar>
-          <strong data-contar="1.61" data-sufixo=" MB" data-casas="2">0</strong>
+          <strong data-contar="1.65" data-sufixo=" MB" data-casas="2">0</strong>
           <span>instalador completo</span>
         </div>
         <div class="numero" data-revelar>
@@ -202,10 +202,10 @@
     <section class="secao" id="recursos">
       <div class="secao__cabeca" data-revelar>
         <span class="secao__etiqueta">Os recursos</span>
-        <h2 class="secao__titulo">Três coisas, bem feitas</h2>
+        <h2 class="secao__titulo">Quatro coisas, bem feitas</h2>
         <p class="secao__lead">
-          Não há chat, emoji, bot, quadro branco nem plano pago. A lista de
-          recursos cabe em uma linha porque cada um deles precisou funcionar.
+          Não há emoji, bot, quadro branco nem plano pago. A lista de recursos
+          cabe em uma linha porque cada um deles precisou funcionar.
         </p>
       </div>
 
@@ -219,11 +219,25 @@
               <path d="M15.5 19c0-2 1.2-3.2 3-3.2s2.5 1 2.5 2.4" />
             </svg>
           </div>
-          <h3>Grupos</h3>
+          <h3>Grupos com canais</h3>
           <p>
-            Todo mundo que digitar o mesmo nome, no mesmo servidor, cai na mesma
-            conversa. Os grupos ficam salvos na sua máquina e aparecem na coluna
-            da esquerda na próxima abertura.
+            Crie um grupo e compartilhe o código de convite. Dentro dele,
+            categorias e canais — de texto e de voz — organizados por você. O
+            grupo vive no servidor: fechar o aplicativo não apaga nada.
+          </p>
+        </article>
+
+        <article class="cartao" data-revelar data-inclinar>
+          <div class="cartao__glifo">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 5h16v12H9l-5 4z" />
+            </svg>
+          </div>
+          <h3>Chat de texto</h3>
+          <p>
+            Cada canal de texto guarda as últimas 500 mensagens, e quem chega
+            depois recebe o histórico. Sem banco de dados no meio: são dois
+            arquivos, e o servidor inteiro tem meio megabyte.
           </p>
         </article>
 
@@ -340,10 +354,10 @@
         </div>
         <div class="passo" data-revelar>
           <span class="passo__n">3</span>
-          <h3>Todos entram no mesmo grupo</h3>
+          <h3>Um cria o grupo, os outros usam o convite</h3>
           <p>
-            Mesmo nome de grupo, mesma conversa. O microfone é capturado na hora
-            e a voz começa a fluir.
+            Quem cria recebe um código de dez caracteres para compartilhar. O
+            microfone só é pedido ao entrar num canal de voz.
           </p>
         </div>
       </div>

@@ -1,8 +1,8 @@
 # CALL
 
-Aplicativo de comunicação para Windows com exatamente três recursos: **grupos**,
-**chat de voz** e **transmissão de tela**. Interface inteiramente em português
-do Brasil.
+Aplicativo de comunicação para Windows: **grupos com canais**, **chat de
+texto**, **chat de voz** e **transmissão de tela**. Interface inteiramente em
+português do Brasil.
 
 Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
 empacotador e sem Electron. O instalador tem 1,61 MB e o executável ocupa
@@ -35,16 +35,24 @@ nunca passam por ele — trafegam diretamente entre as máquinas.
   no formato `ws://SEU-IP:8787`.
 - **Para entrar no de outra pessoa:** cole o endereço recebido.
 
-### 2. Crie ou escolha um grupo
+### 2. Crie um grupo ou entre com um convite
 
-Clique em **+** na coluna da esquerda. Quem entrar com o mesmo nome de grupo,
-no mesmo servidor, fica na mesma conversa. Os grupos ficam salvos localmente.
+**Criar grupo** devolve um código de convite de dez caracteres — é ele que se
+compartilha, e não o nome do grupo. Quem recebe usa **Entrar com convite**. Os
+grupos ficam salvos na coluna da esquerda e vivem no servidor: estrutura e
+histórico sobrevivem a fechar o aplicativo.
 
 ### 3. Converse
 
-Ao entrar em um grupo, o microfone é capturado e a voz começa a fluir. Use
-**Microfone** para silenciar e **Transmitir tela** para compartilhar uma
-janela ou a tela inteira.
+Cada grupo tem categorias e canais. Canais de **texto** guardam as últimas 500
+mensagens; canais de **voz** ligam os participantes entre si.
+
+Clique num canal de texto para ler e escrever. Clique num canal de voz para
+entrar nele — só aí o microfone é capturado. Uma vez na voz, use **Microfone**
+para silenciar e **Transmitir** para compartilhar uma janela ou a tela inteira.
+
+Quem cria o grupo é o dono, e só ele cria, renomeia e remove categorias e
+canais. O convite dá acesso à conversa, não à estrutura.
 
 ---
 
@@ -56,19 +64,27 @@ call.exe                 janela Tauri + interface
 sinalizacao.exe          servidor de sinalização (sidecar, só ao hospedar)
 ```
 
-Cada participante abre uma conexão direta com cada um dos outros (topologia
-em malha). O servidor encaminha apenas ofertas, respostas e candidatos ICE,
-além de avisar quem entrou, quem saiu e quem está mudo ou transmitindo.
+O servidor guarda a estrutura dos grupos e o histórico dos canais de texto, e
+encaminha ofertas, respostas e candidatos ICE entre quem está no **mesmo canal
+de voz**. A mídia não passa por ele: cada participante abre uma conexão direta
+com cada um dos outros (topologia em malha), e a malha se forma por canal —
+estar no mesmo grupo não é estar na mesma conversa.
+
+A persistência são dois arquivos, e nenhum banco de dados: `grupos.json`,
+reescrito inteiro a cada mudança de estrutura, e `mensagens.jsonl`, só
+acréscimo, compactado quando cresce demais. Sem a variável de ambiente `DADOS`
+o servidor funciona igual e esquece tudo ao fechar — é o caso do sidecar.
 
 | Arquivo | Responsabilidade |
 | --- | --- |
 | `src/index.html` | Estrutura da interface |
 | `src/estilo.css` | Tema escuro e componentes visuais |
-| `src/app.js` | Estado da aplicação, grupos, controles, palco |
+| `src/app.js` | Estado da aplicação, canais, conversa, voz e palco |
 | `src/sinal.js` | Cliente do canal de sinalização |
 | `src/rtc.js` | Malha WebRTC com negociação perfeita |
 | `src-tauri/src/lib.rs` | Comandos nativos, permissões e ajuste de memória |
-| `servidor/src/main.rs` | Servidor de sinalização |
+| `servidor/src/main.rs` | Protocolo do servidor |
+| `servidor/src/modelo.rs` | Grupos, mensagens e persistência em disco |
 
 ---
 
@@ -94,7 +110,7 @@ Copy-Item target\release\sinalizacao.exe `
 ```powershell
 node testes/sinalizacao.test.mjs             # protocolo do servidor
 powershell -File testes/rodar-malha.ps1      # malha WebRTC no motor real
-powershell -File testes/duas-instancias.ps1  # duas janelas reais na mesma sala
+powershell -File testes/duas-instancias.ps1  # duas janelas reais no mesmo grupo
 ```
 
 Os dois primeiros são automáticos e não pedem permissões de mídia. O terceiro

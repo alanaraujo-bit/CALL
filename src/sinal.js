@@ -1,6 +1,7 @@
 /**
  * Canal de sinalização: um WebSocket com JSON simples.
- * Só transporta metadados de conexão — nenhuma mídia passa por aqui.
+ * Só transporta metadados — estrutura dos grupos, mensagens de texto e a
+ * negociação das conexões. Áudio e vídeo nunca passam por aqui.
  */
 export class Sinal extends EventTarget {
   #ws = null;
@@ -9,8 +10,14 @@ export class Sinal extends EventTarget {
     return this.#ws?.readyState === WebSocket.OPEN;
   }
 
-  /** Abre a conexão e entra na sala. Resolve quando o servidor confirma. */
-  conectar(endereco, sala, apelido) {
+  /**
+   * Abre a conexão e apresenta a saudação — `criar-grupo` ou `entrar`.
+   * Resolve com o "bem-vindo" do servidor.
+   *
+   * O servidor recusa mais de um grupo por conexão, então trocar de grupo é
+   * trocar de socket: a saudação vai junto da abertura, e não depois.
+   */
+  conectar(endereco, saudacao) {
     this.desconectar();
 
     return new Promise((resolver, rejeitar) => {
@@ -23,12 +30,20 @@ export class Sinal extends EventTarget {
       }
       this.#ws = ws;
 
+      let resolvida = false;
+      const encerrar = (acao, valor) => {
+        if (resolvida) return;
+        resolvida = true;
+        clearTimeout(expirar);
+        acao(valor);
+      };
+
       const expirar = setTimeout(() => {
         ws.close();
-        rejeitar(new Error("O servidor não respondeu a tempo."));
+        encerrar(rejeitar, new Error("O servidor não respondeu a tempo."));
       }, 8000);
 
-      ws.onopen = () => ws.send(JSON.stringify({ tipo: "entrar", sala, apelido }));
+      ws.onopen = () => ws.send(JSON.stringify(saudacao));
 
       ws.onmessage = (evento) => {
         let msg;
@@ -39,19 +54,25 @@ export class Sinal extends EventTarget {
         }
 
         if (msg.tipo === "bem-vindo") {
-          clearTimeout(expirar);
-          resolver(msg);
+          encerrar(resolver, msg);
+        } else if (msg.tipo === "erro" && !resolvida) {
+          // Convite inválido é resposta imediata do servidor. Sem tratar isso
+          // aqui, a recusa só apareceria oito segundos depois, como se fosse
+          // um servidor fora do ar.
+          this.desconectar();
+          encerrar(rejeitar, new Error(msg.motivo));
+          return;
         }
+
         this.dispatchEvent(new CustomEvent(msg.tipo, { detail: msg }));
       };
 
       ws.onerror = () => {
-        clearTimeout(expirar);
-        rejeitar(new Error("Não foi possível falar com o servidor."));
+        encerrar(rejeitar, new Error("Não foi possível falar com o servidor."));
       };
 
       ws.onclose = () => {
-        clearTimeout(expirar);
+        encerrar(rejeitar, new Error("A conexão foi fechada pelo servidor."));
         // Só há queda se este ainda for o socket corrente: um socket antigo,
         // já descartado, não pode derrubar a conexão que o substituiu.
         if (this.#ws === ws) {

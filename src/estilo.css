@@ -61,9 +61,20 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
   color: inherit;
+}
+
+/* O corpo desliga a seleção — é uma janela de aplicativo, não uma página. Mas
+   texto que a pessoa escreveu, e o código do convite, existem para ser
+   copiados. */
+.mensagem__texto,
+.convite__codigo,
+.redator__campo {
+  user-select: text;
+  cursor: text;
 }
 
 svg {
@@ -75,6 +86,13 @@ svg {
 }
 
 .oculto {
+  display: none !important;
+}
+
+/* O `display` das regras de componente vence o `[hidden]` da folha do
+   navegador, que é de especificidade menor. Sem isto, `elemento.hidden = true`
+   não esconderia nada. */
+[hidden] {
   display: none !important;
 }
 
@@ -310,7 +328,11 @@ svg {
 .aplicacao {
   height: 100%;
   display: grid;
-  grid-template-columns: 216px 1fr 224px;
+  grid-template-columns: 190px 212px 1fr 208px;
+  /* Uma linha só. Sem isto, uma coluna a mais do que o template declara não
+     estoura o layout de forma visível: ela desce para uma segunda linha, e as
+     colunas de cima encolhem para caber. */
+  grid-template-rows: 100%;
 }
 
 /* ─── Coluna: grupos ───────────────────────────────────────────── */
@@ -375,17 +397,25 @@ svg {
 }
 
 .grupo__marca {
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--texto-3);
+  width: 24px;
+  height: 24px;
   flex: none;
-  transition: background var(--transicao), box-shadow var(--transicao);
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--texto-3);
+  text-transform: uppercase;
+  transition: color var(--transicao), border-color var(--transicao);
 }
 
 .grupo--ativo .grupo__marca {
-  background: var(--vivo);
-  box-shadow: 0 0 0 3px rgba(79, 201, 140, 0.14);
+  color: #a8b0f2;
+  border-color: rgba(95, 106, 217, 0.45);
+  background: var(--acento-suave);
 }
 
 .grupo__nome {
@@ -395,35 +425,25 @@ svg {
   white-space: nowrap;
 }
 
-.grupo__remover {
-  opacity: 0;
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  border: none;
-  background: transparent;
-  color: var(--texto-3);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: opacity var(--transicao), color var(--transicao);
-}
-.grupo:hover .grupo__remover {
-  opacity: 1;
-}
-.grupo__remover:hover {
-  color: var(--perigo);
-}
-.grupo__remover svg {
-  width: 12px;
-  height: 12px;
-}
-
 .grupos__vazio {
   padding: 14px 10px;
   font-size: 12px;
   color: var(--texto-3);
   line-height: 1.5;
+}
+
+.grupos__acoes {
+  flex: none;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--borda);
+}
+
+.grupos__acoes .botao {
+  height: 30px;
+  font-size: 12.5px;
 }
 
 .grupos__rodape {
@@ -477,6 +497,297 @@ svg {
   text-transform: uppercase;
 }
 
+/* ─── Coluna: canais ───────────────────────────────────────────── */
+
+.canais {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--superficie-2);
+  border-right: 1px solid var(--borda);
+}
+
+.canais__topo {
+  height: 48px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.canais__nome {
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Rótulo e ação em cima, código embaixo. Numa coluna de 212 px, os três lado
+   a lado truncavam justamente o código — que é a única parte que se copia. */
+.convite {
+  flex: none;
+  margin: 8px 8px 0;
+  padding: 7px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-p);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transicao), background var(--transicao);
+}
+
+.convite:hover {
+  border-color: var(--borda-forte);
+  background: var(--superficie-3);
+}
+
+.convite__topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.convite__rotulo {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+
+.convite__codigo {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  color: var(--texto);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.convite__acao {
+  font-size: 11px;
+  color: var(--texto-3);
+}
+
+.convite:hover .convite__acao {
+  color: #a8b0f2;
+}
+
+.canais__arvore {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 8px;
+}
+
+.canais__vazio {
+  padding: 14px 8px;
+  font-size: 12px;
+  color: var(--texto-3);
+  line-height: 1.5;
+}
+
+.categoria + .categoria {
+  margin-top: 14px;
+}
+
+.categoria__topo {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 4px 8px;
+}
+
+.categoria__nome {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Os botões de edição só aparecem sobre a linha: em repouso a coluna é uma
+   lista de canais, e não uma barra de ferramentas. */
+.categoria__topo .icone,
+.canal .icone {
+  opacity: 0;
+}
+.categoria__topo:hover .icone,
+.canal:hover .icone,
+.categoria__topo .icone:focus-visible,
+.canal .icone:focus-visible {
+  opacity: 1;
+}
+
+.canal {
+  display: flex;
+  align-items: center;
+  border-radius: var(--raio-p);
+  transition: background var(--transicao);
+}
+
+.canal:hover {
+  background: var(--superficie-3);
+}
+
+.canal--ativo {
+  background: var(--superficie-3);
+}
+
+.canal__alvo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--texto-2);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--transicao);
+}
+
+.canal:hover .canal__alvo,
+.canal--ativo .canal__alvo {
+  color: var(--texto);
+}
+
+.canal__glifo {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--texto-3);
+}
+
+.canal__glifo svg {
+  width: 15px;
+  height: 15px;
+}
+
+.canal--ativo[data-tipo="voz"] .canal__glifo {
+  color: var(--vivo);
+}
+
+.canal__nome {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canal__novidade {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 999px;
+  background: var(--acento);
+}
+
+.vozinho {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 22px;
+  padding: 4px 8px;
+  border-radius: var(--raio-p);
+  animation: surgir 180ms ease;
+}
+
+.vozinho__nome {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--texto-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vozinho__sinais {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--texto-3);
+}
+
+.vozinho__sinais svg {
+  width: 11px;
+  height: 11px;
+}
+
+.vozinho[data-falando="sim"] .avatar {
+  border-color: rgba(79, 201, 140, 0.6);
+  box-shadow: 0 0 0 2px rgba(79, 201, 140, 0.12);
+}
+
+.avatar--pequeno {
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+}
+
+/* ─── Rodapé de voz ────────────────────────────────────────────── */
+
+.voz {
+  flex: none;
+  padding: 10px;
+  border-top: 1px solid var(--borda);
+  background: var(--superficie-1);
+}
+
+.voz__cabecalho {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  margin-bottom: 8px;
+}
+
+.voz__estado {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--vivo);
+}
+
+.voz__canal {
+  font-size: 11px;
+  color: var(--texto-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voz__botoes {
+  display: flex;
+  gap: 6px;
+}
+
+.voz__botoes .controle {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
 /* ─── Coluna: sala ─────────────────────────────────────────────── */
 
 .sala {
@@ -523,41 +834,14 @@ svg {
 
 /* ─── Palco de transmissão ─────────────────────────────────────── */
 
+/* O palco é uma faixa acima da conversa, e não a tela inteira: enquanto
+   alguém transmite, o canal de texto continua legível e utilizável. */
 .palco {
-  flex: 1;
+  flex: none;
+  height: 40vh;
   min-height: 0;
-  position: relative;
-  padding: 16px;
+  padding: 14px 16px 0;
   overflow: hidden;
-}
-
-.palco__vazio {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--texto-3);
-  pointer-events: none;
-}
-
-.palco__icone {
-  width: 40px;
-  height: 40px;
-  color: #33383f;
-  margin-bottom: 6px;
-  stroke-width: 1.4;
-}
-
-.palco__titulo {
-  font-size: 13.5px;
-  color: var(--texto-2);
-}
-
-.palco__texto {
-  font-size: 12px;
 }
 
 .palco__grade {
@@ -627,22 +911,172 @@ svg {
   }
 }
 
-/* ─── Barra de controles ───────────────────────────────────────── */
+/* ─── Conversa ─────────────────────────────────────────────────── */
 
-.controles {
-  height: 60px;
-  flex: none;
+.conversa {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow-y: auto;
+  padding: 16px 18px 8px;
+}
+
+.conversa__vazio {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--texto-3);
+  pointer-events: none;
+}
+
+.conversa__icone {
+  width: 40px;
+  height: 40px;
+  color: #33383f;
+  margin-bottom: 6px;
+  stroke-width: 1.4;
+}
+
+.conversa__titulo {
+  font-size: 13.5px;
+  color: var(--texto-2);
+}
+
+.conversa__texto {
+  font-size: 12px;
+}
+
+.conversa__linha {
+  display: flex;
+  flex-direction: column;
+}
+
+.marco {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 18px;
-  border-top: 1px solid var(--borda);
-  background: var(--superficie-1);
+  gap: 10px;
+  margin: 16px 0 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--texto-3);
 }
 
-.controles__espaco {
+.marco::before,
+.marco::after {
+  content: "";
   flex: 1;
+  height: 1px;
+  background: var(--borda);
 }
+
+.mensagem {
+  display: flex;
+  gap: 11px;
+  margin-top: 12px;
+  animation: surgir 160ms ease;
+}
+
+.mensagem__conteudo {
+  flex: 1;
+  min-width: 0;
+}
+
+.mensagem__cabecalho {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mensagem__autor {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--texto);
+}
+
+.mensagem__hora {
+  font-size: 10.5px;
+  color: var(--texto-3);
+}
+
+.mensagem__texto {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--texto-2);
+  /* Uma sequência longa sem espaços não pode esticar a coluna. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* Mensagem seguida da mesma pessoa: alinhada sob o texto anterior, sem
+   repetir avatar e nome. */
+.mensagem__texto--seguida {
+  padding-left: 39px;
+  margin-top: 2px;
+}
+
+/* ─── Redator ──────────────────────────────────────────────────── */
+
+.redator {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0 18px 16px;
+  padding: 7px 7px 7px 13px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+  transition: border-color var(--transicao);
+}
+
+.redator:focus-within {
+  border-color: rgba(95, 106, 217, 0.45);
+}
+
+.redator__campo {
+  flex: 1;
+  min-width: 0;
+  max-height: 160px;
+  padding: 7px 0;
+  border: none;
+  background: transparent;
+  color: var(--texto);
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.45;
+  resize: none;
+  outline: none;
+}
+
+.redator__campo::placeholder {
+  color: var(--texto-3);
+}
+
+.icone--enviar {
+  width: 32px;
+  height: 32px;
+  color: var(--texto-3);
+}
+
+.icone--enviar svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.icone--enviar:hover {
+  color: #a8b0f2;
+  background: var(--acento-suave);
+}
+
+/* ─── Controles de mídia ───────────────────────────────────────── */
 
 .controle {
   display: inline-flex;
@@ -964,6 +1398,149 @@ svg {
 
 .atualizacao .botao {
   flex: none;
+}
+
+/* ─── Menu suspenso ────────────────────────────────────────────── */
+
+.menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 178px;
+  padding: 5px;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-m);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  animation: surgir 130ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.menu__item {
+  width: 100%;
+  padding: 7px 10px;
+  display: block;
+  border: none;
+  background: transparent;
+  border-radius: var(--raio-p);
+  color: var(--texto-2);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transicao), color var(--transicao);
+}
+
+.menu__item:hover {
+  background: var(--superficie-2);
+  color: var(--texto);
+}
+
+.menu__item[data-perigo="sim"]:hover {
+  background: var(--perigo-suave);
+  color: #f0928c;
+}
+
+.menu__risco {
+  height: 1px;
+  margin: 4px 6px;
+  border: none;
+  background: var(--borda);
+}
+
+/* ─── Peças do diálogo ─────────────────────────────────────────── */
+
+.escolhas {
+  display: flex;
+  gap: 6px;
+}
+
+.escolha {
+  flex: 1;
+  height: 34px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-p);
+  color: var(--texto-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transicao), color var(--transicao),
+    border-color var(--transicao);
+}
+
+.escolha:hover {
+  border-color: var(--borda-forte);
+  color: var(--texto);
+}
+
+.escolha[data-ativa="sim"] {
+  background: var(--acento-suave);
+  border-color: rgba(95, 106, 217, 0.45);
+  color: #a8b0f2;
+}
+
+.botao--perigo {
+  background: var(--perigo);
+  color: #fff;
+}
+
+.botao--perigo:hover {
+  background: #d4574f;
+}
+
+.dialogo .campo + .campo {
+  margin-top: 14px;
+}
+
+/* ─── Miudezas ─────────────────────────────────────────────────── */
+
+.icone--fino {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  transition: opacity var(--transicao), background var(--transicao),
+    color var(--transicao);
+}
+
+.icone--fino svg {
+  width: 14px;
+  height: 14px;
+}
+
+.icone--fino svg circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.etiqueta {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+
+/* ─── Janelas estreitas ────────────────────────────────────────── */
+
+/* No fim da folha de propósito: estas regras precisam vencer o `display` que
+   cada coluna declara acima, e a especificidade das duas é a mesma. */
+
+/* A lista de presentes é a primeira a sair — ela repete, sem o aninhamento
+   por canal, o que a árvore de canais já mostra. */
+@media (max-width: 1120px) {
+  .aplicacao {
+    grid-template-columns: 190px 212px 1fr;
+  }
+  .participantes {
+    display: none;
+  }
+}
+
+@media (max-width: 880px) {
+  .aplicacao {
+    grid-template-columns: 152px 186px 1fr;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

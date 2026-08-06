@@ -72,20 +72,25 @@ Start-Sleep -Milliseconds 800
 
 Capturar $h "01-entrada"
 
+$r = New-Object Janela+RECT
+[void][Janela]::GetClientRect($h, [ref]$r)
+$altura = $r.B - $r.T
+
 # ── Preenche a entrada ────────────────────────────────────────────
-[Janela]::Clique($h, 380, 300)   # campo de apelido
+[Janela]::Clique($h, 380, 303)   # campo de apelido
 Start-Sleep -Milliseconds 300
 Digitar "^a"
 Digitar "Alan Araujo"
 Capturar $h "02-entrada-preenchida"
 
 # Continuar
-[Janela]::Clique($h, 540, 470)
+[Janela]::Clique($h, 540, 480)
 Start-Sleep -Seconds 2
 Capturar $h "03-aplicacao-vazia"
 
 # ── Cria um grupo ─────────────────────────────────────────────────
-[Janela]::Clique($h, 196, 24)    # botao "+"
+# "Criar grupo" fica logo acima do rodape do perfil, na coluna de 190 px.
+[Janela]::Clique($h, 95, $altura - 106)
 Start-Sleep -Milliseconds 700
 Capturar $h "04-dialogo-grupo"
 
@@ -93,9 +98,14 @@ Digitar "equipe"
 Start-Sleep -Milliseconds 400
 Digitar "{ENTER}"
 Start-Sleep -Milliseconds 1200
-Capturar $h "05-sala-conectada"
+Capturar $h "05-grupo-conectado"
 Start-Sleep -Seconds 4
-Capturar $h "06-sala-estavel"
+Capturar $h "06-grupo-estavel"
+
+# ── Entra no canal de voz ─────────────────────────────────────────
+[Janela]::Clique($h, 300, 198)   # "Sala de voz", segundo canal da arvore
+Start-Sleep -Seconds 3
+Capturar $h "07-na-voz"
 
 Write-Output "`n--- memoria durante a chamada ---"
 $app.Refresh()
