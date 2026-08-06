@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CALL</title>
+    <link rel="stylesheet" href="estilo.css" />
+  </head>
+  <body>
+    <!-- ══ Entrada ══════════════════════════════════════════════════ -->
+    <section class="entrada" id="tela-entrada">
+      <div class="entrada__cartao">
+        <div class="marca">
+          <span class="marca__glifo" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i>
+          </span>
+          <h1 class="marca__nome">CALL</h1>
+        </div>
+        <p class="entrada__lead">Grupos, voz e transmissão de tela. Nada além disso.</p>
+
+        <form class="formulario" id="formulario-entrada" autocomplete="off">
+          <label class="campo">
+            <span class="campo__rotulo">Seu apelido</span>
+            <input class="campo__entrada" id="campo-apelido" maxlength="24" placeholder="Como querem te chamar" required />
+          </label>
+
+          <label class="campo">
+            <span class="campo__rotulo">Servidor de sinalização</span>
+            <div class="campo__composto">
+              <input class="campo__entrada" id="campo-servidor" placeholder="ws://127.0.0.1:8787" required />
+              <button class="botao botao--sutil" type="button" id="botao-hospedar" title="Iniciar um servidor nesta máquina">
+                Hospedar
+              </button>
+            </div>
+            <span class="campo__dica" id="dica-servidor">Use “Hospedar” para criar um servidor local, ou cole o endereço de um amigo.</span>
+          </label>
+
+          <button class="botao botao--primario botao--largo" type="submit" id="botao-continuar">Continuar</button>
+        </form>
+      </div>
+      <p class="entrada__rodape">Áudio e vídeo trafegam diretamente entre os participantes.</p>
+    </section>
+
+    <!-- ══ Aplicação ════════════════════════════════════════════════ -->
+    <main class="aplicacao oculto" id="tela-aplicacao">
+      <!-- Coluna de grupos -->
+      <aside class="grupos">
+        <header class="grupos__topo">
+          <span class="grupos__titulo">Grupos</span>
+          <button class="icone" id="botao-novo-grupo" title="Novo grupo" aria-label="Novo grupo">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg>
+          </button>
+        </header>
+        <nav class="grupos__lista" id="lista-grupos"></nav>
+        <footer class="grupos__rodape">
+          <div class="perfil">
+            <span class="avatar" id="avatar-usuario">?</span>
+            <div class="perfil__texto">
+              <span class="perfil__nome" id="rotulo-usuario">—</span>
+              <span class="perfil__estado" id="rotulo-conexao">Desconectado</span>
+            </div>
+          </div>
+        </footer>
+      </aside>
+
+      <!-- Coluna central -->
+      <section class="sala">
+        <header class="sala__topo">
+          <div class="sala__identidade">
+            <h2 class="sala__nome" id="titulo-sala">Nenhum grupo</h2>
+            <span class="sala__meta" id="subtitulo-sala">Selecione ou crie um grupo para começar</span>
+          </div>
+        </header>
+
+        <div class="palco" id="palco">
+          <div class="palco__vazio" id="palco-vazio">
+            <svg class="palco__icone" viewBox="0 0 48 48" aria-hidden="true">
+              <rect x="6" y="10" width="36" height="24" rx="3"/>
+              <path d="M18 40h12"/>
+            </svg>
+            <p class="palco__titulo">Nenhuma transmissão ativa</p>
+            <p class="palco__texto">Quando alguém compartilhar a tela, ela aparece aqui.</p>
+          </div>
+          <div class="palco__grade" id="palco-grade"></div>
+        </div>
+
+        <footer class="controles">
+          <button class="controle" id="botao-microfone" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="controle__icone" id="icone-microfone">
+              <path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/>
+              <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+            </svg>
+            <span id="rotulo-microfone">Microfone</span>
+          </button>
+
+          <button class="controle" id="botao-transmitir" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="controle__icone">
+              <rect x="3" y="4" width="18" height="13" rx="2"/>
+              <path d="M9 21h6"/>
+            </svg>
+            <span id="rotulo-transmitir">Transmitir tela</span>
+          </button>
+
+          <div class="controles__espaco"></div>
+
+          <button class="controle controle--perigo" id="botao-sair" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="controle__icone">
+              <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/>
+              <path d="M10 8l-4 4 4 4M6 12h9"/>
+            </svg>
+            <span>Sair</span>
+          </button>
+        </footer>
+      </section>
+
+      <!-- Coluna de participantes -->
+      <aside class="participantes">
+        <header class="participantes__topo">
+          <span class="participantes__titulo">Participantes</span>
+          <span class="contador" id="contador-participantes">0</span>
+        </header>
+        <div class="participantes__lista" id="lista-participantes"></div>
+      </aside>
+    </main>
+
+    <!-- ══ Diálogo: novo grupo ══════════════════════════════════════ -->
+    <div class="cortina oculto" id="cortina-grupo">
+      <div class="dialogo" role="dialog" aria-modal="true" aria-labelledby="dialogo-titulo">
+        <h3 class="dialogo__titulo" id="dialogo-titulo">Novo grupo</h3>
+        <p class="dialogo__texto">Todos que entrarem com o mesmo nome, no mesmo servidor, ficam juntos.</p>
+        <form id="formulario-grupo" autocomplete="off">
+          <label class="campo">
+            <span class="campo__rotulo">Nome do grupo</span>
+            <input class="campo__entrada" id="campo-grupo" maxlength="32" placeholder="equipe-produto" required />
+          </label>
+          <div class="dialogo__acoes">
+            <button class="botao botao--sutil" type="button" id="botao-cancelar-grupo">Cancelar</button>
+            <button class="botao botao--primario" type="submit">Criar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="avisos" id="avisos" aria-live="polite"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

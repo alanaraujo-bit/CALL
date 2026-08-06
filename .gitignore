@@ -1,0 +1,14 @@
+# Compilação
+/target/
+/node_modules/
+
+# Sidecar compilado: gerado por `cargo build --release -p sinalizacao`
+/src-tauri/binaries/*.exe
+
+# Esquemas gerados pelo Tauri a cada build
+/src-tauri/gen/
+
+# Saída dos testes: capturas de tela da máquina real e relatórios
+/testes/capturas/
+/testes/resultado.json
+/testes/diagnostico.json

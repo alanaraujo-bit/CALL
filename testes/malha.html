@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Teste da malha WebRTC</title>
+    <style>
+      body { font: 14px monospace; background: #111; color: #ddd; padding: 24px; }
+      .ok { color: #4fc98c; }
+      .falha { color: #e2645d; }
+      h2 { font-size: 14px; margin: 18px 0 6px; color: #888; }
+    </style>
+  </head>
+  <body>
+    <h1 id="cabecalho">Executando…</h1>
+    <div id="saida"></div>
+
+    <script type="module">
+      import { Sinal } from "../src/sinal.js";
+      import { Malha } from "../src/rtc.js";
+
+      const entregar = (dados, rota = "/resultado") =>
+        fetch(`http://127.0.0.1:8123${rota}`, {
+          method: "POST",
+          body: JSON.stringify(dados, null, 2),
+        }).catch(() => {});
+
+      const anotar = (dados) => entregar(dados, "/diagnostico");
+      window.addEventListener("error", (e) => anotar({ erro: String(e.message) }));
+      window.addEventListener("unhandledrejection", (e) => anotar({ erro: String(e.reason) }));
+      await anotar({ etapa: "script iniciado" });
+
+      const saida = document.getElementById("saida");
+      const relatorio = [];
+      let falhas = 0;
+
+      const titulo = (t) => {
+        const h = document.createElement("h2");
+        h.textContent = t;
+        saida.append(h);
+      };
+
+      const conferir = (condicao, descricao) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: !!condicao, descricao });
+        const linha = document.createElement("div");
+        linha.className = condicao ? "ok" : "falha";
+        linha.textContent = `${condicao ? "ok   " : "FALHA"} ${descricao}`;
+        saida.append(linha);
+      };
+
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      /** Espera uma condição virar verdadeira, em vez de apostar num tempo fixo. */
+      async function aguardar(condicao, limite = 15000) {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          if (await condicao()) return true;
+          await esperar(150);
+        }
+        return false;
+      }
+
+      /** Bytes efetivamente recebidos por uma conexão, para um tipo de mídia. */
+      async function bytesRecebidos(pc, tipo = "audio") {
+        let total = 0;
+        for (const relatorio of await pc.getStats()) {
+          const item = relatorio[1];
+          if (item.type === "inbound-rtp" && item.kind === tipo) total += item.bytesReceived ?? 0;
+        }
+        return total;
+      }
+
+      /** Quadros de vídeo realmente decodificados por uma conexão. */
+      async function quadrosDecodificados(pc) {
+        let total = 0;
+        for (const relatorio of await pc.getStats()) {
+          const item = relatorio[1];
+          if (item.type === "inbound-rtp" && item.kind === "video") total += item.framesDecoded ?? 0;
+        }
+        return total;
+      }
+
+      /** Áudio sintético: dispensa microfone e, portanto, permissões. */
+      async function audioSintetico() {
+        const ctx = new AudioContext();
+        // Sem retomar o contexto, o motor não gera amostras e nada é enviado.
+        await ctx.resume();
+        const osc = ctx.createOscillator();
+        const destino = ctx.createMediaStreamDestination();
+        osc.frequency.value = 440;
+        osc.connect(destino);
+        osc.start();
+        return destino.stream;
+      }
+
+      /** Vídeo sintético fazendo as vezes de captura de tela. */
+      function videoSintetico() {
+        const tela = document.createElement("canvas");
+        tela.width = 320;
+        tela.height = 180;
+        const pincel = tela.getContext("2d");
+        setInterval(() => {
+          pincel.fillStyle = `hsl(${Date.now() / 20 % 360} 40% 30%)`;
+          pincel.fillRect(0, 0, 320, 180);
+        }, 100);
+        return tela.captureStream(10);
+      }
+
+      /** Um participante completo: sinalização + malha. */
+      function participante(apelido, registro) {
+        const sinal = new Sinal();
+        const malha = new Malha({
+          enviarSinal: (para, dados) => sinal.enviar({ tipo: "sinal", para, dados }),
+          aoTrilha: (id, trilha) => registro.push({ apelido, evento: "trilha", tipo: trilha.kind, id }),
+          aoFimDeTrilha: (id, trilha) => registro.push({ apelido, evento: "fim", tipo: trilha.kind, id }),
+          aoEstado: (id, estado) => registro.push({ apelido, evento: "estado", estado, id }),
+        });
+        sinal.addEventListener("entrou", (e) => malha.abrir(e.detail.id, false));
+        sinal.addEventListener("saiu", (e) => malha.fechar(e.detail.id));
+        sinal.addEventListener("sinal", (e) => malha.receberSinal(e.detail.de, e.detail.dados));
+        return { apelido, sinal, malha };
+      }
+
+      const ENDERECO = "ws://127.0.0.1:8899";
+      const registro = [];
+
+      try {
+        titulo("Conexão da malha");
+
+        const ana = participante("Ana", registro);
+        const bruno = participante("Bruno", registro);
+
+        const audioAna = await audioSintetico();
+        const audioBruno = await audioSintetico();
+
+        const bvAna = await ana.sinal.conectar(ENDERECO, "malha", "Ana");
+        ana.malha.definirAudioLocal(audioAna.getAudioTracks()[0], audioAna);
+        conferir(!!bvAna.id, "Ana entrou na sala");
+
+        const bvBruno = await bruno.sinal.conectar(ENDERECO, "malha", "Bruno");
+        bruno.malha.definirAudioLocal(audioBruno.getAudioTracks()[0], audioBruno);
+        conferir(bvBruno.pares.length === 1, "Bruno enxerga Ana ao entrar");
+
+        // Bruno chegou depois: é ele quem oferta.
+        for (const par of bvBruno.pares) bruno.malha.abrir(par.id, true);
+
+        const ligadas = () =>
+          [...ana.malha.conexoes.values(), ...bruno.malha.conexoes.values()].filter(
+            (pc) => pc.connectionState === "connected"
+          ).length;
+
+        conferir(await aguardar(async () => ligadas() === 2), `conexão estabelecida nos dois lados (${ligadas()}/2)`);
+
+        const audiosRecebidos = registro.filter((r) => r.evento === "trilha" && r.tipo === "audio");
+        conferir(
+          audiosRecebidos.some((r) => r.apelido === "Ana") && audiosRecebidos.some((r) => r.apelido === "Bruno"),
+          "trilha de áudio negociada nos dois sentidos"
+        );
+
+        const fluindo = async () => {
+          for (const pc of [...ana.malha.conexoes.values(), ...bruno.malha.conexoes.values()]) {
+            if ((await bytesRecebidos(pc)) === 0) return false;
+          }
+          return true;
+        };
+        conferir(await aguardar(fluindo), "áudio realmente trafega (bytes recebidos nos dois lados)");
+
+        titulo("Transmissão de tela");
+
+        const tela = videoSintetico();
+        ana.malha.publicarTela(tela.getVideoTracks()[0], tela);
+
+        const recebeuVideo = await aguardar(async () =>
+          registro.some((r) => r.evento === "trilha" && r.tipo === "video" && r.apelido === "Bruno")
+        );
+        conferir(recebeuVideo, "Bruno recebe a trilha de vídeo publicada por Ana");
+
+        const pcDoBruno = [...bruno.malha.conexoes.values()][0];
+        conferir(
+          await aguardar(async () => (await bytesRecebidos(pcDoBruno, "video")) > 0),
+          "vídeo realmente trafega (bytes recebidos)"
+        );
+        conferir(
+          await aguardar(async () => (await quadrosDecodificados(pcDoBruno)) > 0),
+          "quadros de vídeo são decodificados no destino"
+        );
+        conferir(
+          !registro.some((r) => r.evento === "trilha" && r.tipo === "video" && r.apelido === "Ana"),
+          "Ana não recebe de volta a própria transmissão"
+        );
+
+        titulo("Renegociação ao encerrar a transmissão");
+
+        const antesDeParar = registro.length;
+        ana.malha.retirarTela();
+        await esperar(2500);
+
+        const aindaConectado = registro
+          .slice(antesDeParar)
+          .every((r) => r.evento !== "estado" || ["connected", "connecting"].includes(r.estado));
+        conferir(aindaConectado, "a chamada continua de pé depois de parar a tela");
+
+        titulo("Saída de participante");
+
+        bruno.sinal.desconectar();
+        bruno.malha.fecharTudo();
+        await esperar(1200);
+        conferir(ana.malha.pares.length === 0, "Ana descarta o elo de quem saiu");
+
+        ana.sinal.desconectar();
+        ana.malha.fecharTudo();
+
+        titulo("APIs de mídia disponíveis no motor");
+        conferir(
+          typeof navigator.mediaDevices?.getUserMedia === "function",
+          "getUserMedia existe (captura de microfone)"
+        );
+        conferir(
+          typeof navigator.mediaDevices?.getDisplayMedia === "function",
+          "getDisplayMedia existe (captura de tela)"
+        );
+        try {
+          const microfone = await navigator.mediaDevices.getUserMedia({ audio: true });
+          conferir(microfone.getAudioTracks().length === 1, "getUserMedia devolve trilha de áudio");
+          microfone.getTracks().forEach((t) => t.stop());
+        } catch (erro) {
+          conferir(false, `getUserMedia falhou: ${erro?.name ?? erro}`);
+        }
+      } catch (erro) {
+        falhas++;
+        conferir(false, `erro inesperado: ${erro?.message ?? erro}`);
+      }
+
+      document.getElementById("cabecalho").textContent =
+        falhas === 0 ? "RESULTADO: todos os testes passaram" : `RESULTADO: ${falhas} falha(s)`;
+      document.title = falhas === 0 ? "PASSOU" : "FALHOU";
+
+      await entregar({ falhas, relatorio });
+      window.close();
+    </script>
+  </body>
+</html>
