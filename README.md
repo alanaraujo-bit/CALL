@@ -29,15 +29,18 @@ por usuário e não exige privilégios de administrador. O único requisito é o
 
 ## Como usar
 
-### 1. Escolha um servidor de sinalização
+### 1. Abra e escolha um apelido
 
-O servidor apenas apresenta os participantes uns aos outros. Áudio e vídeo
-nunca passam por ele — trafegam diretamente entre as máquinas.
+Não há nada a configurar. O aplicativo já vem apontado para o servidor oficial
+do CALL, hospedado — ninguém precisa deixar máquina ligada nem passar IP.
 
-- **Para hospedar:** clique em **Hospedar** na tela de entrada. Um servidor
-  sobe nesta máquina na porta 8787. Passe aos demais o seu endereço na rede,
-  no formato `ws://SEU-IP:8787`.
-- **Para entrar no de outra pessoa:** cole o endereço recebido.
+O servidor apenas apresenta os participantes uns aos outros e guarda a
+estrutura dos grupos e o histórico dos canais de texto. **Áudio e vídeo nunca
+passam por ele** — trafegam diretamente entre as máquinas.
+
+Em "Usar um servidor próprio", na tela de entrada, dá para apontar para outro
+endereço. **Hospedar** sobe um servidor nesta máquina, na porta 8787, útil em
+rede local ou sem internet; ele fecha junto com o aplicativo.
 
 ### 2. Crie um grupo ou entre com um convite
 
@@ -129,4 +132,9 @@ dirige a interface real e deixa capturas em `testes/capturas`.
   intermediário de mídia.
 - Sem servidor TURN configurado, participantes atrás de NATs restritivos
   podem não se conectar. Há apenas STUN público configurado em `src/rtc.js`.
-- A porta 8787 precisa estar liberada no firewall da máquina que hospeda.
+- A porta 8787 só entra em jogo para quem usa **Hospedar**: nesse caso ela
+  precisa estar liberada no firewall da máquina que hospeda. Com o servidor
+  oficial, não há porta a abrir.
+- O servidor oficial não autentica ninguém. Quem tem o código do convite
+  entra, e o identificador de usuário é o que o cliente informa — bom o
+  bastante para um grupo de amigos, e não para dados sensíveis.
