@@ -68,9 +68,19 @@ if (-not $SemCompilar) {
   Write-Output "  compilando e assinando..."
   $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content $chave -Raw).Trim()
   $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content $senha -Raw).Trim()
+
+  # O tauri escreve andamento em stderr mesmo quando tudo da certo. No
+  # PowerShell 5.1, com ErrorActionPreference em Stop, cada linha dessas vira
+  # um erro terminante — e a publicacao morre depois de uma compilacao bem
+  # sucedida. Quem decide se deu certo e o codigo de saida, so ele.
+  $anterior = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   npx tauri build *> build.log
-  if ($LASTEXITCODE -ne 0) {
-    Write-Error "A compilacao falhou. O motivo esta em build.log."
+  $codigo = $LASTEXITCODE
+  $ErrorActionPreference = $anterior
+
+  if ($codigo -ne 0) {
+    Write-Error "A compilacao falhou (codigo $codigo). O motivo esta em build.log."
   }
 }
 

@@ -10,8 +10,12 @@ empacotador e sem Electron. O instalador tem 1,61 MB e o executável ocupa
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
 instala com um clique, sem sair da tela. Página do projeto:
-**https://call-rho-dusky.vercel.app/** — e o mesmo conteúdo em
-https://alanaraujo-bit.github.io/CALL/
+**https://alanaraujo-bit.github.io/CALL/**
+
+> A publicação espelhada na Vercel (`call-rho-dusky.vercel.app`) está fora do
+> ar desde a v0.2.0: o endereço responde `DEPLOYMENT_NOT_FOUND`, ou seja, o
+> projeto foi removido do lado da plataforma. O `vercel.json` continua no
+> repositório e a religação é feita pelo painel da Vercel.
 
 ---
 

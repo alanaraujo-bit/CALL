@@ -405,6 +405,29 @@ depois disso a investigação foi para dentro do projeto.
 de 0,39 MB para 0,48 MB — o preço de `getrandom`, da persistência e do modelo
 de grupos.
 
+### Publicação da v0.2.0
+
+A release foi criada e conferida de ponta a ponta: o instalador publicado é
+idêntico byte a byte ao compilado localmente (SHA-256), a assinatura no
+`latest.json` é a mesma do arquivo `.sig`, e o identificador da chave que
+assinou é `0ff7228b0ddd9605` — o mesmo embutido em `tauri.conf.json`, que é o
+que faz as instalações da v0.1.0 aceitarem a atualização.
+
+O `publicar.ps1` precisou de um conserto no caminho. O `tauri` escreve
+andamento em stderr mesmo quando dá tudo certo e, no PowerShell 5.1 com
+`ErrorActionPreference = "Stop"`, cada uma dessas linhas vira erro terminante:
+a publicação morria **depois** de uma compilação bem-sucedida e assinada. É o
+mesmo tropeço que a iteração 8 já tinha registrado em outro ponto do roteiro.
+Agora só o código de saída decide se a compilação falhou.
+
+**A publicação espelhada na Vercel caiu.** `call-rho-dusky.vercel.app` responde
+`DEPLOYMENT_NOT_FOUND` — não é atraso de propagação, é ausência do projeto do
+lado da plataforma. O `vercel.json` segue no repositório e nada no código
+mudou; a religação depende do painel. O GitHub Pages está no ar, servindo
+bytes idênticos aos de `docs/`, e passou a ser o endereço principal no README.
+A iteração 10 dizia que nenhum dos dois seria ponto único de falha para a
+página que oferece o instalador — foi exatamente para este dia.
+
 ---
 
 ## Estado final medido
