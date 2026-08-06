@@ -232,6 +232,43 @@ o manifesto e cria a release.
 
 ---
 
+## Iteração 9 — O desvio desnecessário na publicação do site
+
+**Sintoma:** o construtor do GitHub Pages falhava e o endereço respondia 404.
+A conclusão registrada na hora foi "falha sem log utilizável", e a resposta foi
+trocar o construtor padrão por um fluxo próprio do GitHub Actions, que ao menos
+mostraria o erro.
+
+**O que os horários realmente diziam:** a causa do 404 era o Jekyll, e ela já
+tinha sido corrigida por `docs/.nojekyll`. A primeira compilação depois dessa
+correção *passou* — é dela que vem o site no ar. As execuções anteriores não
+tinham falhado por defeito: cada envio novo cancela a compilação em andamento,
+e "cancelada" foi lido como "falhou". O fluxo por Actions entrou depois disso,
+sem que a correção tivesse sido observada.
+
+**E o desvio custou caro:** o `deploy-pages` ficou dez minutos em
+`deployment_queued` até estourar o tempo; a segunda tentativa foi cancelada por
+disputar o mesmo commit da primeira. Duas falhas contra um caminho padrão que
+já funcionava.
+
+**Corrigido:** origem do Pages de volta ao ramo `main` em `/docs`, e o fluxo do
+Actions removido.
+
+**Verificado:** os bytes servidos em `alanaraujo-bit.github.io/CALL/` são
+idênticos aos de `docs/index.html`, e `estilo.css` e `site.js` respondem 200.
+
+**Lição registrada:** *cancelada* não é *falhou*, e uma correção só está provada
+depois que a execução seguinte é observada. Trocar de ferramenta antes disso
+troca um problema já resolvido por um problema novo.
+
+**Release conferida de ponta a ponta:** o `latest.json` publicado não tem BOM, o
+identificador da chave da assinatura é o mesmo da chave pública embutida em
+`tauri.conf.json` (`0ff7228b0ddd9605`), a assinatura Ed25519 confere contra o
+instalador publicado, e o SHA-256 do arquivo na release é igual ao do binário
+compilado localmente.
+
+---
+
 ## Estado final medido
 
 ### Peso em disco
