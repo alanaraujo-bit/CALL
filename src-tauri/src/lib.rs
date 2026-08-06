@@ -53,6 +53,51 @@ fn encerrar_hospedagem(estado: State<'_, Hospedagem>) -> Result<(), String> {
     Ok(())
 }
 
+/// Consulta o servidor de atualizacao e devolve a versao nova, se houver.
+/// Devolver `None` e o caso normal: significa que ja estamos em dia.
+#[tauri::command]
+async fn procurar_atualizacao(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let achado = app
+        .updater()
+        .map_err(|erro| erro.to_string())?
+        .check()
+        .await
+        .map_err(|erro| erro.to_string())?;
+
+    Ok(achado.map(|atualizacao| atualizacao.version))
+}
+
+/// Baixa e executa o instalador da versao nova. A assinatura do pacote e
+/// conferida contra a chave publica embutida no aplicativo: um instalador
+/// trocado no caminho e recusado antes de rodar.
+///
+/// No Windows o instalador encerra o aplicativo por conta propria, entao o
+/// que vem depois do `await` normalmente nao chega a executar.
+#[tauri::command]
+async fn instalar_atualizacao(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let achado = app
+        .updater()
+        .map_err(|erro| erro.to_string())?
+        .check()
+        .await
+        .map_err(|erro| erro.to_string())?;
+
+    let Some(atualizacao) = achado else {
+        return Err("Nenhuma atualizacao disponivel.".into());
+    };
+
+    atualizacao
+        .download_and_install(|_baixado, _total| {}, || {})
+        .await
+        .map_err(|erro| erro.to_string())?;
+
+    Ok(())
+}
+
 /// O WebView2 pediria confirmacao nativa a cada uso do microfone. Como o
 /// usuario ja pediu explicitamente para entrar na chamada, concedemos de uma
 /// vez so o microfone; qualquer outra permissao continua seguindo o padrao.
@@ -111,6 +156,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             app.manage(Hospedagem::default());
             if let Some(janela) = app.get_webview_window("main") {
@@ -118,7 +164,12 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![hospedar, encerrar_hospedagem])
+        .invoke_handler(tauri::generate_handler![
+            hospedar,
+            encerrar_hospedagem,
+            procurar_atualizacao,
+            instalar_atualizacao
+        ])
         .build(tauri::generate_context!())
         .expect("Falha ao iniciar a aplicação.");
 

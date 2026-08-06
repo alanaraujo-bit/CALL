@@ -26,9 +26,21 @@
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' ipc: http://ipc.localhost ws://*:* wss://*:*"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/alanaraujo-bit/CALL/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU5NkREMEQ4QjIyRjcwRgpSV1FQOXlLTERkMldCYU5pcTBMWWpOM1hYTm1ZVG0wRWxlcE9STWdmUEdUZHppUHlwQk9lSlRTdAo=",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
     "externalBin": ["binaries/sinalizacao"],
     "windows": {

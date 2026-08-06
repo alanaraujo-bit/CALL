@@ -141,6 +141,19 @@
       </div>
     </div>
 
+    <!-- ══ Atualização disponível ═══════════════════════════════════ -->
+    <div class="atualizacao oculto" id="atualizacao" role="status">
+      <span class="atualizacao__glifo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4"/><path d="M5 18h14"/></svg>
+      </span>
+      <div class="atualizacao__texto">
+        <span class="atualizacao__titulo">Nova versão disponível</span>
+        <span class="atualizacao__detalhe" id="atualizacao-detalhe">—</span>
+      </div>
+      <button class="botao botao--sutil" type="button" id="botao-adiar">Depois</button>
+      <button class="botao botao--primario" type="button" id="botao-atualizar">Atualizar</button>
+    </div>
+
     <div class="avisos" id="avisos" aria-live="polite"></div>
 
     <script type="module" src="app.js"></script>

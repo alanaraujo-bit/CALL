@@ -1,6 +1,7 @@
 # Compilação
 /target/
 /node_modules/
+/build.log
 
 # Sidecar compilado: gerado por `cargo build --release -p sinalizacao`
 /src-tauri/binaries/*.exe

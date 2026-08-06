@@ -16,6 +16,12 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
+# Sem rustls e sem zip: no Windows o TLS vem do proprio sistema (Schannel) e o
+# pacote de atualizacao e o instalador .exe, nao um arquivo compactado. As duas
+# opcoes padrao custariam centenas de KB no instalador sem servir a nada aqui.
+tauri-plugin-updater = { version = "2", default-features = false, features = [
+  "native-tls",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

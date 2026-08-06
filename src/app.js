@@ -726,6 +726,75 @@ function marcarFala(id, falando) {
   if (linha) linha.dataset.falando = falando ? "sim" : "nao";
 }
 
+/* ═══ Atualização automática ════════════════════════════════════ */
+
+/** De quanto em quanto tempo se pergunta ao servidor. Meia hora é frequente
+ *  o bastante para uma correção chegar no mesmo dia e raro o bastante para
+ *  não pesar em nada. */
+const INTERVALO_ATUALIZACAO = 30 * 60 * 1000;
+
+/** Versão que o usuário já dispensou nesta sessão. */
+let atualizacaoAdiada = null;
+let instalando = false;
+
+async function procurarAtualizacao() {
+  if (instalando) return;
+  try {
+    const versao = await invocar("procurar_atualizacao");
+    if (versao && versao !== atualizacaoAdiada) anunciarAtualizacao(versao);
+  } catch {
+    // Sem rede, servidor fora do ar ou rodando fora do aplicativo. Nada disso
+    // é problema do usuário: a próxima rodada tenta de novo, em silêncio.
+  }
+}
+
+function anunciarAtualizacao(versao) {
+  $("atualizacao-detalhe").textContent = `CALL ${versao} — instala em segundos`;
+  $("atualizacao").classList.remove("oculto");
+
+  $("botao-adiar").onclick = () => {
+    atualizacaoAdiada = versao;
+    $("atualizacao").classList.add("oculto");
+  };
+
+  $("botao-atualizar").onclick = () => instalarAtualizacao();
+}
+
+async function instalarAtualizacao() {
+  if (instalando) return;
+
+  // O instalador encerra o aplicativo. Quem está em uma chamada precisa saber
+  // disso antes, e um segundo clique é confirmação suficiente — sem diálogo
+  // nativo, que no WebView2 pode simplesmente não aparecer.
+  const botao = $("botao-atualizar");
+  if (estado.grupoAtivo && botao.dataset.confirmado !== "sim") {
+    botao.dataset.confirmado = "sim";
+    botao.textContent = "Sair do grupo e atualizar";
+    $("atualizacao-detalhe").textContent =
+      "O CALL fecha para instalar e reabre em seguida.";
+    return;
+  }
+
+  // Devolve o microfone e avisa os outros, em vez de deixar um fantasma na sala.
+  if (estado.grupoAtivo) sairDoGrupo(false);
+
+  instalando = true;
+  $("botao-adiar").disabled = true;
+  botao.disabled = true;
+  botao.textContent = "Baixando…";
+
+  try {
+    await invocar("instalar_atualizacao");
+  } catch (erro) {
+    instalando = false;
+    $("botao-adiar").disabled = false;
+    botao.disabled = false;
+    botao.dataset.confirmado = "nao";
+    botao.textContent = "Atualizar";
+    avisar(`Não foi possível atualizar: ${erro}`, "erro");
+  }
+}
+
 /* ═══ Início ════════════════════════════════════════════════════ */
 
 window.addEventListener("beforeunload", () => {
@@ -735,3 +804,6 @@ window.addEventListener("beforeunload", () => {
 
 carregarPreferencias();
 prepararEntrada();
+
+procurarAtualizacao();
+setInterval(procurarAtualizacao, INTERVALO_ATUALIZACAO);

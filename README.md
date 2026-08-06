@@ -5,8 +5,12 @@ Aplicativo de comunicação para Windows com exatamente três recursos: **grupos
 do Brasil.
 
 Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
-empacotador e sem Electron. O instalador tem 1,44 MB e o executável ocupa
+empacotador e sem Electron. O instalador tem 1,61 MB e o executável ocupa
 26 MB de memória residente em repouso — 5,7 MB deles em memória privada.
+
+O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
+instala com um clique, sem sair da tela. Página do projeto:
+**https://alanaraujo-bit.github.io/CALL/**
 
 ---
 

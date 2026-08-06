@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CALL — voz e tela para o seu grupo, em 1,61 MB</title>
+    <meta
+      name="description"
+      content="Aplicativo de comunicação para Windows com três recursos: grupos, chat de voz e transmissão de tela. Instalador de 1,61 MB, sem Electron, sem conta, sem servidor no meio."
+    />
+    <meta name="theme-color" content="#0e0f11" />
+    <meta property="og:title" content="CALL — voz e tela para o seu grupo" />
+    <meta
+      property="og:description"
+      content="Grupos, voz e transmissão de tela. Instalador de 1,61 MB. O áudio vai direto de uma máquina para a outra."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="stylesheet" href="estilo.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e0f11'/%3E%3Cg fill='%235f6ad9'%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5'/%3E%3Crect x='12' y='9' width='3' height='14' rx='1.5'/%3E%3Crect x='17' y='6' width='3' height='20' rx='1.5'/%3E%3Crect x='22' y='11' width='3' height='10' rx='1.5'/%3E%3C/g%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div class="brilho" id="brilho" aria-hidden="true"></div>
+
+    <!-- ══ Cabeçalho ════════════════════════════════════════════════ -->
+    <header class="cabecalho" id="cabecalho">
+      <a class="marca" href="#topo">
+        <span class="marca__glifo" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i>
+        </span>
+        <span class="marca__nome">CALL</span>
+      </a>
+      <nav class="cabecalho__nav">
+        <a href="#recursos">Recursos</a>
+        <a href="#peso">Peso</a>
+        <a href="#como">Como funciona</a>
+        <a href="#limites">Limites</a>
+      </nav>
+      <a class="botao botao--primario botao--pequeno" data-baixar href="https://github.com/alanaraujo-bit/CALL/releases/latest">
+        Baixar
+      </a>
+    </header>
+
+    <!-- ══ Hero ═════════════════════════════════════════════════════ -->
+    <section class="hero" id="topo">
+      <canvas class="malha3d" id="malha3d" aria-hidden="true"></canvas>
+      <div class="hero__conteudo">
+        <span class="selo" data-revelar>
+          <span class="selo__ponto"></span>
+          Windows 10 e 11 · código aberto
+        </span>
+
+        <h1 class="hero__titulo" data-revelar>
+          Voz e tela para o seu grupo.<br />
+          <span class="hero__enfase">Nada além disso.</span>
+        </h1>
+
+        <p class="hero__lead" data-revelar>
+          Três recursos: grupos, chat de voz e transmissão de tela. O áudio vai
+          direto da sua máquina para a do outro — sem passar por servidor de
+          ninguém. O instalador tem
+          <strong class="destaque">1,61 MB</strong>.
+        </p>
+
+        <div class="hero__acoes" data-revelar>
+          <a class="botao botao--primario botao--grande" data-baixar href="https://github.com/alanaraujo-bit/CALL/releases/latest">
+            <svg class="botao__icone" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5" />
+              <path d="M5 19h14" />
+            </svg>
+            <span>
+              Baixar para Windows
+              <em class="botao__meta" id="meta-download">versão mais recente</em>
+            </span>
+          </a>
+          <a class="botao botao--sutil botao--grande" href="https://github.com/alanaraujo-bit/CALL" target="_blank" rel="noopener">
+            <svg class="botao__icone" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 19c-4 1.2-4-2.3-5.5-2.8M15 21v-3.4c0-.9-.3-1.5-.7-1.8 2.5-.3 5-1.3 5-5.6a4.3 4.3 0 0 0-1.2-3 4 4 0 0 0-.1-3s-1-.3-3.2 1.2a11 11 0 0 0-5.6 0C6 3 5 3.3 5 3.3a4 4 0 0 0-.1 3A4.3 4.3 0 0 0 3.7 9.3c0 4.3 2.5 5.3 5 5.6-.4.3-.6.8-.7 1.5V21" />
+            </svg>
+            Ver o código
+          </a>
+        </div>
+
+        <p class="hero__nota" data-revelar>
+          Sem conta, sem cadastro, sem assinatura. Instala por usuário, não pede
+          senha de administrador.
+        </p>
+      </div>
+
+      <!-- Maquete: não é uma imagem. É a própria interface, em HTML. -->
+      <div class="palco3d" data-revelar>
+        <div class="janela" id="janela">
+          <div class="janela__barra">
+            <span class="janela__semaforo"></span>
+            <span class="janela__semaforo"></span>
+            <span class="janela__semaforo"></span>
+            <span class="janela__titulo">CALL</span>
+          </div>
+          <div class="janela__corpo">
+            <aside class="mini-grupos">
+              <span class="mini-rotulo">Grupos</span>
+              <span class="mini-grupo mini-grupo--ativo"><i></i>reuniao</span>
+              <span class="mini-grupo"><i></i>time-produto</span>
+              <span class="mini-grupo"><i></i>jogatina</span>
+            </aside>
+            <section class="mini-sala">
+              <div class="mini-topo">
+                <strong>reuniao</strong>
+                <span>3 pessoas conectadas</span>
+              </div>
+              <div class="mini-palco">
+                <div class="mini-transmissao" id="mini-transmissao">
+                  <div class="mini-transmissao__brilho"></div>
+                  <span class="mini-transmissao__etiqueta">Bruno está transmitindo</span>
+                </div>
+                <div class="mini-vazio" id="mini-vazio">
+                  <svg viewBox="0 0 48 48" aria-hidden="true">
+                    <rect x="6" y="10" width="36" height="24" rx="3" />
+                    <path d="M18 40h12" />
+                  </svg>
+                  <span>Nenhuma transmissão ativa</span>
+                </div>
+              </div>
+              <div class="mini-controles">
+                <span class="mini-botao" id="mini-microfone"><i class="ponto"></i>Microfone</span>
+                <span class="mini-botao" id="mini-transmitir"><i class="ponto"></i>Transmitir tela</span>
+                <span class="mini-botao mini-botao--sair">Sair</span>
+              </div>
+            </section>
+            <aside class="mini-pessoas">
+              <span class="mini-rotulo">Participantes</span>
+              <span class="mini-pessoa" data-falando="nao"><i>AR</i>ana ribeiro</span>
+              <span class="mini-pessoa" data-falando="nao"><i>BS</i>bruno salles</span>
+              <span class="mini-pessoa" data-falando="nao"><i>CM</i>carla mendes</span>
+            </aside>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero__rolar" aria-hidden="true"><span></span></div>
+    </section>
+
+    <!-- ══ Peso ═════════════════════════════════════════════════════ -->
+    <section class="secao" id="peso">
+      <div class="secao__cabeca" data-revelar>
+        <span class="secao__etiqueta">O peso</span>
+        <h2 class="secao__titulo">Menos que a foto que você acabou de tirar</h2>
+        <p class="secao__lead">
+          A maioria dos aplicativos de conversa embarca um navegador inteiro e
+          um runtime de servidor só para desenhar botões. O CALL usa o WebView2
+          que já vem no seu Windows.
+        </p>
+      </div>
+
+      <div class="comparativo" data-revelar>
+        <div class="barra" data-largura="1.9">
+          <div class="barra__topo">
+            <span class="barra__nome">CALL</span>
+            <span class="barra__valor" data-contar="1.61" data-sufixo=" MB" data-casas="2">0 MB</span>
+          </div>
+          <div class="barra__trilho"><div class="barra__preenchimento barra__preenchimento--nosso"></div></div>
+        </div>
+
+        <div class="barra" data-largura="100">
+          <div class="barra__topo">
+            <span class="barra__nome">Aplicativo típico em Electron</span>
+            <span class="barra__valor" data-contar="85" data-sufixo=" MB" data-casas="0">0 MB</span>
+          </div>
+          <div class="barra__trilho"><div class="barra__preenchimento"></div></div>
+        </div>
+
+        <p class="comparativo__nota">
+          A barra do CALL está desenhada em escala real: é aquele fiapo à
+          esquerda. Um instalador em Electron carrega o próprio Chromium e o
+          Node; este aqui reaproveita o que o sistema já tem.
+        </p>
+      </div>
+
+      <div class="numeros">
+        <div class="numero" data-revelar>
+          <strong data-contar="1.61" data-sufixo=" MB" data-casas="2">0</strong>
+          <span>instalador completo</span>
+        </div>
+        <div class="numero" data-revelar>
+          <strong data-contar="26" data-sufixo=" MB" data-casas="0">0</strong>
+          <span>memória do CALL em repouso</span>
+        </div>
+        <div class="numero" data-revelar>
+          <strong data-contar="0" data-sufixo="" data-casas="0">0</strong>
+          <span>contas para criar</span>
+        </div>
+        <div class="numero" data-revelar>
+          <strong data-contar="29" data-sufixo="" data-casas="0">0</strong>
+          <span>testes automatizados passando</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Recursos ═════════════════════════════════════════════════ -->
+    <section class="secao" id="recursos">
+      <div class="secao__cabeca" data-revelar>
+        <span class="secao__etiqueta">Os recursos</span>
+        <h2 class="secao__titulo">Três coisas, bem feitas</h2>
+        <p class="secao__lead">
+          Não há chat, emoji, bot, quadro branco nem plano pago. A lista de
+          recursos cabe em uma linha porque cada um deles precisou funcionar.
+        </p>
+      </div>
+
+      <div class="cartoes">
+        <article class="cartao" data-revelar data-inclinar>
+          <div class="cartao__glifo">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="9" cy="8" r="3" />
+              <circle cx="17" cy="10" r="2.4" />
+              <path d="M3 19c0-3 2.7-4.6 6-4.6s6 1.6 6 4.6" />
+              <path d="M15.5 19c0-2 1.2-3.2 3-3.2s2.5 1 2.5 2.4" />
+            </svg>
+          </div>
+          <h3>Grupos</h3>
+          <p>
+            Todo mundo que digitar o mesmo nome, no mesmo servidor, cai na mesma
+            conversa. Os grupos ficam salvos na sua máquina e aparecem na coluna
+            da esquerda na próxima abertura.
+          </p>
+        </article>
+
+        <article class="cartao" data-revelar data-inclinar>
+          <div class="cartao__glifo">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z" />
+              <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+            </svg>
+          </div>
+          <h3>Chat de voz</h3>
+          <p>
+            Cancelamento de eco, supressão de ruído e ganho automático ligados
+            de fábrica. Quem está falando acende na lista — medido pela energia
+            real da onda, não por qualquer chiado de fundo.
+          </p>
+        </article>
+
+        <article class="cartao" data-revelar data-inclinar>
+          <div class="cartao__glifo">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="12" rx="2" />
+              <path d="M10 21h4" />
+            </svg>
+          </div>
+          <h3>Transmissão de tela</h3>
+          <p>
+            Uma janela ou o monitor inteiro. O codificador é afinado para
+            nitidez de texto em vez de fluidez, com teto de banda e de quadros
+            para não fritar a CPU de quem transmite.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ══ Como funciona ════════════════════════════════════════════ -->
+    <section class="secao secao--escura" id="como">
+      <div class="secao__cabeca" data-revelar>
+        <span class="secao__etiqueta">Como funciona</span>
+        <h2 class="secao__titulo">O servidor só apresenta as pessoas</h2>
+        <p class="secao__lead">
+          Ele troca os endereços e sai da frente. A partir daí, sua voz vai
+          direto para a máquina do outro, cifrada de ponta a ponta pelo próprio
+          WebRTC. Nenhum áudio passa por um intermediário.
+        </p>
+      </div>
+
+      <div class="diagrama" data-revelar>
+        <svg viewBox="0 0 720 300" role="img" aria-label="Diagrama: o servidor de sinalização apresenta os participantes, e a mídia trafega diretamente entre eles">
+          <defs>
+            <!-- Em coordenadas do usuário: numa linha horizontal a caixa
+                 delimitadora tem altura zero, e o gradiente padrão some. -->
+            <linearGradient id="fioMidia" gradientUnits="userSpaceOnUse" x1="195" y1="200" x2="525" y2="200">
+              <stop offset="0%" stop-color="#5f6ad9" stop-opacity="0.15" />
+              <stop offset="50%" stop-color="#5f6ad9" stop-opacity="0.9" />
+              <stop offset="100%" stop-color="#5f6ad9" stop-opacity="0.15" />
+            </linearGradient>
+          </defs>
+
+          <!-- Sinalização: pontilhado, some depois de apresentar -->
+          <path class="fio-sinal" d="M175 175 C 260 60, 460 60, 545 175" />
+          <text class="rotulo rotulo--sinal" x="360" y="66" text-anchor="middle">
+            só endereços · pontilhado
+          </text>
+
+          <!-- Mídia: linha cheia, direta -->
+          <path class="fio-midia" d="M195 200 L 525 200" />
+          <text class="rotulo rotulo--midia" x="360" y="232" text-anchor="middle">
+            voz e tela · direto, cifrado
+          </text>
+
+          <!-- Servidor -->
+          <g class="no no--servidor">
+            <rect x="310" y="8" width="100" height="46" rx="10" />
+            <text x="360" y="36" text-anchor="middle">servidor</text>
+          </g>
+
+          <!-- Participantes -->
+          <g class="no">
+            <circle cx="150" cy="200" r="42" />
+            <text x="150" y="205" text-anchor="middle">Ana</text>
+          </g>
+          <g class="no">
+            <circle cx="570" cy="200" r="42" />
+            <text x="570" y="205" text-anchor="middle">Bruno</text>
+          </g>
+
+          <circle class="particula" r="4">
+            <animateMotion dur="2.6s" repeatCount="indefinite" path="M195 200 L 525 200" />
+          </circle>
+          <circle class="particula particula--volta" r="4">
+            <animateMotion dur="2.6s" begin="1.3s" repeatCount="indefinite" path="M525 200 L 195 200" />
+          </circle>
+        </svg>
+      </div>
+
+      <div class="passos">
+        <div class="passo" data-revelar>
+          <span class="passo__n">1</span>
+          <h3>Alguém hospeda</h3>
+          <p>
+            Um clique em <strong>Hospedar</strong> sobe o servidor de
+            sinalização naquela máquina, na porta 8787. Ele fecha junto com o
+            aplicativo.
+          </p>
+        </div>
+        <div class="passo" data-revelar>
+          <span class="passo__n">2</span>
+          <h3>Os outros colam o endereço</h3>
+          <p>
+            No formato <code>ws://IP-DE-QUEM-HOSPEDA:8787</code>. Na mesma rede,
+            é o IP local; pela internet, exige liberar a porta no roteador.
+          </p>
+        </div>
+        <div class="passo" data-revelar>
+          <span class="passo__n">3</span>
+          <h3>Todos entram no mesmo grupo</h3>
+          <p>
+            Mesmo nome de grupo, mesma conversa. O microfone é capturado na hora
+            e a voz começa a fluir.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Atualização ══════════════════════════════════════════════ -->
+    <section class="secao" id="atualizacao">
+      <div class="dupla">
+        <div data-revelar>
+          <span class="secao__etiqueta">Atualizações</span>
+          <h2 class="secao__titulo">Se atualiza sozinho</h2>
+          <p class="secao__lead">
+            Quando sai uma versão nova, o aplicativo percebe e oferece a
+            atualização ali mesmo, sem você sair de onde está. Um clique baixa,
+            instala e reabre.
+          </p>
+          <p class="secao__texto">
+            O pacote é assinado com uma chave que só existe na máquina de quem
+            publica. Um instalador trocado no caminho é recusado antes de rodar
+            — o aplicativo confere a assinatura contra a chave pública embutida
+            nele.
+          </p>
+        </div>
+
+        <div class="cartao-att" data-revelar>
+          <span class="cartao-att__glifo">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4v10m0 0l-4-4m4 4l4-4" />
+              <path d="M5 18h14" />
+            </svg>
+          </span>
+          <div class="cartao-att__texto">
+            <strong>Nova versão disponível</strong>
+            <span>CALL 0.1.1 — instala em segundos</span>
+          </div>
+          <span class="cartao-att__botao cartao-att__botao--sutil">Depois</span>
+          <span class="cartao-att__botao">Atualizar</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Limites ══════════════════════════════════════════════════ -->
+    <section class="secao secao--escura" id="limites">
+      <div class="secao__cabeca" data-revelar>
+        <span class="secao__etiqueta">Honestidade</span>
+        <h2 class="secao__titulo">O que ele não faz</h2>
+        <p class="secao__lead">
+          Todo aplicativo tem limite. Estes são os do CALL, escritos antes de
+          você descobrir sozinho.
+        </p>
+      </div>
+
+      <div class="limites">
+        <div class="limite" data-revelar>
+          <h3>Pela internet, exige liberar uma porta</h3>
+          <p>
+            Na mesma rede funciona direto. Fora dela, quem hospeda precisa de IP
+            público e do redirecionamento da porta 8787 no roteador. Se a sua
+            operadora usa CGNAT — comum em fibra e 4G no Brasil — isso não
+            funciona sem um intermediário.
+          </p>
+        </div>
+        <div class="limite" data-revelar>
+          <h3>Sem servidor TURN configurado</h3>
+          <p>
+            Há apenas STUN público. Se os dois lados estiverem atrás de NAT
+            restritivo, os participantes se veem na lista mas a voz pode não
+            passar. Um TURN próprio resolve, e o endereço se troca em uma linha
+            do código.
+          </p>
+        </div>
+        <div class="limite" data-revelar>
+          <h3>Feito para grupos pequenos</h3>
+          <p>
+            A topologia é em malha: cada participante envia a própria mídia para
+            todos os outros. Ótimo para um punhado de pessoas, ruim para uma
+            plateia.
+          </p>
+        </div>
+        <div class="limite" data-revelar>
+          <h3>O instalador não é assinado</h3>
+          <p>
+            O Windows vai mostrar “O Windows protegeu o seu computador”. É
+            preciso clicar em <strong>Mais informações → Executar assim
+            mesmo</strong>. Assinatura de código custa caro; o código está
+            aberto para quem quiser conferir.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Chamada final ════════════════════════════════════════════ -->
+    <section class="final">
+      <div class="final__conteudo" data-revelar>
+        <h2>Baixe, instale, chame o grupo.</h2>
+        <p>Leva menos tempo que ler esta página inteira.</p>
+        <a class="botao botao--primario botao--grande" data-baixar href="https://github.com/alanaraujo-bit/CALL/releases/latest">
+          <svg class="botao__icone" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5" />
+            <path d="M5 19h14" />
+          </svg>
+          <span>
+            Baixar para Windows
+            <em class="botao__meta" id="meta-download-2">versão mais recente</em>
+          </span>
+        </a>
+      </div>
+    </section>
+
+    <footer class="rodape">
+      <span>CALL · código aberto</span>
+      <nav>
+        <a href="https://github.com/alanaraujo-bit/CALL" target="_blank" rel="noopener">Repositório</a>
+        <a href="https://github.com/alanaraujo-bit/CALL/releases" target="_blank" rel="noopener">Versões</a>
+        <a href="https://github.com/alanaraujo-bit/CALL/blob/main/PROGRESSO.md" target="_blank" rel="noopener">Diário de medições</a>
+      </nav>
+    </footer>
+
+    <script src="site.js" defer></script>
+  </body>
+</html>
