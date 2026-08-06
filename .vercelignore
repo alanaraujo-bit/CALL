@@ -1,0 +1,7 @@
+# O site publicado é apenas docs/. Nada mais precisa subir — e o que sobe aqui
+# é o que a Vercel copia a cada envio, então deixar de fora a compilação do
+# Rust e os módulos do npm é a diferença entre alguns quilobytes e vários giga.
+target/
+src-tauri/target/
+node_modules/
+build.log

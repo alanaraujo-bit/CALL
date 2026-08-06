@@ -13,3 +13,6 @@
 /testes/capturas/
 /testes/resultado.json
 /testes/diagnostico.json
+
+.vercel
+.env*
