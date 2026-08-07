@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cena para captura</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #0e0f11;
+      }
+      iframe {
+        display: block;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      Leva a aplicação real a um estado e para ali, para a captura.
+
+      Não é teste: é o que permite olhar o desenho em vez de deduzi-lo da
+      marcação. `?cena=` escolhe o que montar.
+
+      A cena do cartão monta os dados à mão, injetando um módulo no documento
+      da aplicação — e não ligando uma segunda pessoa de verdade. O motivo é
+      chato e vale registrar: a captura headless só funciona com
+      `--virtual-time-budget`, e o relógio virtual corre à frente da rede real,
+      então o limite de oito segundos da conexão estoura antes de o servidor
+      responder. Quem prova o caminho de verdade, com outra pessoa no
+      WebSocket, é o `rodar-perfil.ps1`; aqui o que se quer é olhar o desenho.
+    -->
+    <iframe id="app" src="/src/index.html" width="1180" height="760"></iframe>
+    <!-- Segura o `load` da página, que é quando a captura dispara, enquanto a
+         cena se monta. Fica fora do fluxo para não empurrar o quadro nem um
+         pixel. Ver o comentário em `servir.mjs`. -->
+    <img src="/segurar?ms=7000" alt="" style="position: absolute; top: 0; left: 0; opacity: 0" />
+
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const cena = params.get("cena") ?? "entrada";
+      const servidor = params.get("servidor") ?? "ws://127.0.0.1:8898";
+
+      const quadro = document.getElementById("app");
+      await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+      const doc = quadro.contentDocument;
+      const jan = quadro.contentWindow;
+      const $ = (id) => doc.getElementById(id);
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      // Sem isto a captura pega o painel no meio do surgimento, meio
+      // transparente: o `--virtual-time-budget` decide a hora do disparo, e ela
+      // não coincide com o fim da animação.
+      const parado = doc.createElement("style");
+      parado.textContent = "*, *::before, *::after { animation: none !important; transition: none !important; }";
+      doc.head.append(parado);
+      const teclar = (elemento, valor) => {
+        elemento.value = valor;
+        elemento.dispatchEvent(new jan.Event("input"));
+      };
+      const aguardar = async (teste, limite = 8000) => {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          if (teste()) return true;
+          await esperar(100);
+        }
+        return false;
+      };
+
+      if (cena === "entrada") {
+        $("campo-apelido").value = "Alan";
+        document.title = "PRONTO";
+      } else {
+        $("campo-apelido").value = "Alan";
+        $("campo-servidor").value = servidor;
+        $("formulario-entrada").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+        await esperar(400);
+
+        if (cena === "editor") {
+          $("botao-perfil").click();
+          await esperar(200);
+          teclar($("perfil-apelido"), "Alan Araújo");
+          teclar($("perfil-bio"), "Brasília, GMT-3. Por aqui à noite, quase sempre num canal de voz.");
+          $("perfil-mascotes").children[3].click();
+        }
+
+        if (cena === "grupo") {
+          $("botao-novo-grupo").click();
+          await esperar(200);
+          doc.querySelector("#dialogo-campos input").value = "Estúdio";
+          $("dialogo-formulario").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+          await aguardar(() => $("codigo-convite").textContent.length === 10);
+          const codigo = $("codigo-convite").textContent;
+
+          const gente = [
+            ["Bruna", "bruna-x", "raposa", "Front-end de dia, Valorant de noite."],
+            ["Caio", "caio-x", "capivara", "Se eu sumir, fui fazer café."],
+            ["Dani", "dani-x", "axolote", ""],
+            ["Enzo", "enzo-x", "dragao", "Rank ou nada."],
+          ];
+          for (const [apelido, usuario, avatar, bio] of gente) {
+            const par = new WebSocket(servidor);
+            await new Promise((ok) => par.addEventListener("open", ok, { once: true }));
+            par.send(JSON.stringify({ tipo: "entrar", codigo, apelido, usuario, avatar, bio }));
+            await esperar(120);
+          }
+          await aguardar(() => $("lista-participantes").children.length === 5);
+        }
+
+        if (cena === "cartao") {
+          // Um `<script type="module">` inserido no documento da aplicação roda
+          // no mesmo reino que ela — o `import` acha a mesma instância do
+          // módulo, e o cartão desenha na marcação real, com o CSS real.
+          const injetado = doc.createElement("script");
+          injetado.type = "module";
+          injetado.textContent = `
+            import { mostrarCartao } from "/src/perfil.js";
+            mostrarCartao({
+              apelido: "Bruna",
+              avatar: "raposa",
+              bio: "Front-end de dia, Valorant de noite. Se eu estiver muda, é porque o gato subiu na mesa.",
+              atividade: "Visual Studio Code",
+              etiquetas: ["dono", "na voz"],
+              acoes: [{ rotulo: "Ajustar volume…", fazer: () => {} }],
+            });
+          `;
+          doc.body.append(injetado);
+          await aguardar(() => !$("cartao-dialogo").classList.contains("oculto"));
+        }
+
+        await esperar(400);
+        document.title = "PRONTO";
+      }
+    </script>
+  </body>
+</html>

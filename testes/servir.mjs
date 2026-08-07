@@ -24,6 +24,21 @@ createServer(async (req, res) => {
     return;
   }
 
+  // Recurso que demora de propósito. A captura de tela do Chromium headless
+  // dispara no evento `load` da página, e uma cena que precisa da rede não
+  // está pronta a essa altura. `--virtual-time-budget` não resolve: ele adianta
+  // os relógios sem adiantar a rede, e o limite de conexão da aplicação estoura
+  // antes de o servidor responder. Uma imagem lenta segura o `load` em tempo
+  // real, que é o único relógio com que a rede concorda.
+  if (req.url.startsWith("/segurar")) {
+    const ms = Math.min(Number(new URL(req.url, "http://x").searchParams.get("ms")) || 3000, 30000);
+    setTimeout(() => {
+      res.writeHead(200, { "Content-Type": "image/gif" });
+      res.end(Buffer.from("R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==", "base64"));
+    }, ms);
+    return;
+  }
+
   const caminho = join(RAIZ, normalize(decodeURI(req.url.split("?")[0])).replace(/^(\.\.[/\\])+/, ""));
   try {
     const corpo = await readFile(caminho);

@@ -267,3 +267,128 @@ pub fn parar_captura_de_tela(estado: State<'_, CapturaAtiva>) -> Result<(), Stri
     estado.parar_a_anterior();
     Ok(())
 }
+
+/* ═══ Áudio do sistema (captura em loopback via WASAPI) ═════════════ */
+
+use wasapi::{initialize_mta, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
+
+const AUDIO_TAXA_DE_AMOSTRAGEM: usize = 48_000;
+const AUDIO_CANAIS: usize = 2;
+/// 20 ms por pedaço: curto o bastante para não se ouvir como atraso, longo o
+/// bastante para não virar uma enxurrada de eventos.
+const AUDIO_QUADROS_POR_PEDACO: usize = 960;
+
+/// Mesmo desenho do `CapturaAtiva`: um sinal de parada por vez.
+#[derive(Default)]
+pub struct AudioAtivo(Mutex<Option<Arc<AtomicBool>>>);
+
+impl AudioAtivo {
+    fn parar_o_anterior(&self) {
+        if let Ok(mut atual) = self.0.lock() {
+            if let Some(parar) = atual.take() {
+                parar.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PedacoDeAudio {
+    dados: String,
+    taxa_de_amostragem: usize,
+    canais: usize,
+}
+
+/// Grava o que sai dos alto-falantes, não o microfone: pede o dispositivo de
+/// *saída* padrão em modo de captura, o mesmo mecanismo por trás da antiga
+/// "Mixagem estéreo" do Windows. As amostras chegam em ponto flutuante — o
+/// formato nativo do mecanismo de áudio do Windows — e saem daqui em inteiro
+/// de 16 bits, que é metade do tamanho e já é mais resolução do que o ouvido
+/// nota nessa viagem.
+fn gravar_audio_do_sistema(app: &AppHandle, parar: &AtomicBool) -> Result<(), wasapi::WasapiError> {
+    initialize_mta().ok()?;
+
+    let formato = WaveFormat::new(
+        32,
+        32,
+        &SampleType::Float,
+        AUDIO_TAXA_DE_AMOSTRAGEM,
+        AUDIO_CANAIS,
+        None,
+    );
+    let enumerador = DeviceEnumerator::new()?;
+    let dispositivo = enumerador.get_default_device(&Direction::Render)?;
+    let mut cliente = dispositivo.get_iaudioclient()?;
+    let (_padrao, minimo) = cliente.get_device_period()?;
+    let modo = StreamMode::EventsShared {
+        autoconvert: true,
+        buffer_duration_hns: minimo,
+    };
+    // Pedir `Capture` a um dispositivo aberto como `Render` é o que ativa o
+    // loopback — não existe uma opção "loopback: true" separada.
+    cliente.initialize_client(&formato, &Direction::Capture, &modo)?;
+    let evento = cliente.set_get_eventhandle()?;
+    let capturador = cliente.get_audiocaptureclient()?;
+    let bytes_por_quadro = formato.get_blockalign() as usize;
+    let bytes_por_pedaco = bytes_por_quadro * AUDIO_QUADROS_POR_PEDACO;
+
+    let mut fila: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+    cliente.start_stream()?;
+
+    while !parar.load(Ordering::SeqCst) {
+        while fila.len() >= bytes_por_pedaco {
+            let pedaco_f32: Vec<u8> = fila.drain(..bytes_por_pedaco).collect();
+            let amostras_i16: Vec<u8> = pedaco_f32
+                .chunks_exact(4)
+                .flat_map(|quatro| {
+                    let amostra = f32::from_le_bytes([quatro[0], quatro[1], quatro[2], quatro[3]]);
+                    let inteiro = (amostra.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+                    inteiro.to_le_bytes()
+                })
+                .collect();
+
+            let pedaco = PedacoDeAudio {
+                dados: STANDARD.encode(&amostras_i16),
+                taxa_de_amostragem: AUDIO_TAXA_DE_AMOSTRAGEM,
+                canais: AUDIO_CANAIS,
+            };
+            if app.emit("audio-tela", pedaco).is_err() {
+                let _ = cliente.stop_stream();
+                return Ok(());
+            }
+        }
+        capturador.read_from_device_to_deque(&mut fila)?;
+        if evento.wait_for_event(1000).is_err() {
+            break;
+        }
+    }
+
+    let _ = cliente.stop_stream();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn iniciar_audio_da_tela(app: AppHandle, estado: State<'_, AudioAtivo>) -> Result<(), String> {
+    estado.parar_o_anterior();
+
+    let parar = Arc::new(AtomicBool::new(false));
+    *estado
+        .0
+        .lock()
+        .map_err(|_| "Estado interno inconsistente.".to_string())? = Some(parar.clone());
+
+    thread::spawn(move || {
+        if let Err(erro) = gravar_audio_do_sistema(&app, &parar) {
+            eprintln!("[tela] captura de áudio do sistema encerrada: {erro}");
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn parar_audio_da_tela(estado: State<'_, AudioAtivo>) -> Result<(), String> {
+    estado.parar_o_anterior();
+    Ok(())
+}

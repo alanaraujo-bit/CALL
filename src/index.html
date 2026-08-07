@@ -66,6 +66,14 @@
               <input class="campo__entrada" id="campo-apelido" maxlength="24" placeholder="Como querem te chamar" required />
             </label>
 
+            <!-- O mascote fica aqui, e não escondido nos ajustes: é a primeira
+                 coisa que os outros veem de você, e escolher leva um clique. -->
+            <div class="campo">
+              <span class="campo__rotulo">Seu mascote</span>
+              <div class="mascotes mascotes--fita" id="entrada-mascotes"></div>
+              <span class="campo__dica">Dá para trocar depois, junto com a bio, no seu perfil.</span>
+            </div>
+
             <details class="avancado" id="avancado-servidor">
               <summary class="avancado__gatilho">
                 <svg viewBox="0 0 20 20" aria-hidden="true" class="avancado__seta"><path d="M7 5l5 5-5 5" /></svg>
@@ -116,11 +124,13 @@
         </div>
         <footer class="grupos__rodape">
           <div class="perfil">
-            <span class="avatar" id="avatar-usuario">?</span>
-            <div class="perfil__texto">
-              <span class="perfil__nome" id="rotulo-usuario">—</span>
-              <span class="perfil__estado" id="rotulo-conexao">Desconectado</span>
-            </div>
+            <button class="perfil__eu" type="button" id="botao-perfil" title="Meu perfil">
+              <span class="avatar" id="avatar-usuario">?</span>
+              <span class="perfil__texto">
+                <span class="perfil__nome" id="rotulo-usuario">—</span>
+                <span class="perfil__estado" id="rotulo-conexao">Desconectado</span>
+              </span>
+            </button>
             <button class="icone" type="button" id="botao-ajustes" title="Ajustes de voz e vídeo" aria-label="Ajustes de voz e vídeo">
               <svg viewBox="0 0 20 20" aria-hidden="true">
                 <circle cx="10" cy="10" r="2.6" />
@@ -152,7 +162,12 @@
 
         <footer class="voz oculto" id="rodape-voz">
           <div class="voz__cabecalho">
-            <span class="voz__estado" id="estado-voz">Conectado</span>
+            <!-- O tempo fica na linha do estado, e não numa terceira linha: o
+                 rodapé já divide 212 px com três botões. -->
+            <div class="voz__linha">
+              <span class="voz__estado" id="estado-voz">Conectado</span>
+              <span class="voz__tempo" id="tempo-voz" title="Tempo nesta call">00:00</span>
+            </div>
             <span class="voz__canal" id="nome-canal-voz">—</span>
           </div>
           <!-- Só ícones: numa coluna de 212 px, três botões com rótulo
@@ -230,6 +245,14 @@
           <span class="contador" id="contador-participantes">0</span>
         </header>
         <div class="participantes__lista" id="lista-participantes"></div>
+
+        <!-- Quem esteve nesta call e já saiu. Só aparece quando há alguém a
+             mostrar: uma seção vazia permanente seria ruído numa coluna
+             estreita. -->
+        <section class="passaram oculto" id="passaram">
+          <span class="passaram__titulo">Estiveram na call</span>
+          <div class="passaram__lista" id="lista-passaram"></div>
+        </section>
       </aside>
     </main>
 
@@ -248,6 +271,89 @@
       </div>
     </div>
 
+    <!-- ══ Meu perfil ═══════════════════════════════════════════════ -->
+    <div class="cortina oculto" id="perfil-dialogo">
+      <div class="painel-perfil" role="dialog" aria-modal="true" aria-labelledby="perfil-titulo">
+        <header class="ajustes__topo">
+          <h3 class="ajustes__titulo" id="perfil-titulo">Meu perfil</h3>
+          <button class="icone" type="button" id="perfil-fechar" title="Fechar" aria-label="Fechar">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+          </button>
+        </header>
+
+        <div class="painel-perfil__corpo">
+          <!-- A prévia acompanha a digitação: é o mesmo desenho que os outros
+               vão ver, e não uma promessa de como ficaria. -->
+          <div class="previa">
+            <span class="avatar avatar--grande" id="perfil-previa-avatar"></span>
+            <div class="previa__texto">
+              <span class="previa__nome" id="perfil-previa-nome">—</span>
+              <span class="previa__lema" id="perfil-previa-lema">—</span>
+              <p class="previa__bio" id="perfil-previa-bio" hidden></p>
+            </div>
+          </div>
+
+          <div class="ajuste">
+            <label class="ajuste__rotulo" for="perfil-apelido">Apelido</label>
+            <input class="campo__entrada" id="perfil-apelido" maxlength="24" placeholder="Como querem te chamar" />
+          </div>
+
+          <div class="ajuste">
+            <div class="ajuste__cabecalho">
+              <label class="ajuste__rotulo" for="perfil-bio">Bio</label>
+              <span class="ajuste__valor" id="perfil-bio-conta">0/160</span>
+            </div>
+            <textarea
+              class="campo__entrada campo__area"
+              id="perfil-bio"
+              rows="3"
+              maxlength="160"
+              placeholder="Uma linha sobre você — fuso horário, o que você joga, quando costuma estar por aqui"
+            ></textarea>
+            <p class="ajuste__dica">
+              Aparece no seu cartão, para quem está no mesmo grupo. Fica neste
+              computador: o servidor esquece quando você fecha o CALL.
+            </p>
+          </div>
+
+          <div class="ajuste">
+            <span class="ajuste__rotulo">Avatar</span>
+            <div class="mascotes" id="perfil-mascotes"></div>
+            <p class="ajuste__dica">
+              Seis por enquanto, desenhados para o CALL. Foto própria fica para
+              depois.
+            </p>
+          </div>
+        </div>
+
+        <footer class="painel-perfil__rodape">
+          <button class="botao botao--sutil" type="button" id="perfil-cancelar">Cancelar</button>
+          <button class="botao botao--primario" type="button" id="perfil-salvar">Salvar</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ══ Cartão de alguém ═════════════════════════════════════════ -->
+    <div class="cortina oculto" id="cartao-dialogo">
+      <div class="cartao" role="dialog" aria-modal="true" aria-labelledby="cartao-nome">
+        <div class="cartao__capa" id="cartao-capa"></div>
+        <button class="icone cartao__fechar" type="button" id="cartao-fechar" title="Fechar" aria-label="Fechar">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+        </button>
+
+        <span class="avatar avatar--grande cartao__avatar" id="cartao-avatar"></span>
+
+        <div class="cartao__corpo">
+          <h3 class="cartao__nome" id="cartao-nome">—</h3>
+          <span class="cartao__etiquetas" id="cartao-etiquetas" hidden></span>
+          <p class="cartao__atividade" id="cartao-atividade" hidden></p>
+          <p class="cartao__bio" id="cartao-bio" hidden></p>
+          <p class="cartao__vazio" id="cartao-vazio">Ainda não escreveu nada sobre si.</p>
+          <div class="cartao__acoes" id="cartao-acoes" hidden></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ══ Ajustes de voz e vídeo ═══════════════════════════════════ -->
     <div class="cortina oculto" id="ajustes">
       <div class="ajustes" role="dialog" aria-modal="true" aria-labelledby="ajustes-titulo">
@@ -261,6 +367,8 @@
         <nav class="ajustes__abas" role="tablist">
           <button class="aba" type="button" role="tab" data-aba="voz" aria-selected="true">Voz</button>
           <button class="aba" type="button" role="tab" data-aba="tela" aria-selected="false">Transmissão</button>
+          <button class="aba" type="button" role="tab" data-aba="atalhos" aria-selected="false">Atalhos</button>
+          <button class="aba" type="button" role="tab" data-aba="atividade" aria-selected="false">Atividade</button>
         </nav>
 
         <div class="ajustes__corpo">
@@ -308,6 +416,29 @@
                 <span class="ajuste__valor" id="valor-volume">100%</span>
               </div>
               <input class="deslizante" type="range" id="ajuste-volume" min="0" max="200" step="5" />
+            </div>
+
+            <hr class="ajustes__risco" />
+
+            <label class="chave">
+              <input type="checkbox" id="ajuste-sons" />
+              <span class="chave__marca" aria-hidden="true"></span>
+              <span class="chave__texto">
+                <strong>Sons de entrada e saída</strong>
+                <span>Um sino curto avisa quem chegou e quem saiu da voz. Sobe na chegada, desce na saída</span>
+              </span>
+            </label>
+
+            <div class="ajuste ajuste--recuado" id="bloco-sons">
+              <div class="ajuste__cabecalho">
+                <label class="ajuste__rotulo" for="ajuste-volume-sons">Volume dos sons</label>
+                <span class="ajuste__valor" id="valor-volume-sons">70%</span>
+              </div>
+              <input class="deslizante" type="range" id="ajuste-volume-sons" min="0" max="100" step="5" />
+              <p class="ajuste__dica">
+                Independente do volume geral: abaixar a voz de todo mundo não
+                apaga os avisos. Solte o controle para ouvir o volume escolhido.
+              </p>
             </div>
 
             <hr class="ajustes__risco" />
@@ -403,6 +534,58 @@
               trocá-lo durante uma transmissão vale na hora. Quem recebe não paga
               por isso: quem codifica é quem transmite.
             </p>
+          </section>
+
+          <!-- ── Atalhos ─────────────────────────────────────────── -->
+          <section class="ajustes__painel" data-painel="atalhos" hidden>
+            <div class="ajuste">
+              <span class="ajuste__rotulo">Mutar/desmutar o microfone</span>
+              <button class="atalho-campo" type="button" id="atalho-mudo-campo">
+                <span class="atalho-campo__teclas" id="atalho-mudo-teclas"></span>
+              </button>
+              <p class="ajuste__dica">
+                Funciona em qualquer lugar — mesmo com o CALL minimizado na
+                bandeja, sem a janela em primeiro plano.
+              </p>
+            </div>
+
+            <button class="botao botao--sutil" type="button" id="atalho-mudo-limpar">
+              Remover atalho
+            </button>
+
+            <p class="ajuste__dica ajuste__dica--solta">
+              Fechar a janela do CALL agora minimiza para a bandeja, em vez de
+              encerrar — a voz e este atalho continuam funcionando. Para sair
+              de verdade, use "Sair" no ícone da bandeja.
+            </p>
+          </section>
+
+          <!-- ── Atividade ───────────────────────────────────────── -->
+          <section class="ajustes__painel" data-painel="atividade" hidden>
+            <label class="chave">
+              <input type="checkbox" id="ajuste-atividade" />
+              <span class="chave__marca" aria-hidden="true"></span>
+              <span class="chave__texto">
+                <strong>Mostrar o que estou usando</strong>
+                <span>O grupo vê o nome do programa que está na sua frente</span>
+              </span>
+            </label>
+
+            <!-- Um recurso que conta aos outros o que você faz precisa dizer,
+                 na própria tela, exatamente onde está o limite. -->
+            <div class="ajuste ajuste--recuado" id="bloco-atividade">
+              <p class="ajuste__dica">
+                Vai <strong>só o nome do programa</strong> — "Google Chrome",
+                "Rocket League". Nunca o título da janela, então o site aberto,
+                o nome do arquivo e o assunto do e-mail não saem daqui.
+              </p>
+              <p class="ajuste__dica">
+                Aparece para quem está no mesmo grupo, e some quando você fecha
+                o CALL. Nada disso é gravado: o servidor esquece assim que você
+                desconecta. A área de trabalho vazia não conta como programa.
+              </p>
+              <p class="ajuste__dica" id="dica-atividade-agora">—</p>
+            </div>
           </section>
         </div>
       </div>

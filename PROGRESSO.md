@@ -772,6 +772,121 @@ ignorar o próprio alarme.
 
 ---
 
+## Iteração 14 — Perfil: quem você é para o grupo
+
+**Motivo:** entrar no CALL era digitar um apelido e cair direto na aplicação.
+Não havia nada seu ali dentro: a lista de participantes era um monte de
+iniciais cinzas em círculos iguais, e a única coisa que distinguia uma pessoa
+da outra era o texto do lado. Quem é quem numa coluna de 212 px é uma pergunta
+que se responde em um décimo de segundo ou não se responde.
+
+**Construído:** perfil com apelido, bio e mascote. Um painel próprio para
+editar o seu, e um cartão para ver o de outra pessoa — clicar em alguém na
+lista de presentes ou na árvore de canais abre o cartão dela; clicar em si
+mesmo abre o editor, porque "quem é essa pessoa?" só é uma pergunta
+interessante quando a pessoa é outra.
+
+### Os seis mascotes
+
+São SVG escritos à mão em `avatares.js`, sem arquivo de imagem e sem
+dependência: seis PNG decentes custariam mais que toda a interface, e vetor é o
+que permite a mesma arte servir a 28 px na lista e a 88 px no cartão.
+
+O que os faz parecerem uma família, e não seis desenhos avulsos: mesma caixa de
+64×64, mesma luz vinda de cima e da esquerda, mesmo tratamento de olho, e uma
+cor dominante por bicho bem separada das outras na roda — índigo, laranja,
+rosa, castanho, ciano e verde. Nada de gradiente: `<defs>` pede `id`, e o mesmo
+`id` repetido dezenas de vezes na mesma página é lixo. A profundidade vem de
+camadas chapadas.
+
+**O desenho foi julgado onde ele é usado, e não onde ele é bonito.**
+`testes/avatares.html` monta a mesma arte a 160, 88, 56 e 28 px, e a fileira de
+28 px fica sobre a superfície real da coluna de participantes. Três reprovações
+vieram dessa prova de contato, e nenhuma delas apareceria lendo o código:
+
+| O que se via | Por quê | O que mudou |
+| --- | --- | --- |
+| A capivara era um urso | Cabeça oval com focinho claro e redondo — a receita exata de um urso | Cabeça em pão de topo achatado, orelhas pequenas nos cantos, e um focinho blocudo com nariz largo e chapado |
+| O axolote virava um borrão rosa | As guelras eram folhinhas coladas na cabeça e sumiam | Três hastes por lado com tufos nas pontas, bem para fora da silhueta |
+| O dragão parecia um sapo | Chifres finos e focinho largo e claro | Chifres em cunha grossa de dois tons, crista serrilhada e barbatanas na mandíbula |
+
+A silhueta é o que decide aos 28 px; a cor só desempata. Foi por isso que a
+correção nunca foi "mudar o tom", e sim mudar a forma.
+
+O mascote de quem nunca escolheu é sorteado do próprio identificador. Sem isso
+um grupo recém-criado teria seis avatares idênticos — e o avatar deixaria de
+distinguir alguém justamente antes de qualquer ajuste.
+
+### O que o servidor faz com isso, e o que ele não faz
+
+Perfil não é conta. Ele mora no computador da pessoa, viaja na saudação como o
+apelido sempre viajou, e o servidor esquece quando a conexão cai. Duas decisões
+que parecem detalhe e não são:
+
+**O servidor não conhece a lista de mascotes.** Ele recorta o identificador
+para minúsculas, dígitos e hífen, com teto de 24 caracteres, e repassa. Mascote
+é assunto da interface — uma versão nova do aplicativo com um sétimo desenho
+não pode depender de o servidor hospedado ser atualizado junto. Quem não
+reconhece o identificador desenha as iniciais.
+
+**Trocar de perfil não pode ser um jeito de trocar de identidade.** A mensagem
+`perfil` traz apelido, mascote e bio, e o campo `usuario` dela é ignorado de
+propósito. É o `usuario` que atribui autoria às mensagens e decide quem é o
+dono do grupo: relê-lo no meio da sessão deixaria qualquer um se apresentar
+como outra pessoa depois de já ter sido admitido. Há um teste só para isso —
+ele troca o perfil mandando o `usuario` de outra pessoa e depois confere de
+quem é a mensagem seguinte.
+
+O apelido e o mascote são **gravados na mensagem**, e não buscados na hora de
+ler: o histórico é de quem escreveu naquele dia. Isso obrigou um
+`#[serde(default)]` no campo novo do modelo — sem ele, uma linha antiga do
+`mensagens.jsonl` faria a desserialização falhar e o histórico inteiro do canal
+sumiria em silêncio na primeira atualização do servidor. O teste de persistência
+confere justamente as duas: uma mensagem gravada antes do campo existir e uma
+gravada depois.
+
+### Duas armadilhas do ferramental, e não do produto
+
+**1. `aguardar` entrega o anúncio mais antigo da fila.** O teste do perfil
+pedia o `entrou` da pessoa que acabara de chegar e recebia o de outra, de uma
+seção anterior que nenhum teste tinha consumido. A suíte ganhou um
+`aguardarQual`, que espera a mensagem que satisfaz um teste em vez da próxima
+— "aconteceu?" e "aconteceu com esta pessoa?" são perguntas diferentes.
+
+**2. O relógio virtual corre à frente da rede.** A captura de tela do Chromium
+headless dispara no `load` da página, então uma cena que precisa do servidor
+não está pronta a essa altura. `--virtual-time-budget` parecia a saída e é uma
+armadilha: ele adianta os relógios sem adiantar a rede, e o limite de oito
+segundos da conexão estourava antes de o servidor responder — a cena aparecia
+com "O servidor não respondeu a tempo" sobre uma tela vazia. A saída foi
+segurar o `load` em tempo real, com um recurso lento servido pelo
+`servir.mjs` (`/segurar?ms=`), que é o único relógio com que a rede concorda.
+
+### Custo, medido
+
+Os dois arquivos novos do front-end somam **22 KB** — `avatares.js` com 14 KB
+(os seis desenhos) e `perfil.js` com 8 KB. Zero dependências novas.
+
+O binário do servidor ficou em **0,48 MB**, o mesmo da iteração anterior. A
+atribuição honesta: esta compilação carrega também a atividade em primeiro
+plano, que é de outra frente de trabalho no mesmo arquivo.
+
+### Verificado
+
+| O quê | Como |
+| --- | --- |
+| Protocolo | 74 verificações, 14 delas novas: mascote e bio na saudação e no anúncio de entrada, troca de perfil difundida sem eco para quem trocou, quem entra depois vendo o perfil trocado e não o da saudação, os tetos do servidor, e a identidade que não se troca |
+| Aplicação real | 40 verificações conduzindo a janela num quadro — a fita de mascotes da entrada, o painel com prévia ao vivo, o contador de bio contando emoji como um caractere, cancelar que não grava, e o cartão de outra pessoa |
+| Duas pessoas | A própria página de teste entra no grupo por um WebSocket cru, com mascote e bio. É o que prova o cartão e a troca de perfil chegando de fora sem depender de duas instâncias e do foco de janela |
+| Desenho | Prova de contato em quatro tamanhos, e captura da aplicação montada com cinco pessoas na lista |
+| Painel de ajustes | 22 verificações, sem regressão |
+
+**Ressalva honesta:** o que a suíte de duas pessoas prova é a sinalização e a
+interface. O segundo participante é um WebSocket, não outra instância do CALL —
+ele não abre microfone nem negocia mídia, e não é disso que este recurso trata.
+
+---
+
 ## Estado final medido
 
 ### Peso em disco
@@ -827,16 +942,167 @@ existe no sistema.
 
 ---
 
+## Iteração 15 — Som, tempo e presença
+
+**Motivo:** entrar e sair de uma call era um evento sem eco. A lista mudava, e
+era só. Não havia como saber há quanto tempo a conversa durava, quem tinha
+passado por ela, nem o que as outras pessoas estavam fazendo do outro lado.
+
+### O sino: nenhum byte de áudio no instalador
+
+**Construído:** quatro avisos — você entrou, você saiu, alguém entrou, alguém
+saiu — sintetizados nota por nota em `sons.js`, dentro do mesmo grafo que toca
+a voz. Não há `.wav` no pacote, não há sample de banco de efeitos, e não há
+consulta a serviço nenhum.
+
+É **um som só, lido de quatro maneiras**: um sino de vidro de duas notas em
+quinta justa. Sobe na chegada, desce na saída; tem grave quando o evento é
+seu, e é leve quando é de outra pessoa. Direção diz o quê, peso diz de quem.
+
+Três decisões respondem por quase todo o resultado: parciais harmônicas com
+tempos de queda diferentes (os agudos morrem primeiro, que é o que separa
+sino de bipe); ataque de 6 ms (abaixo estala, acima some no meio da conversa);
+e a razão 3:2, o intervalo mais consonante depois da oitava — é o que permite
+ouvir isto quarenta vezes por noite sem criar irritação.
+
+**"Agradável" não passa em teste, então virou número.** `testes/sons.html`
+renderiza os quatro sons em `OfflineAudioContext` e mede as amostras:
+
+| Medida | Alvo | `entrei` | `entrou` | `sai` | `saiu` |
+| --- | --- | --- | --- | --- | --- |
+| Pico | −22 a −10 dBFS | −13,8 | −18,9 | −14,8 | −20,1 |
+| Maior degrau entre amostras | < 15% do pico | 10,8% | 11,0% | 9,8% | 10,3% |
+| Duração até −40 dB | < 700 ms | 534 ms | 539 ms | 599 ms | 605 ms |
+
+**O teste reprovou o projeto na primeira execução.** Com o ganho "óbvio" de
+1,0, `entrei` saiu a **−1,1 dBFS** — à beira do corte, e alto o bastante para
+assustar quem está de fone. Quatro parciais e duas notas se somam
+construtivamente, e a intuição errou por 13 dB. Os ganhos em `RECEITAS` são o
+resultado da medição, e não uma estimativa.
+
+O teste também prova o gesto, e não só o nível: via Goertzel nas duas notas,
+que a frequência sobe ao entrar e desce ao sair; que `entrei` tem 26,7 dB mais
+grave que `entrou`; e que o evento dos outros é 5 dB mais discreto que o seu.
+
+### Tempo em call e quem passou por ela
+
+**Construído:** cronômetro na linha do estado, no rodapé da voz, e uma seção
+no rodapé da coluna de presentes com quem esteve na call e já saiu — nome e
+quanto tempo ficou, uma linha por pessoa, somando quem sai e volta.
+
+**A regra difícil é sobre honestidade.** De quem já estava na sala quando você
+chegou não dá para saber desde quando: o servidor não guarda o instante em que
+cada um entrou na voz. Essas linhas levam um `+` de "pelo menos", e somar um
+piso com um valor exato dá outro piso — nunca um total. Mostrar o número
+redondo seria mais bonito e seria mentira.
+
+A lógica saiu do `app.js` para `tempo.js` justamente para poder ser exercitada
+sem navegador: o relógio entra por injeção, então uma call de duas horas custa
+o mesmo que uma de dois segundos. As 31 verificações cobrem o que a intuição
+erra — tempo negativo (relógio do sistema andando para trás ao sair da
+suspensão) não virando `-1:-1`, truncar em vez de arredondar para o cronômetro
+não mostrar `2` antes de dois segundos, e um `saiu-voz` repetido não inventar
+uma linha de zero segundo.
+
+### Atividade: o nome do programa, nunca o título da janela
+
+**Construído:** o que cada pessoa está usando, em tempo real, na lista de
+presentes e no cartão de perfil.
+
+**A decisão que define o recurso é o que fica de fora.** O título da janela diz
+"Contrato de rescisão — Word", "consulta oncologista — Google Chrome",
+"namorada (2) — WhatsApp". O nome do programa diz "Word". Um se conta aos
+amigos sem pensar; o outro não se conta a ninguém sem querer. Sai só o segundo.
+
+O nome de exibição vem do `FileDescription` do próprio executável — o mesmo
+campo que o Gerenciador de Tarefas mostra —, e é de onde saem "Google Chrome"
+em vez de `chrome.exe` sem lista curada e sem consultar serviço nenhum. Sem
+descrição, o nome do arquivo é arrumado (`RocketLeague` → `Rocket League`, sem
+quebrar siglas como `VLC`).
+
+**Sem dependência nova:** as seis funções do Windows são declaradas à mão em
+`atividade.rs`. Uma caixa inteira para chamar `GetForegroundWindow` custaria
+mais ao instalador do que o recurso vale.
+
+Duas regras governam o custo:
+
+| Regra | Efeito |
+| --- | --- |
+| Anuncia só depois de **duas leituras seguidas** | Alt-Tab de dois segundos numa partida não vira anúncio nem mensagem na rede |
+| Anuncia só **quando muda** | Custo de rede em repouso: zero. Em uso: uma mensagem curta por troca real de programa |
+
+Sair, ao contrário, é imediato: deixar o nome velho na tela seria afirmar algo
+que já não é verdade por até dois intervalos.
+
+O `explorer` é filtrado, e é ele que obriga a lista de ocultos a existir — é o
+dono da área de trabalho, então fica em primeiro plano toda vez que nada mais
+está. Sem isso, "Windows Explorer" seria o que o grupo mais veria.
+
+O painel mostra ao vivo a frase que está no ar (*"Agora o grupo vê: Visual
+Studio Code"*). Ler a promessa é uma coisa; conferir a frase é outra.
+
+### Custo medido
+
+| Métrica | 0.5.0 | 0.6.0 | Variação |
+| --- | --- | --- | --- |
+| Instalador NSIS | 1 867 495 B | 1 939 221 B | +71 726 B (+3,8%) |
+| `call.exe` | — | 4 899 328 B | — |
+| Sidecar `sinalizacao.exe` | 501 248 B | 505 344 B | +4 096 B |
+| `call.exe` em repouso | 26 MB | **32,1 MB** | +6 MB |
+| — em memória privada | 5,7 MB | 7,9 MB | +2,2 MB |
+
+**O teto de 30 MB deixou de ser cumprido, e agora em repouso.** Na iteração 13
+o executável ficava em 26 MB parado e estourava a meta só em uso, com 31 MB.
+Agora a tela de entrada sozinha custa 32,1 MB. Medido 15 s após abrir o
+`target/release/call.exe`, na tela de entrada, com `CALL_INSTANCIAS_MULTIPLAS`
+para não colidir com uma instância aberta.
+
+Cinco módulos de JavaScript entraram desde então — `avatares.js`, `perfil.js`,
+`sons.js`, `tempo.js` e `atividade.js` —, e o custo deles não é o texto no
+disco: é o que o WebView2 aloca para o DOM dos mascotes em SVG, para o grafo
+de áudio que passou a existir fora da voz, e para os dois relógios novos. O
+número está registrado como saiu, e não arredondado para dentro da meta.
+Reduzi-lo é trabalho da próxima iteração, e não deste release.
+
+Os 70 KB cobrem **três recursos e o perfil da iteração 14 inteiro**: os quatro
+sons custam os 9 982 B de `sons.js` e mais nada, porque não há áudio a
+embarcar — era exatamente a aposta da síntese. `tempo.js` são 3 570 B,
+`atividade.js` 5 736 B, e `atividade.rs` entra no executável sem trazer caixa
+nenhuma junto.
+
+### Limites honestos
+
+O tempo de quem já estava na call antes de você é um piso, e a interface diz
+isso com o `+` em vez de esconder. A atividade depende do `FileDescription`
+que cada executável declara: quem não declara nada aparece com o nome do
+arquivo arrumado, que às vezes é sem graça — errar para menos aqui mostra um
+nome feio, e errar para mais seria inventar o que a pessoa está usando.
+
+E a atividade é um recurso do Windows: `atividade.rs` compila fora dele, mas
+devolve sempre `None`. O CALL só é distribuído para Windows, então isto é
+fronteira declarada, e não dívida.
+
+---
+
 ## Testes automatizados
 
 | Suíte | Comando | Cobertura |
 | --- | --- | --- |
-| Protocolo de sinalização | `node testes/sinalizacao.test.mjs` | 46 verificações: criação de grupo, convite recusado, entrada por código, voz isolada por canal, encaminhamento de sinais, difusão de estado, mensagens e histórico, regra de dono, remoção que tira gente da voz, e persistência entre execuções do servidor |
+| Protocolo de sinalização | `node testes/sinalizacao.test.mjs` | 74 verificações: criação de grupo, convite recusado, entrada por código, voz isolada por canal, encaminhamento de sinais, difusão de estado, mensagens e histórico, regra de dono, remoção que tira gente da voz, persistência entre execuções do servidor, o cartão de perfil que viaja na saudação, e a atividade — repassada, recortada no teto de 40 caracteres, presente no resumo de quem chega depois, e desligada tanto por texto em branco quanto pela ausência do campo |
 | Malha WebRTC e mídia | `powershell -File testes/rodar-malha.ps1` | 44 verificações no próprio motor Chromium: entrada no canal de voz, conexão nos dois lados, áudio com bytes recebidos, vídeo com quadros decodificados, renegociação ao encerrar a tela, limpeza de elos — e, desde a iteração 13, o SDP do Opus, o tráfego de áudio medido nos dois extremos de qualidade, o perfil e o codec da tela efetivamente negociado, o som que acompanha a transmissão, e a porta de ruído renderizada em `OfflineAudioContext` |
 | Painel de ajustes | `powershell -File testes/rodar-interface.ps1` | 22 verificações conduzindo a aplicação real dentro de um quadro: controles refletindo o estado, medidor recebendo nível da porta de ruído, dispositivos enumerados com nome, abas, persistência das escolhas — e os erros de execução da própria aplicação, recolhidos |
 | Convite por link | `powershell -File testes/convite.ps1` | 8 verificações na janela real: o esquema `call://` registrado, o link com o aplicativo aberto trocando de grupo sem abrir segunda instância, e o link com o aplicativo fechado abrindo o CALL e esperando a tela de entrada — os dois provados pelo canal em que a mensagem escrita depois caiu |
+| Perfil | `powershell -File testes/rodar-perfil.ps1` | 40 verificações conduzindo a aplicação real: a fita de mascotes da tela de entrada, o painel com prévia ao vivo e contador de bio, cancelar que não grava, e — com uma segunda pessoa entrando no grupo por um WebSocket cru — o cartão dela e a troca de perfil chegando de fora |
+| Sons de entrada e saída | `powershell -File testes/rodar-sons.ps1` | 33 medições nas amostras renderizadas em `OfflineAudioContext`: pico dentro da faixa alvo, ausência de degrau no ataque, começo e fim em silêncio real, duração abaixo de 700 ms, e — via Goertzel nas duas notas — que o gesto sobe ao entrar e desce ao sair, que o evento próprio tem grave e o dos outros não, e que o intervalo continua sendo uma quinta justa |
+| Tempo em call | `node testes/tempo.test.mjs` | 31 verificações com relógio injetado: formatação do cronômetro nas viradas de minuto e de hora, truncamento em vez de arredondamento, tempo negativo de relógio que anda para trás, e o histórico — somar quem sai e volta numa linha só, a contaminação do "pelo menos" quando uma passagem tem começo desconhecido, saída sem entrada que não cria linha, e a limpeza ao trocar de call |
+| Atividade | `node testes/atividade.test.mjs` | 28 verificações da política: a área de trabalho e as cascas do Windows que não viram atividade, caracteres de controle e nomes absurdos que não estragam a coluna, a exigência de duas leituras seguidas antes de anunciar, a saída imediata, a leitura que falha sem apagar o que estava no ar, e o desligamento que limpa a linha dos outros em vez de congelá-la |
 
 Todas passam integralmente na última execução.
+
+Duas páginas servem ao desenho, e não à verificação: `testes/avatares.html` é
+a prova de contato dos mascotes em quatro tamanhos, e `testes/cena.html` leva a
+aplicação a um estado e para ali, para a captura — é o que permite olhar o
+resultado em vez de deduzi-lo da marcação.
 
 Além delas, três roteiros dirigem a janela real e deixam capturas em
 `testes/capturas`: `testes/inspecionar.ps1` (uma instância, da tela de entrada

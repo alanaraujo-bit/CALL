@@ -5,8 +5,8 @@ texto**, **chat de voz** e **transmissão de tela**. Interface inteiramente em
 português do Brasil.
 
 Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
-empacotador e sem Electron. O instalador tem 1,71 MB e o executável ocupa
-26 MB de memória residente em repouso — 5,7 MB deles em memória privada.
+empacotador e sem Electron. O instalador tem 1,85 MB e o executável ocupa
+32 MB de memória residente em repouso — 7,9 MB deles em memória privada.
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
 instala com um clique, sem sair da tela. Página do projeto:
@@ -21,18 +21,27 @@ instala com um clique, sem sair da tela. Página do projeto:
 
 ## Instalação
 
-Execute `target/release/bundle/nsis/CALL_0.1.0_x64-setup.exe`. A instalação é
-por usuário e não exige privilégios de administrador. O único requisito é o
-**WebView2**, presente por padrão no Windows 10 e 11.
+Baixe o instalador da versão mais recente em
+**[Releases](https://github.com/alanaraujo-bit/CALL/releases/latest)** e
+execute. A instalação é por usuário e não exige privilégios de administrador.
+O único requisito é o **WebView2**, presente por padrão no Windows 10 e 11.
+
+Quem já tem o CALL instalado não precisa baixar nada: o próprio aplicativo
+detecta a versão nova e oferece a atualização.
 
 ---
 
 ## Como usar
 
-### 1. Abra e escolha um apelido
+### 1. Abra, escolha um apelido e um mascote
 
 Não há nada a configurar. O aplicativo já vem apontado para o servidor oficial
 do CALL, hospedado — ninguém precisa deixar máquina ligada nem passar IP.
+
+A tela de entrada oferece seis mascotes — coruja, raposa, axolote, capivara,
+polvo e dragão —, desenhados para o CALL. Quem não escolher nenhum ganha um
+sorteado, para que ninguém apareça como mais um círculo cinza igual ao dos
+outros.
 
 O servidor apenas apresenta os participantes uns aos outros e guarda a
 estrutura dos grupos e o histórico dos canais de texto. **Áudio e vídeo nunca
@@ -64,6 +73,17 @@ Clique num canal de texto para ler e escrever. Clique num canal de voz para
 entrar nele — só aí o microfone é capturado. Uma vez na voz, use **Microfone**
 para silenciar e **Transmitir** para compartilhar uma janela ou a tela inteira.
 
+Entrar e sair da voz toca um **sino curto** — sobe na chegada, desce na saída,
+e tem peso de grave quando o evento é seu. É um som só, lido de quatro
+maneiras: direção diz o quê, peso diz de quem. Nenhum arquivo de áudio é
+distribuído com o aplicativo; o sino é construído nota por nota no mesmo grafo
+de áudio que toca a voz, e sai pelo dispositivo escolhido em "Saída de som".
+
+O rodapé da voz mostra o **tempo nesta call**, e a coluna de presentes ganha,
+no rodapé, quem **esteve na call e já saiu**, com quanto tempo ficou. De quem
+já estava na sala quando você chegou não dá para saber desde quando, e essas
+linhas levam um `+` de "pelo menos" — o número é um piso, e não um total.
+
 Quem cria o grupo é o dono, e só ele cria, renomeia e remove categorias e
 canais. O convite dá acesso à conversa, não à estrutura.
 
@@ -85,8 +105,32 @@ perfil durante uma transmissão vale na hora. O **som do sistema** viaja numa
 trilha separada da sua voz, no teto do codec e sem os filtros de voz — um
 cancelador de eco destrói música e efeito de jogo.
 
-O volume de cada pessoa fica no botão direito sobre o nome dela, na lista de
-presentes, e é lembrado entre sessões.
+Em **Atividade**: mostrar ao grupo o programa que está na sua frente. Vai **só
+o nome do programa** — "Google Chrome", "Rocket League" —, e nunca o título da
+janela: o site aberto, o nome do arquivo e o assunto do e-mail não saem daqui.
+O nome vem da descrição que o próprio executável declara, a mesma que o
+Gerenciador de Tarefas mostra, sem consultar serviço nenhum. Um programa só é
+anunciado depois de ficar em foco por duas leituras seguidas, então passar
+pelo navegador durante uma partida não vira anúncio; sair é imediato. O painel
+mostra ao vivo a frase que está no ar, para conferir em vez de confiar. A área
+de trabalho vazia não conta, e o recurso se desliga num clique.
+
+### 5. Deixe o perfil com a sua cara
+
+Clique no seu nome, no canto inferior esquerdo, para abrir **Meu perfil**:
+apelido, uma **bio** de até 160 caracteres e o **mascote**. A prévia no topo
+mostra, enquanto você digita, exatamente o que os outros vão ver. Trocar
+qualquer coisa vale na hora, inclusive com um grupo aberto.
+
+Clique em alguém — na lista de presentes ou embaixo de um canal de voz — para
+ver o cartão dessa pessoa: mascote, bio, se é dona do grupo e o que ela está
+usando. O volume dela também fica ali (e continua no botão direito, para quem
+já tinha o atalho na mão). O volume é lembrado entre sessões.
+
+O perfil fica **neste computador** e viaja junto de você a cada entrada em um
+grupo. O servidor não guarda nada disso: ele repassa aos outros enquanto você
+está conectado e esquece quando você fecha o CALL. Não é conta e não autentica
+ninguém — quem troca de máquina começa de novo.
 
 ---
 
@@ -116,6 +160,12 @@ o servidor funciona igual e esquece tudo ao fechar — é o caso do sidecar.
 | `src/app.js` | Estado da aplicação, canais, conversa, voz e palco |
 | `src/sinal.js` | Cliente do canal de sinalização |
 | `src/rtc.js` | Malha WebRTC com negociação perfeita |
+| `src/avatares.js` | Os seis mascotes, desenhados em SVG |
+| `src/perfil.js` | Painel do próprio perfil e cartão de outra pessoa |
+| `src/sons.js` | O sino de entrada e saída, sintetizado |
+| `src/tempo.js` | Tempo em call e histórico de quem passou por ela |
+| `src/atividade.js` | O que mostrar do programa em uso, e com que calma |
+| `src-tauri/src/atividade.rs` | Qual programa está em primeiro plano |
 | `src-tauri/src/lib.rs` | Comandos nativos, permissões e ajuste de memória |
 | `servidor/src/main.rs` | Protocolo do servidor |
 | `servidor/src/modelo.rs` | Grupos, mensagens e persistência em disco |

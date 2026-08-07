@@ -114,6 +114,14 @@ pub struct Mensagem {
     pub canal: String,
     pub autor: String,
     pub apelido: String,
+    /// Mascote de quem escreveu, no momento em que escreveu.
+    ///
+    /// `default` porque o `mensagens.jsonl` de um servidor que ja rodava nao
+    /// tem este campo: sem ele, uma linha antiga faria a desserializacao
+    /// falhar e o historico inteiro do canal sumiria em silencio na primeira
+    /// atualizacao do servidor.
+    #[serde(default)]
+    pub avatar: String,
     pub texto: String,
     pub em: u64,
 }

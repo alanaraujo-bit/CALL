@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CALL — folha de mascotes</title>
+    <link rel="stylesheet" href="../src/estilo.css" />
+    <style>
+      /* Prova de contato: a arte é julgada nos tamanhos em que ela vai
+         realmente aparecer, e sobre as mesmas superfícies do aplicativo. */
+      body {
+        overflow: auto;
+        padding: 24px;
+        background: var(--fundo);
+      }
+      .faixa {
+        display: flex;
+        gap: 18px;
+        align-items: flex-end;
+        margin-bottom: 26px;
+        flex-wrap: wrap;
+      }
+      .titulo {
+        font-size: 12px;
+        color: var(--texto-3);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 10px;
+      }
+      .peca {
+        text-align: center;
+      }
+      .peca span.nome {
+        display: block;
+        font-size: 11px;
+        color: var(--texto-2);
+        margin-top: 6px;
+      }
+      .g160 .avatar {
+        width: 160px;
+        height: 160px;
+      }
+      .g88 .avatar {
+        width: 88px;
+        height: 88px;
+      }
+      .g56 .avatar {
+        width: 56px;
+        height: 56px;
+      }
+      .lista {
+        width: 212px;
+        background: var(--superficie-2);
+        border: 1px solid var(--borda);
+        border-radius: 10px;
+        padding: 8px;
+      }
+      .linha {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 5px 7px;
+        border-radius: 7px;
+        font-size: 13px;
+      }
+      .linha:hover {
+        background: var(--superficie-3);
+      }
+    </style>
+  </head>
+  <body>
+    <p class="titulo">160 px — inspeção do desenho</p>
+    <div class="faixa g160" id="enormes"></div>
+
+    <p class="titulo">88 px — cartão de perfil</p>
+    <div class="faixa g88" id="grandes"></div>
+
+    <p class="titulo">56 px — seletor</p>
+    <div class="faixa g56" id="medios"></div>
+
+    <p class="titulo">28 px — coluna de participantes (o tamanho que decide)</p>
+    <div class="faixa">
+      <div class="lista" id="pequenos"></div>
+    </div>
+
+    <script type="module">
+      import { AVATARES, pintarAvatar } from "../src/avatares.js";
+
+      const NOMES = ["Alan", "Bruna", "Caio", "Dani", "Edu", "Fê"];
+
+      for (const [i, a] of AVATARES.entries()) {
+        for (const [alvo, comNome] of [
+          [document.getElementById("enormes"), false],
+          [document.getElementById("grandes"), true],
+          [document.getElementById("medios"), false],
+        ]) {
+          const peca = document.createElement("div");
+          peca.className = "peca";
+          const av = document.createElement("span");
+          av.className = "avatar";
+          pintarAvatar(av, { avatar: a.id, apelido: a.nome });
+          peca.append(av);
+          if (comNome) {
+            const nome = document.createElement("span");
+            nome.className = "nome";
+            nome.textContent = a.nome;
+            peca.append(nome);
+          }
+          alvo.append(peca);
+        }
+
+        const linha = document.createElement("div");
+        linha.className = "linha";
+        const av = document.createElement("span");
+        av.className = "avatar";
+        pintarAvatar(av, { avatar: a.id, apelido: NOMES[i] });
+        linha.append(av, Object.assign(document.createElement("span"), { textContent: NOMES[i] }));
+        document.getElementById("pequenos").append(linha);
+      }
+
+      const semArte = document.createElement("div");
+      semArte.className = "linha";
+      const iniciais = document.createElement("span");
+      iniciais.className = "avatar";
+      pintarAvatar(iniciais, { apelido: "Sem Mascote" });
+      semArte.append(iniciais, Object.assign(document.createElement("span"), { textContent: "Sem mascote" }));
+      document.getElementById("pequenos").append(semArte);
+    </script>
+  </body>
+</html>

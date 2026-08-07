@@ -1,6 +1,10 @@
 import { Sinal } from "./sinal.js";
 import { Malha, PERFIS_TELA, PERFIL_TELA_PADRAO, acharPerfilDeTela } from "./rtc.js";
 import { MotorDeAudio, AUDIO_PADRAO, BITRATES_AUDIO, listarDispositivos } from "./audio.js";
+import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
+import { Vigia } from "./atividade.js";
+import { avatarSugerido, iniciais, pintarAvatar } from "./avatares.js";
+import { editarPerfil, montarEscolhaDeMascotes, mostrarCartao, saneado } from "./perfil.js";
 
 /* ═══ Atalhos ═══════════════════════════════════════════════════ */
 
@@ -37,6 +41,12 @@ const estado = {
   /** Identidade estável entre execuções. Não autentica ninguém: serve para o
    *  servidor reconhecer a mesma pessoa e atribuir autoria às mensagens. */
   usuario: "",
+  /** Mascote escolhido — um identificador de `avatares.js`, ou vazio para
+   *  aparecer com as iniciais. */
+  avatar: "",
+  /** Uma linha sobre você, mostrada no cartão para quem está no mesmo grupo.
+   *  Fica neste computador e viaja na saudação; o servidor não a guarda. */
+  bio: "",
   /** Grupos que este computador conhece — [{ codigo, nome }]. O servidor é a
    *  fonte da verdade; isto é só a lista de atalhos da coluna da esquerda. */
   atalhos: [],
@@ -63,9 +73,18 @@ const estado = {
   perfilTela: PERFIL_TELA_PADRAO,
   /** Compartilhar o som do sistema junto com a tela. */
   audioDaTela: true,
+  /** Mostrar aos outros que aplicativo está em primeiro plano aqui. */
+  mostrarAtividade: true,
+  /** O que já foi anunciado ao grupo. Não é preferência: é o que está no ar. */
+  minhaAtividade: null,
   /** Volume por pessoa, guardado pelo identificador estável e não pelo `id`
    *  da sessão — quem sobe o volume de alguém quer isso amanhã também. */
   volumes: new Map(), // usuario -> 0 a 2
+
+  /** Atalho global de mutar/desmutar, como string de aceleração do Tauri
+   *  (ex.: `"Ctrl+Shift+KeyM"`) — `null` quando nenhum está definido. Global
+   *  de verdade: funciona com a janela sem foco ou escondida na bandeja. */
+  atalhoMudo: null,
 };
 
 const audiosRemotos = new Map(); // id -> HTMLAudioElement de sustentação
@@ -75,6 +94,29 @@ const medidores = new Map(); // id -> { no, analisador, dados, ateQuando, faland
 
 const motor = new MotorDeAudio();
 let cronometroVoz = null;
+
+/** Quem está na call e quem já passou por ela. A regra mora em `tempo.js`. */
+const historicoDaCall = new HistoricoDaCall();
+
+/**
+ * O que este computador está usando. Só olha enquanto há grupo — fora dele
+ * não há a quem contar — e só fala quando muda.
+ */
+const vigia = new Vigia({
+  ler: () => invocar("atividade_em_foco"),
+  aoMudar: (atividade) => {
+    estado.minhaAtividade = atividade;
+    const eu = estado.membros.get(estado.meuId);
+    if (eu) eu.atividade = atividade;
+    anunciarEstado();
+    redesenhar();
+    mostrarAtividadeAtual();
+  },
+});
+
+/** Início da call atual e o relógio de um segundo que atualiza o rodapé. */
+let inicioDaCall = 0;
+let relogioDaCall = null;
 
 const sinal = new Sinal();
 const malha = new Malha({
@@ -102,6 +144,9 @@ function carregarPreferencias() {
         ? SERVIDOR_PADRAO
         : bruto.servidor;
     estado.usuario = bruto.usuario || "";
+    const perfil = saneado({ avatar: bruto.avatar, bio: bruto.bio });
+    estado.avatar = perfil.avatar;
+    estado.bio = perfil.bio;
     estado.atalhos = Array.isArray(bruto.atalhos)
       ? bruto.atalhos.filter((a) => a && typeof a.codigo === "string")
       : [];
@@ -113,6 +158,10 @@ function carregarPreferencias() {
     }
     if (PERFIS_TELA.some((p) => p.id === bruto.perfilTela)) estado.perfilTela = bruto.perfilTela;
     if (typeof bruto.audioDaTela === "boolean") estado.audioDaTela = bruto.audioDaTela;
+    if (typeof bruto.mostrarAtividade === "boolean") {
+      estado.mostrarAtividade = bruto.mostrarAtividade;
+    }
+    if (typeof bruto.atalhoMudo === "string") estado.atalhoMudo = bruto.atalhoMudo;
     estado.volumes = new Map(Array.isArray(bruto.volumes) ? bruto.volumes : []);
   } catch {
     /* preferências ilegíveis: segue com os padrões */
@@ -124,6 +173,11 @@ function carregarPreferencias() {
     estado.usuario = crypto.randomUUID().replace(/-/g, "");
     salvarPreferencias();
   }
+
+  // Quem nunca escolheu ganha um mascote sorteado do próprio identificador.
+  // Sem isto, um grupo recém-criado teria seis avatares idênticos — e o avatar
+  // deixaria de distinguir alguém justamente antes de qualquer ajuste.
+  if (!estado.avatar) estado.avatar = avatarSugerido(estado.usuario);
 }
 
 function salvarPreferencias() {
@@ -133,10 +187,14 @@ function salvarPreferencias() {
       apelido: estado.apelido,
       servidor: estado.servidor,
       usuario: estado.usuario,
+      avatar: estado.avatar,
+      bio: estado.bio,
       atalhos: estado.atalhos,
       audio: estado.audio,
       perfilTela: estado.perfilTela,
       audioDaTela: estado.audioDaTela,
+      mostrarAtividade: estado.mostrarAtividade,
+      atalhoMudo: estado.atalhoMudo,
       volumes: [...estado.volumes],
     })
   );
@@ -339,6 +397,13 @@ function prepararEntrada() {
   $("campo-apelido").value = estado.apelido;
   $("campo-servidor").value = estado.servidor;
 
+  // A escolha vale na hora e é guardada na hora: quem clica num mascote e
+  // fecha o aplicativo sem entrar em grupo nenhum o encontra escolhido depois.
+  montarEscolhaDeMascotes($("entrada-mascotes"), estado.avatar, (id) => {
+    estado.avatar = id;
+    salvarPreferencias();
+  });
+
   // O campo de servidor some atrás de "Usar um servidor próprio" para quem
   // já está no padrão hospedado — mas quem tem um servidor próprio salvo
   // precisa continuar vendo qual é, não descobrir escondido.
@@ -389,9 +454,9 @@ async function hospedar() {
 /* ═══ Aplicação ═════════════════════════════════════════════════ */
 
 function prepararAplicacao() {
-  $("rotulo-usuario").textContent = estado.apelido;
-  $("avatar-usuario").textContent = iniciais(estado.apelido);
+  mostrarMeuPerfil();
 
+  $("botao-perfil").addEventListener("click", abrirMeuPerfil);
   $("botao-novo-grupo").addEventListener("click", criarGrupo);
   $("botao-entrar-grupo").addEventListener("click", entrarPorConvite);
   $("botao-menu-grupo").addEventListener("click", (e) => menuDoGrupo(e.currentTarget));
@@ -409,6 +474,14 @@ function prepararAplicacao() {
   prepararSeletorDeFontes();
   document.addEventListener("keydown", (evento) => {
     if (evento.key !== "Escape") return;
+    // O perfil e o cartão fecham a si mesmos. Sem esta saída, o Escape deles
+    // seguiria adiante e desmaximizaria uma transmissão atrás da cortina.
+    if (
+      !$("perfil-dialogo").classList.contains("oculto") ||
+      !$("cartao-dialogo").classList.contains("oculto")
+    ) {
+      return;
+    }
     if (!$("transmitir-dialogo").classList.contains("oculto")) {
       fecharTransmitirDialogo();
     } else if (!$("ajustes").classList.contains("oculto")) {
@@ -430,6 +503,7 @@ function prepararAplicacao() {
   sinal.addEventListener("saiu-voz", (e) => aoParDeixarVoz(e.detail));
   sinal.addEventListener("sinal", (e) => malha.receberSinal(e.detail.de, e.detail.dados));
   sinal.addEventListener("estado", (e) => aoEstadoDeMidia(e.detail));
+  sinal.addEventListener("perfil", (e) => aoPerfilDeOutro(e.detail));
   sinal.addEventListener("mensagem", (e) => aoMensagem(e.detail.mensagem));
   sinal.addEventListener("historico", (e) => aoHistorico(e.detail));
   sinal.addEventListener("erro", (e) => avisar(e.detail.motivo, "erro"));
@@ -487,18 +561,73 @@ function aproveitarConvite() {
   conectar({ tipo: "entrar", codigo });
 }
 
-function iniciais(nome) {
-  return (
-    nome
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((p) => p[0])
-      .join("") || "?"
-  );
+const souDono = () => estado.grupo?.dono === estado.usuario;
+
+/* ═══ Perfil ════════════════════════════════════════════════════ */
+
+/** O rodapé da coluna de grupos: é o retrato de quem está usando o CALL aqui. */
+function mostrarMeuPerfil() {
+  $("rotulo-usuario").textContent = estado.apelido;
+  pintarAvatar($("avatar-usuario"), estado);
 }
 
-const souDono = () => estado.grupo?.dono === estado.usuario;
+async function abrirMeuPerfil() {
+  const escolhido = await editarPerfil(estado);
+  if (!escolhido) return;
+
+  Object.assign(estado, escolhido);
+  salvarPreferencias();
+  mostrarMeuPerfil();
+
+  // Dentro de um grupo a saudação já passou, e sem este aviso o perfil novo só
+  // valeria na próxima entrada — os outros continuariam vendo o antigo.
+  const eu = estado.membros.get(estado.meuId);
+  if (eu) {
+    Object.assign(eu, escolhido);
+    sinal.enviar({ tipo: "perfil", ...escolhido });
+    redesenhar();
+  }
+
+  avisar("Perfil salvo.", "bom");
+}
+
+function aoPerfilDeOutro({ de, apelido, avatar, bio }) {
+  const membro = estado.membros.get(de);
+  if (!membro) return;
+
+  const antes = membro.apelido;
+  membro.apelido = apelido;
+  membro.avatar = avatar;
+  membro.bio = bio;
+  redesenhar();
+
+  // Um nome que muda sozinho na lista é confuso; dito uma vez, deixa de ser.
+  if (apelido !== antes) avisar(`${antes} agora se chama ${apelido}.`);
+}
+
+/**
+ * O cartão de alguém. Em si mesmo abre o editor — a pergunta "quem é essa
+ * pessoa?" só tem resposta interessante quando a pessoa é outra.
+ */
+function abrirCartaoDe(membro) {
+  if (membro.id === estado.meuId) {
+    abrirMeuPerfil();
+    return;
+  }
+
+  const etiquetas = [];
+  if (membro.usuario === estado.grupo?.dono) etiquetas.push("dono");
+  if (membro.canalVoz) etiquetas.push("na voz");
+
+  mostrarCartao({
+    apelido: membro.apelido,
+    avatar: membro.avatar,
+    bio: membro.bio,
+    atividade: membro.atividade,
+    etiquetas,
+    acoes: [{ rotulo: "Ajustar volume…", fazer: () => ajustarVolumeDe(membro) }],
+  });
+}
 
 /* ═══ Grupos ════════════════════════════════════════════════════ */
 
@@ -587,6 +716,8 @@ async function conectar(saudacao) {
       ...saudacao,
       apelido: estado.apelido,
       usuario: estado.usuario,
+      avatar: estado.avatar,
+      bio: estado.bio,
     });
     assumirGrupo(boasVindas);
   } catch (erro) {
@@ -603,10 +734,11 @@ function assumirGrupo({ eu, grupo, presentes }) {
   malha.definirIdentidade(eu.id);
 
   estado.membros.clear();
-  estado.membros.set(eu.id, { ...eu, apelido: estado.apelido });
+  estado.membros.set(eu.id, { ...eu, apelido: estado.apelido, avatar: estado.avatar, bio: estado.bio });
   for (const membro of presentes) estado.membros.set(membro.id, membro);
 
   lembrarGrupo(grupo.codigo, grupo.nome);
+  ajustarVigia();
   atualizarConexao(true);
   desenharAtalhos();
   desenharCabecalhoDoGrupo();
@@ -621,6 +753,10 @@ function assumirGrupo({ eu, grupo, presentes }) {
 /** Encerra a participação no grupo sem tocar na lista de atalhos. */
 function desligar() {
   sairDaVoz(false);
+  // `false`: o socket está indo embora de qualquer jeito, e um anúncio de
+  // saída numa conexão que já não existe não chega a ninguém.
+  vigia.desligar(false);
+  estado.minhaAtividade = null;
   sinal.desconectar();
 
   estado.grupo = null;
@@ -822,6 +958,7 @@ function redesenhar() {
   linhas.clear();
   desenharArvore();
   desenharParticipantes();
+  desenharPassaram();
 }
 
 function desenharArvore() {
@@ -975,13 +1112,16 @@ function membrosNaVoz(canal) {
 }
 
 function desenharMembroNaVoz(membro) {
-  const linha = document.createElement("div");
+  // Botão, e não `div` com um ouvinte: a linha abre o cartão da pessoa, e uma
+  // `div` clicável não é alcançável pelo teclado nem anunciada como acionável.
+  const linha = document.createElement("button");
+  linha.type = "button";
   linha.className = "vozinho";
   linha.dataset.falando = medidores.get(membro.id)?.falando ? "sim" : "nao";
 
   const avatar = document.createElement("span");
   avatar.className = "avatar avatar--pequeno";
-  avatar.textContent = iniciais(membro.apelido);
+  pintarAvatar(avatar, membro);
 
   const nome = document.createElement("span");
   nome.className = "vozinho__nome";
@@ -993,6 +1133,9 @@ function desenharMembroNaVoz(membro) {
   if (membro.mudo) sinais.innerHTML += SVG_MUDO;
 
   linha.append(avatar, nome, sinais);
+  // A árvore de canais é onde se vê quem está na voz — e é de lá que se quer
+  // saber quem é a pessoa, sem ter que procurá-la na quarta coluna.
+  linha.addEventListener("click", () => abrirCartaoDe(membro));
   registrarLinha(membro.id, linha);
   return linha;
 }
@@ -1013,11 +1156,12 @@ function aoSair(id) {
   if (membro) avisar(`${membro.apelido} saiu do grupo.`);
 }
 
-function aoEstadoDeMidia({ de, mudo, transmitindo }) {
+function aoEstadoDeMidia({ de, mudo, transmitindo, atividade }) {
   const membro = estado.membros.get(de);
   if (!membro) return;
   membro.mudo = mudo;
   membro.transmitindo = transmitindo;
+  membro.atividade = atividade ?? null;
   if (!transmitindo) removerTela(de);
   redesenhar();
 }
@@ -1067,7 +1211,8 @@ function desenharParticipantes() {
   $("contador-participantes").textContent = String(todos.length);
 
   for (const membro of todos) {
-    const linha = document.createElement("div");
+    const linha = document.createElement("button");
+    linha.type = "button";
     linha.className = "participante";
     // A lista é redesenhada a cada mudança de estado; sem reaplicar a marca,
     // quem estivesse falando apagaria a cada silenciar de outra pessoa.
@@ -1075,12 +1220,26 @@ function desenharParticipantes() {
 
     const avatar = document.createElement("span");
     avatar.className = "avatar";
-    avatar.textContent = iniciais(membro.apelido);
+    pintarAvatar(avatar, membro);
 
     const nome = document.createElement("span");
     nome.className = "participante__nome";
     nome.textContent =
       membro.id === estado.meuId ? `${membro.apelido} (você)` : membro.apelido;
+
+    // Nome e atividade viram uma coluna só quando há atividade. Sem ela, o
+    // `span` do nome vai direto para a linha, como sempre foi: uma pessoa sem
+    // nada em primeiro plano não deve ocupar dois andares na lista.
+    let texto = nome;
+    if (membro.atividade) {
+      texto = document.createElement("span");
+      texto.className = "participante__texto";
+      const fazendo = document.createElement("span");
+      fazendo.className = "participante__atividade";
+      fazendo.textContent = membro.atividade;
+      fazendo.title = membro.atividade;
+      texto.append(nome, fazendo);
+    }
 
     const sinais = document.createElement("span");
     sinais.className = "participante__sinais";
@@ -1093,9 +1252,10 @@ function desenharParticipantes() {
     if (membro.transmitindo) sinais.innerHTML += SVG_TRANSMITINDO;
     if (membro.mudo) sinais.innerHTML += SVG_MUDO;
 
-    // O volume de cada pessoa fica no botão direito, e não numa engrenagem por
-    // linha: é ajuste raro, e um controle permanente por participante encheria
-    // uma coluna de 212 px de coisa que quase nunca se usa.
+    // Clicar abre o cartão da pessoa, que é onde o volume dela também mora. O
+    // botão direito continua sendo o atalho direto: um controle permanente por
+    // linha encheria uma coluna de 212 px de coisa que quase nunca se usa.
+    linha.addEventListener("click", () => abrirCartaoDe(membro));
     if (membro.id !== estado.meuId) {
       linha.addEventListener("contextmenu", (evento) => {
         evento.preventDefault();
@@ -1103,9 +1263,50 @@ function desenharParticipantes() {
       });
     }
 
-    linha.append(avatar, nome, sinais);
+    linha.append(avatar, texto, sinais);
     lista.append(linha);
     registrarLinha(membro.id, linha);
+  }
+}
+
+/**
+ * Quem esteve nesta call e já saiu — nome e quanto tempo ficou, nada mais.
+ *
+ * A seção some quando não há ninguém: numa coluna de 212 px, um título com
+ * uma lista vazia embaixo custa o mesmo espaço de dois participantes.
+ *
+ * O tempo é o que este computador observou. De quem já estava na sala quando
+ * você chegou não dá para saber o começo — o servidor não guarda isso —, e
+ * essas linhas levam um `+` de "pelo menos". Mostrar o número redondo, como
+ * se fosse o total, seria mais bonito e mentira.
+ */
+function desenharPassaram() {
+  const secao = $("passaram");
+  const lista = $("lista-passaram");
+  lista.textContent = "";
+
+  // Fora de uma call não há call de quem falar.
+  const gente = estado.canalVoz ? historicoDaCall.lista() : [];
+  secao.classList.toggle("oculto", gente.length === 0);
+  if (gente.length === 0) return;
+
+  for (const pessoa of gente) {
+    const linha = document.createElement("div");
+    linha.className = "passou";
+    linha.title = pessoa.exato
+      ? `Ficou ${tempoCurto(pessoa.tempo)} · saiu às ${HORA.format(pessoa.saiuEm)}`
+      : `Ficou pelo menos ${tempoCurto(pessoa.tempo)} — já estava na call quando você entrou · saiu às ${HORA.format(pessoa.saiuEm)}`;
+
+    const nome = document.createElement("span");
+    nome.className = "passou__nome";
+    nome.textContent = pessoa.apelido;
+
+    const tempo = document.createElement("span");
+    tempo.className = "passou__tempo";
+    tempo.textContent = pessoa.exato ? tempoCurto(pessoa.tempo) : `${tempoCurto(pessoa.tempo)}+`;
+
+    linha.append(nome, tempo);
+    lista.append(linha);
   }
 }
 
@@ -1311,7 +1512,9 @@ function blocoDeMensagem(mensagem) {
 
   const avatar = document.createElement("span");
   avatar.className = "avatar";
-  avatar.textContent = iniciais(mensagem.apelido);
+  // O avatar vem da própria mensagem, e não de quem está no grupo agora: o
+  // histórico é de quem escreveu naquele dia, e a pessoa pode nem estar aqui.
+  pintarAvatar(avatar, mensagem);
 
   const conteudo = document.createElement("div");
   conteudo.className = "mensagem__conteudo";
@@ -1385,13 +1588,20 @@ function aoEntrarNaVoz({ canal, pares }) {
   malha.definirAudioLocal(trilha, estado.fluxoMicrofone);
   observarVoz(estado.meuId, motor.noLocal);
 
+  // Trocar de canal é entrar em outra call: o tempo e o histórico recomeçam.
+  comecarCall();
+
   // Quem já estava na sala: eu ofereço a conexão. Quem chegar depois oferece
   // para mim — assim nunca há dois lados ofertando ao mesmo tempo.
   for (const par of pares) {
     estado.membros.set(par.id, { ...estado.membros.get(par.id), ...par });
     malha.abrir(par.id, true);
+    // `false`: estas pessoas já estavam aqui, e o servidor não diz desde
+    // quando. O tempo delas só pode ser contado a partir de agora.
+    historicoDaCall.entrou(par.id, false);
   }
 
+  motor.tocarAviso("entrei");
   atualizarRodapeDeVoz();
   redesenhar();
   anunciarEstado();
@@ -1399,14 +1609,25 @@ function aoEntrarNaVoz({ canal, pares }) {
 
 function aoParPorVoz({ membro, canal }) {
   estado.membros.set(membro.id, { ...estado.membros.get(membro.id), ...membro });
-  if (canal === estado.canalVoz && membro.id !== estado.meuId) malha.abrir(membro.id, false);
+  if (canal === estado.canalVoz && membro.id !== estado.meuId) {
+    malha.abrir(membro.id, false);
+    motor.tocarAviso("entrou");
+    // Esta chegada eu vi acontecer, então o tempo dela é exato.
+    historicoDaCall.entrou(membro.id, true);
+  }
   redesenhar();
 }
 
 function aoParDeixarVoz({ id, canal }) {
   const membro = estado.membros.get(id);
   if (membro) membro.canalVoz = null;
-  if (canal === estado.canalVoz) derrubarPar(id);
+  if (canal === estado.canalVoz) {
+    // Antes de derrubar: é de `estado.membros` que saem o apelido e o
+    // identificador estável com que a pessoa entra no histórico.
+    if (membro) historicoDaCall.saiu(id, membro);
+    derrubarPar(id);
+    motor.tocarAviso("saiu");
+  }
   redesenhar();
 }
 
@@ -1430,10 +1651,39 @@ function derrubarPar(id) {
   }
 }
 
+/* ── Tempo em call ─────────────────────────────────────────────── */
+
+/**
+ * Começa a contar. O relógio é de um segundo e existe só enquanto há call:
+ * um `setInterval` permanente para atualizar um rótulo que ninguém está
+ * vendo é trabalho por nada, 86 400 vezes por dia.
+ */
+function comecarCall() {
+  historicoDaCall.comecar();
+  inicioDaCall = Date.now();
+  relogioDaCall ??= setInterval(mostrarTempoDaCall, 1000);
+  mostrarTempoDaCall();
+}
+
+function encerrarCall() {
+  clearInterval(relogioDaCall);
+  relogioDaCall = null;
+  inicioDaCall = 0;
+  historicoDaCall.comecar();
+}
+
+function mostrarTempoDaCall() {
+  if (inicioDaCall) $("tempo-voz").textContent = relogio(Date.now() - inicioDaCall);
+}
+
 function sairDaVoz(anunciar) {
   if (!estado.canalVoz) return;
   if (anunciar) sinal.enviar({ tipo: "sair-voz" });
 
+  // Antes de desmontar: é `desmontarMalha` que fecha o contexto de áudio, e o
+  // motor só espera pela cauda de um aviso que já esteja agendado.
+  motor.tocarAviso("sai");
+  encerrarCall();
   desmontarMalha();
   estado.canalVoz = null;
 
@@ -1500,7 +1750,34 @@ function anunciarEstado() {
     tipo: "estado",
     mudo: estado.mudo,
     transmitindo: estado.transmitindo,
+    atividade: estado.minhaAtividade,
   });
+}
+
+/**
+ * Liga ou desliga a observação conforme a preferência e a existência de um
+ * grupo. Desligar anuncia a ausência: sem isso, o último aplicativo usado
+ * ficaria congelado na tela de todo mundo depois de a pessoa desligar o
+ * recurso — que é exatamente o contrário do que ela pediu.
+ */
+function ajustarVigia() {
+  if (estado.grupo && estado.mostrarAtividade) vigia.ligar();
+  else vigia.desligar();
+}
+
+/**
+ * Mostra no painel exatamente o que está sendo dito ao grupo neste momento.
+ *
+ * Ler a promessa é uma coisa; ver a frase que está no ar é outra. É a
+ * diferença entre confiar no texto e conferir.
+ */
+function mostrarAtividadeAtual() {
+  const linha = $("dica-atividade-agora");
+  if (!linha) return;
+  if (!estado.mostrarAtividade) linha.textContent = "Agora o grupo não vê nada.";
+  else if (!estado.grupo) linha.textContent = "Entre em um grupo para começar a mostrar.";
+  else if (estado.minhaAtividade) linha.textContent = `Agora o grupo vê: ${estado.minhaAtividade}`;
+  else linha.textContent = "Agora o grupo não vê nada — nenhum programa em primeiro plano.";
 }
 
 /* ═══ Microfone ═════════════════════════════════════════════════ */
@@ -1738,28 +2015,49 @@ function montarSecoesDeFontes(fontes) {
 
 let pararDeOuvirQuadros = null;
 let canvasDeCaptura = null;
+let trilhaDeCaptura = null;
+/** Uma imagem só, reaproveitada quadro a quadro — cada `new Image()` seria
+ *  lixo de coleta a mais no ritmo de até 60 por segundo. */
+const imagemDeCaptura = new Image();
+/** Verdadeiro enquanto o quadro anterior ainda está sendo decodificado. Um
+ *  quadro que chega nesse meio-tempo é descartado, não enfileirado — o
+ *  próximo da fila sempre vai chegar mais fresco do que este, e empilhar
+ *  trabalho atrasado é exatamente o que vira lag crescente. */
+let ocupadoComQuadro = false;
 
-/** Decodifica o JPEG que veio do Rust e desenha no canvas — é o canvas quem
- *  empresta a `captureStream()` que vira a trilha de vídeo publicada. */
+/** Decodifica o JPEG que veio do Rust e desenha no canvas.
+ *
+ * `Image.decode()` deixa o decode a cargo do motor do navegador — nativo, e
+ * em geral fora da thread principal — em vez de uma volta manual por
+ * `atob`/`charCodeAt` em JavaScript puro. Para um quadro de 1080p essa volta
+ * manual custava dezenas de milissegundos por quadro, na própria thread que
+ * desenha a interface: é o motivo mais provável do "travamento" percebido
+ * antes desta versão, muito mais do que a rede ou a qualidade escolhida.
+ *
+ * `requestFrame()` entrega o quadro à trilha na hora — a trilha nasceu com
+ * `captureStream(0)` (modo manual) exatamente para isto. Deixar o canvas
+ * amostrar sozinho, no seu próprio relógio, é o que fazia o quadro chegar
+ * atrasado ou repetido quando a decodificação varia de duração — o
+ * "travamento" que dava pra sentir independente do perfil escolhido.
+ */
 async function desenharQuadroCapturado(quadro) {
-  if (!canvasDeCaptura) return;
-  if (canvasDeCaptura.width !== quadro.largura || canvasDeCaptura.height !== quadro.altura) {
-    canvasDeCaptura.width = quadro.largura;
-    canvasDeCaptura.height = quadro.altura;
-  }
-
-  const binario = atob(quadro.dados);
-  const bytes = new Uint8Array(binario.length);
-  for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
-  const memoria = new Blob([bytes], { type: "image/jpeg" });
+  if (!canvasDeCaptura || ocupadoComQuadro) return;
+  ocupadoComQuadro = true;
 
   try {
-    const quadroDecodificado = await createImageBitmap(memoria);
-    canvasDeCaptura.getContext("2d").drawImage(quadroDecodificado, 0, 0);
-    quadroDecodificado.close();
+    if (canvasDeCaptura.width !== quadro.largura || canvasDeCaptura.height !== quadro.altura) {
+      canvasDeCaptura.width = quadro.largura;
+      canvasDeCaptura.height = quadro.altura;
+    }
+    imagemDeCaptura.src = `data:image/jpeg;base64,${quadro.dados}`;
+    await imagemDeCaptura.decode();
+    canvasDeCaptura.getContext("2d").drawImage(imagemDeCaptura, 0, 0);
+    trilhaDeCaptura?.requestFrame();
   } catch {
-    // Um quadro corrompido não é motivo para parar a transmissão inteira —
-    // o próximo, um instante depois, resolve sozinho.
+    // Um quadro corrompido ou fora de ordem não é motivo para parar a
+    // transmissão inteira — o próximo, um instante depois, resolve sozinho.
+  } finally {
+    ocupadoComQuadro = false;
   }
 }
 
@@ -1801,21 +2099,20 @@ async function iniciarCapturaNativa(fonte, perfil) {
     return;
   }
 
-  const fluxo = canvasDeCaptura.captureStream(perfil.quadros);
+  // `0` é o modo manual: o canvas só entrega um quadro à trilha quando
+  // `requestFrame()` é chamado, em vez de amostrar sozinho num relógio fixo
+  // — ver a explicação em `desenharQuadroCapturado`.
+  const fluxo = canvasDeCaptura.captureStream(0);
   const [trilha] = fluxo.getVideoTracks();
+  trilhaDeCaptura = trilha;
 
-  // O áudio do sistema ainda não viaja por esse caminho — a captura é
-  // nativa, e não passa pelo `getDisplayMedia` que oferecia o áudio de
-  // graça. Melhor avisar do que deixar a pessoa descobrir pelo silêncio.
-  if (estado.audioDaTela) {
-    avisar("Som do sistema ainda não é suportado nesta transmissão.", "neutro");
-  }
+  const trilhaDeAudio = estado.audioDaTela ? await iniciarAudioDaTela() : null;
 
   estado.fluxoTela = fluxo;
   estado.transmitindo = true;
 
   await malha.definirPerfilTela(perfil);
-  malha.publicarTela(trilha, fluxo, null);
+  malha.publicarTela(trilha, fluxo, trilhaDeAudio);
   mostrarTela(estado.meuId, fluxo, `${estado.apelido} (você)`);
 
   const eu = estado.membros.get(estado.meuId);
@@ -1834,6 +2131,8 @@ function pararTransmissao() {
   pararDeOuvirQuadros?.();
   pararDeOuvirQuadros = null;
   canvasDeCaptura = null;
+  trilhaDeCaptura = null;
+  pararAudioDaTela();
   estado.fluxoTela?.getTracks().forEach((t) => t.stop());
   estado.fluxoTela = null;
   removerTela(estado.meuId);
@@ -1844,6 +2143,95 @@ function pararTransmissao() {
   atualizarBotaoTransmissao();
   redesenhar();
   anunciarEstado();
+}
+
+/* ── Áudio do sistema: WASAPI em loopback, reproduzido no Web Audio ──
+ *
+ * O Rust manda pedaços de 20 ms de PCM de 16 bits; cada pedaço vira um
+ * `AudioBuffer` agendado logo depois do anterior — a técnica padrão para
+ * tocar áudio contínuo por partes sem estalos entre elas. Se o atraso
+ * acumulado passar de meio segundo (rede lenta, pedaço perdido), o cursor
+ * pula direto para "agora": preferir som ao vivo, mesmo com uma perda
+ * inaudível de continuidade, a ir ficando cada vez mais atrasado. */
+
+let contextoDeAudioDaTela = null;
+let destinoDeAudioDaTela = null;
+let proximoInicioDeAudio = 0;
+let pararDeOuvirAudio = null;
+
+const ATRASO_MAXIMO_DE_AUDIO = 0.5;
+
+function decodificarBase64(base64) {
+  if (Uint8Array.fromBase64) return Uint8Array.fromBase64(base64);
+  const binario = atob(base64);
+  const bytes = new Uint8Array(binario.length);
+  for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+  return bytes;
+}
+
+function tocarPedacoDeAudioDaTela(pedaco) {
+  if (!contextoDeAudioDaTela) return;
+
+  const bytes = decodificarBase64(pedaco.dados);
+  const amostras = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+  const canais = pedaco.canais;
+  const quadros = amostras.length / canais;
+  if (quadros <= 0) return;
+
+  const buffer = contextoDeAudioDaTela.createBuffer(canais, quadros, pedaco.taxaDeAmostragem);
+  for (let c = 0; c < canais; c++) {
+    const canal = buffer.getChannelData(c);
+    for (let i = 0; i < quadros; i++) canal[i] = amostras[i * canais + c] / 32768;
+  }
+
+  const fonte = contextoDeAudioDaTela.createBufferSource();
+  fonte.buffer = buffer;
+  fonte.connect(destinoDeAudioDaTela);
+
+  const agora = contextoDeAudioDaTela.currentTime;
+  if (proximoInicioDeAudio < agora || proximoInicioDeAudio - agora > ATRASO_MAXIMO_DE_AUDIO) {
+    proximoInicioDeAudio = agora;
+  }
+  fonte.start(proximoInicioDeAudio);
+  proximoInicioDeAudio += buffer.duration;
+}
+
+/** Devolve a trilha de áudio já pronta para `malha.publicarTela`, ou `null`
+ *  se a captura do lado do Rust não conseguir começar (sem áudio dedicado
+ *  configurado, por exemplo) — a transmissão de vídeo segue de qualquer
+ *  forma, só sem o som do sistema. */
+async function iniciarAudioDaTela() {
+  contextoDeAudioDaTela = new AudioContext({ sampleRate: 48000 });
+  destinoDeAudioDaTela = contextoDeAudioDaTela.createMediaStreamDestination();
+  proximoInicioDeAudio = 0;
+
+  pararDeOuvirAudio = await window.__TAURI__.event.listen("audio-tela", (evento) =>
+    tocarPedacoDeAudioDaTela(evento.payload)
+  );
+
+  try {
+    await invocar("iniciar_audio_da_tela");
+  } catch {
+    pararDeOuvirAudio?.();
+    pararDeOuvirAudio = null;
+    contextoDeAudioDaTela?.close().catch(() => {});
+    contextoDeAudioDaTela = null;
+    destinoDeAudioDaTela = null;
+    avisar("Não foi possível capturar o som do sistema.", "neutro");
+    return null;
+  }
+
+  return destinoDeAudioDaTela.stream.getAudioTracks()[0];
+}
+
+function pararAudioDaTela() {
+  if (!contextoDeAudioDaTela) return;
+  invocar("parar_audio_da_tela").catch(() => {});
+  pararDeOuvirAudio?.();
+  pararDeOuvirAudio = null;
+  contextoDeAudioDaTela.close().catch(() => {});
+  contextoDeAudioDaTela = null;
+  destinoDeAudioDaTela = null;
 }
 
 function atualizarBotaoTransmissao() {
@@ -1881,6 +2269,12 @@ function mostrarTela(id, fluxo, rotulo) {
   etiqueta.className = "transmissao__etiqueta";
   etiqueta.textContent = rotulo;
 
+  // Preenchido por `atualizarBadgesDeQualidade` a partir das estatísticas
+  // reais do WebRTC — o que está chegando, não o que foi pedido — por isso
+  // começa vazio e só aparece quando a primeira leitura chega.
+  const qualidade = document.createElement("span");
+  qualidade.className = "transmissao__qualidade oculto";
+
   const expandir = document.createElement("button");
   expandir.type = "button";
   expandir.className = "transmissao__expandir";
@@ -1890,7 +2284,7 @@ function mostrarTela(id, fluxo, rotulo) {
   expandir.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${GLIFO_EXPANDIR}</svg>`;
   expandir.addEventListener("click", () => alternarMaximizarTela(id));
 
-  quadro.append(video, etiqueta, expandir);
+  quadro.append(video, etiqueta, qualidade, expandir);
   $("palco-grade").append(quadro);
   telas.set(id, quadro);
   atualizarPalco();
@@ -1931,6 +2325,55 @@ function atualizarPalco() {
     }</svg>`;
   }
 }
+
+/** A estatística real de vídeo por trás de um quadro do palco — o que está
+ *  de fato chegando (ou saindo, no caso da própria transmissão), e não o
+ *  perfil pedido. Uma rede fraca ou uma máquina sobrecarregada entregam
+ *  menos do que o perfil promete, e o selo deve mostrar a entrega, não a
+ *  promessa. */
+async function statsDeQualidade(id) {
+  if (id === estado.meuId) {
+    if (!trilhaDeCaptura) return null;
+    for (const pc of malha.conexoes.values()) {
+      const remetente = pc.getSenders().find((s) => s.track === trilhaDeCaptura);
+      if (!remetente) continue;
+      const relatorio = await remetente.getStats().catch(() => null);
+      if (!relatorio) continue;
+      for (const item of relatorio.values()) {
+        if (item.type === "outbound-rtp" && item.kind === "video") return item;
+      }
+    }
+    return null;
+  }
+
+  const pc = malha.conexoes.get(id);
+  if (!pc) return null;
+  const relatorio = await pc.getStats().catch(() => null);
+  if (!relatorio) return null;
+  for (const item of relatorio.values()) {
+    if (item.type === "inbound-rtp" && item.kind === "video") return item;
+  }
+  return null;
+}
+
+/** Roda a cada poucos segundos — rápido o bastante para refletir uma queda
+ *  de qualidade, devagar o bastante para não ser, ele mesmo, trabalho
+ *  supérfluo competindo com a transmissão pela CPU. */
+async function atualizarBadgesDeQualidade() {
+  for (const [id, quadro] of telas) {
+    const selo = quadro.querySelector(".transmissao__qualidade");
+    if (!selo) continue;
+    const item = await statsDeQualidade(id);
+    if (!item?.frameHeight) continue;
+    const quadros = Math.round(item.framesPerSecond ?? 0);
+    selo.textContent = quadros > 0 ? `${item.frameHeight}p · ${quadros}fps` : `${item.frameHeight}p`;
+    selo.classList.remove("oculto");
+  }
+}
+
+setInterval(() => {
+  if (telas.size) atualizarBadgesDeQualidade();
+}, 2000);
 
 /* ═══ Mídia recebida ════════════════════════════════════════════ */
 
@@ -2148,9 +2591,29 @@ function prepararAjustes() {
   chave("ajuste-supressao", "suprimirRuido");
   chave("ajuste-agc", "ganhoAutomatico");
   chave("ajuste-continuo", "bandaLarga");
+  chave("ajuste-sons", "sons");
 
   $("ajuste-porta").addEventListener("change", (e) => {
     $("bloco-limiar").hidden = !e.target.checked;
+  });
+
+  // Ligar os sons já toca um: a descrição escrita não substitui ouvir. O
+  // mesmo vale ao soltar o controle de volume — é o único jeito de escolher
+  // um volume sem estar no meio de uma conversa para conferir.
+  $("ajuste-sons").addEventListener("change", (e) => {
+    $("bloco-sons").hidden = !e.target.checked;
+    if (e.target.checked) motor.ouvirAviso("entrei");
+  });
+
+  const controleDeSons = $("ajuste-volume-sons");
+  controleDeSons.addEventListener("input", () => {
+    const v = Number(controleDeSons.value) / 100;
+    $("valor-volume-sons").textContent = `${Math.round(v * 100)}%`;
+    aplicarAudio({ volumeSons: v });
+  });
+  controleDeSons.addEventListener("change", async () => {
+    await aplicarAudio({}, true);
+    motor.ouvirAviso("entrei");
   });
 
   for (const [id, campo] of [["ajuste-entrada", "entrada"], ["ajuste-saida", "saida"]]) {
@@ -2162,12 +2625,150 @@ function prepararAjustes() {
     salvarPreferencias();
   });
 
+  $("ajuste-atividade").addEventListener("change", (e) => {
+    estado.mostrarAtividade = e.target.checked;
+    salvarPreferencias();
+    $("bloco-atividade").hidden = !e.target.checked;
+    ajustarVigia();
+    mostrarAtividadeAtual();
+  });
+
   montarBitrates();
   montarPerfis();
+  prepararAtalhoMudo();
 
   // Trocar de fone no meio da conversa não deve exigir reabrir o painel.
   navigator.mediaDevices?.addEventListener?.("devicechange", () => {
     if (!$("ajustes").classList.contains("oculto")) desenharDispositivos();
+  });
+}
+
+/* ── Atalho global de mudo: funciona com a janela sem foco ou escondida na
+ *  bandeja, porque não é um `keydown` da página — é registrado no sistema
+ *  operacional pelo lado do Rust (ver `definir_atalho_mudo`). ── */
+
+const NOMES_DE_TECLA = {
+  Space: "Espaço",
+  Escape: "Esc",
+  Enter: "Enter",
+  Tab: "Tab",
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  ArrowLeft: "←",
+  ArrowRight: "→",
+  Backquote: "`",
+};
+
+function rotuloDaTecla(codigo) {
+  if (NOMES_DE_TECLA[codigo]) return NOMES_DE_TECLA[codigo];
+  if (codigo.startsWith("Key")) return codigo.slice(3);
+  if (codigo.startsWith("Digit")) return codigo.slice(5);
+  return codigo;
+}
+
+function desenharAtalho(alvo, atalho) {
+  alvo.textContent = "";
+  if (!atalho) {
+    const vazio = document.createElement("span");
+    vazio.className = "atalho-campo__vazio";
+    vazio.textContent = "Nenhum — clique para definir";
+    alvo.append(vazio);
+    return;
+  }
+  const modificadores = new Set(["Ctrl", "Alt", "Shift", "Super"]);
+  atalho.split("+").forEach((parte, indice) => {
+    if (indice > 0) {
+      const mais = document.createElement("span");
+      mais.className = "atalho-campo__mais";
+      mais.textContent = "+";
+      alvo.append(mais);
+    }
+    const tecla = document.createElement("span");
+    tecla.className = "atalho-tecla";
+    tecla.textContent = modificadores.has(parte) ? parte : rotuloDaTecla(parte);
+    alvo.append(tecla);
+  });
+}
+
+/** Registra (ou remove, com `null`) o atalho no lado do Rust e só grava a
+ *  preferência se o sistema aceitou — um atalho já usado por outro programa
+ *  não deve parecer escolhido quando na prática não vale nada. */
+async function aplicarAtalhoMudo(atalho) {
+  try {
+    await invocar("definir_atalho_mudo", { atalho });
+    estado.atalhoMudo = atalho;
+    salvarPreferencias();
+  } catch (erro) {
+    avisar(typeof erro === "string" ? erro : "Não foi possível registrar esse atalho.", "erro");
+  }
+}
+
+let atalhoMudoPreparado = false;
+
+function prepararAtalhoMudo() {
+  if (atalhoMudoPreparado) return;
+  atalhoMudoPreparado = true;
+
+  const campo = $("atalho-mudo-campo");
+  const teclas = $("atalho-mudo-teclas");
+  desenharAtalho(teclas, estado.atalhoMudo);
+
+  let gravando = false;
+  let ouvinte = null;
+
+  const pararDeGravar = () => {
+    gravando = false;
+    campo.dataset.gravando = "nao";
+    if (ouvinte) document.removeEventListener("keydown", ouvinte, true);
+    desenharAtalho(teclas, estado.atalhoMudo);
+  };
+
+  campo.addEventListener("click", () => {
+    if (gravando) return;
+    gravando = true;
+    campo.dataset.gravando = "sim";
+    teclas.textContent = "";
+    const dica = document.createElement("span");
+    dica.className = "atalho-campo__vazio";
+    dica.textContent = "Pressione as teclas… (Esc cancela)";
+    teclas.append(dica);
+
+    // Captura na fase de captura, e não de bolha: enquanto grava, nenhuma
+    // tecla deve chegar a outro atalho da própria interface (Esc fechando o
+    // diálogo, por exemplo) antes de passar por aqui.
+    ouvinte = async (evento) => {
+      evento.preventDefault();
+      evento.stopPropagation();
+
+      if (evento.key === "Escape") {
+        pararDeGravar();
+        return;
+      }
+      if (["Control", "Shift", "Alt", "Meta"].includes(evento.key)) return;
+
+      if (!(evento.ctrlKey || evento.altKey || evento.metaKey)) {
+        avisar("O atalho precisa de Ctrl, Alt ou uma tecla Windows, além da tecla escolhida.", "neutro");
+        return;
+      }
+
+      const partes = [];
+      if (evento.ctrlKey) partes.push("Ctrl");
+      if (evento.altKey) partes.push("Alt");
+      if (evento.shiftKey) partes.push("Shift");
+      if (evento.metaKey) partes.push("Super");
+      partes.push(evento.code);
+
+      await aplicarAtalhoMudo(partes.join("+"));
+      pararDeGravar();
+    };
+
+    document.addEventListener("keydown", ouvinte, true);
+  });
+
+  $("atalho-mudo-limpar").addEventListener("click", async () => {
+    if (gravando) pararDeGravar();
+    await aplicarAtalhoMudo(null);
+    desenharAtalho(teclas, estado.atalhoMudo);
   });
 }
 
@@ -2318,7 +2919,14 @@ function refletirAjustes() {
   $("ajuste-supressao").checked = a.suprimirRuido;
   $("ajuste-agc").checked = a.ganhoAutomatico;
   $("ajuste-continuo").checked = a.bandaLarga;
+  $("ajuste-sons").checked = a.sons;
+  $("bloco-sons").hidden = !a.sons;
+  $("ajuste-volume-sons").value = String(Math.round(a.volumeSons * 100));
+  $("valor-volume-sons").textContent = `${Math.round(a.volumeSons * 100)}%`;
   $("ajuste-som-da-tela").checked = estado.audioDaTela;
+  $("ajuste-atividade").checked = estado.mostrarAtividade;
+  $("bloco-atividade").hidden = !estado.mostrarAtividade;
+  mostrarAtividadeAtual();
 
   for (const [i, botao] of [...$("ajuste-bitrate").children].entries()) {
     botao.setAttribute("aria-pressed", BITRATES_AUDIO[i].valor === a.bitrate ? "true" : "false");
@@ -2462,6 +3070,12 @@ prepararEntrada();
 // porta.
 window.__TAURI__?.event?.listen("convite", receberConvite);
 receberConvite();
+
+// O atalho é global — o Rust dispara o evento com a janela sem foco ou
+// escondida na bandeja, e é por isso que ele precisa ser religado aqui, na
+// partida, e não só quando o painel de ajustes abre.
+window.__TAURI__?.event?.listen("atalho-mudo", alternarMicrofone);
+if (estado.atalhoMudo) invocar("definir_atalho_mudo", { atalho: estado.atalhoMudo }).catch(() => {});
 
 procurarAtualizacao();
 setInterval(procurarAtualizacao, INTERVALO_ATUALIZACAO);

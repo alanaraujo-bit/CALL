@@ -1,6 +1,6 @@
 [package]
 name = "call"
-version = "0.5.0"
+version = "0.6.0"
 description = "Comunicacao em grupo com voz e transmissao de tela"
 authors = ["CALL"]
 edition = "2021"
@@ -14,8 +14,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# "tray-icon": o app roda em segundo plano com o ícone na bandeja, em vez de
+# encerrar quando a janela fecha — é o que permite ao atalho de mudo global
+# continuar valendo com a interface fechada.
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
+# Atalho global de mudo: precisa funcionar com a janela sem foco, ou mesmo
+# escondida na bandeja — um `keydown` do lado da interface não alcança
+# nenhum dos dois casos.
+tauri-plugin-global-shortcut = "2"
 # Protocolo call://, para o convite virar um clique em vez de um código
 # colado a mao. O single-instance e quem entrega a URL quando o aplicativo
 # ja esta aberto: sem ele, cada clique no link abriria uma instancia nova.
@@ -34,6 +41,7 @@ serde_json = "1"
 xcap = "0.9.8"
 image = { version = "0.25.6", default-features = false, features = ["jpeg", "png"] }
 base64 = "0.23.1"
+wasapi = "0.23.0"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"

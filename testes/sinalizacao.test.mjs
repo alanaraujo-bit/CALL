@@ -119,6 +119,24 @@ async function cliente(saudacao) {
 }
 
 /**
+ * Espera a mensagem do tipo que satisfaça o teste, e não a próxima da fila.
+ *
+ * `aguardar` entrega a primeira ainda não consumida, o que é o certo para
+ * "aconteceu?" e o errado para "aconteceu com esta pessoa?": anúncios de
+ * entrada e saída de seções anteriores ficam na fila sem que nenhum teste
+ * precise deles, e seriam colhidos no lugar do esperado.
+ */
+async function aguardarQual(quem, tipo, teste, limite = 1500) {
+  const ateQuando = Date.now() + limite;
+  while (Date.now() < ateQuando) {
+    const achada = quem.do(tipo).find(teste);
+    if (achada) return achada;
+    await esperar(25);
+  }
+  return null;
+}
+
+/**
  * Faz o aperto de mao na mao, com o cabecalho do tamanho que um navegador
  * produz. O `WebSocket` do Node manda um pedido curto, e foi por isso que o
  * servidor pode passar tanto tempo decidindo pela janela errada: com o
@@ -385,6 +403,117 @@ try {
   ana.enviar({ tipo: "remover", alvo: "canal", id: canalTexto.id });
   conferir(!!(await ana.aguardar("erro")), "o último canal não pode ser removido");
 
+  // O servidor não interpreta a atividade: ele repassa e esquece. O que se
+  // exige dele é o teto de tamanho — o texto vem de um cliente e vai para a
+  // tela de todo mundo — e que ausência e vazio signifiquem a mesma coisa.
+  console.log("\nAtividade em primeiro plano");
+  bruno.enviar({ tipo: "estado", mudo: false, transmitindo: false, atividade: "Rocket League" });
+  const anunciada = await ana.aguardar("estado");
+  conferir(anunciada?.atividade === "Rocket League", "a atividade chega a quem está no grupo");
+  conferir(anunciada?.de === idBruno, "e vem identificada por quem a anunciou");
+
+  // Quem chega depois precisa ver o que já está acontecendo; sem isto, só se
+  // descobriria o que alguém está usando quando essa pessoa trocasse.
+  const davi = await cliente({
+    tipo: "entrar",
+    codigo,
+    apelido: "Davi",
+    usuario: "davi-005",
+  });
+  const bemVindoDavi = await davi.aguardar("bem-vindo");
+  conferir(
+    bemVindoDavi?.presentes?.some((p) => p.atividade === "Rocket League"),
+    "quem entra depois já vê o que os outros estão usando"
+  );
+
+  bruno.enviar({ tipo: "estado", mudo: false, transmitindo: false, atividade: "N".repeat(200) });
+  const cortada = await ana.aguardar("estado");
+  conferir(
+    cortada?.atividade?.length === 40,
+    `um cliente adulterado não empurra um romance para a lista (${cortada?.atividade?.length})`
+  );
+
+  bruno.enviar({ tipo: "estado", mudo: false, transmitindo: false, atividade: "   " });
+  conferir(
+    (await ana.aguardar("estado"))?.atividade === null,
+    "texto em branco é o mesmo que não mostrar nada"
+  );
+
+  bruno.enviar({ tipo: "estado", mudo: false, transmitindo: false });
+  conferir(
+    (await ana.aguardar("estado"))?.atividade === null,
+    "não mandar o campo desliga a atividade"
+  );
+  // Consumir a saída do Davi aqui, e não deixá-la para trás: `aguardar` olha
+  // primeiro o que já chegou, e um `saiu` pendente seria colhido pelo teste
+  // da seção seguinte no lugar do que ele espera.
+  davi.fechar();
+  conferir((await ana.aguardar("saiu"))?.id === bemVindoDavi.eu.id, "e a saída dele é anunciada");
+
+  // O perfil viaja com a pessoa e não é guardado: o servidor o recorta, o
+  // repassa e esquece. O que se exige dele é que a troca no meio da sessão
+  // chegue aos outros, que os tetos valham, e — o mais importante — que trocar
+  // de perfil não seja um jeito de trocar de identidade.
+  console.log("\nPerfil: mascote e bio");
+  const elis = await cliente({
+    tipo: "entrar",
+    codigo,
+    apelido: "Elis",
+    usuario: "elis-006",
+    avatar: "capivara",
+    bio: "Fuso de Brasília. Jogo à noite.",
+  });
+  const bemVindoElis = await elis.aguardar("bem-vindo");
+  conferir(bemVindoElis?.eu?.avatar === "capivara", "o mascote da saudação volta no bem-vindo");
+  conferir(bemVindoElis?.eu?.bio?.startsWith("Fuso"), "a bio da saudação também");
+
+  const chegada = await aguardarQual(ana, "entrou", (m) => m.membro?.id === bemVindoElis.eu.id);
+  conferir(chegada?.membro?.avatar === "capivara", "o grupo vê o mascote de quem chega");
+  conferir(chegada?.membro?.bio?.startsWith("Fuso"), "e a bio junto");
+
+  elis.enviar({ tipo: "perfil", apelido: "Elis R.", avatar: "dragao", bio: "Mudei de ideia." });
+  const trocado = await ana.aguardar("perfil");
+  conferir(trocado?.de === bemVindoElis.eu.id, "a troca de perfil identifica quem trocou");
+  conferir(
+    trocado?.apelido === "Elis R." && trocado?.avatar === "dragao",
+    "apelido e mascote novos chegam ao grupo"
+  );
+  conferir(trocado?.bio === "Mudei de ideia.", "e a bio nova");
+  conferir((await elis.aguardar("perfil", 300)) === null, "quem trocou não recebe o próprio eco");
+
+  const fabio = await cliente({ tipo: "entrar", codigo, apelido: "Fábio", usuario: "fabio-007" });
+  const bemVindoFabio = await fabio.aguardar("bem-vindo");
+  conferir(
+    bemVindoFabio?.presentes?.find((p) => p.usuario === "elis-006")?.avatar === "dragao",
+    "quem entra depois vê o perfil trocado, e não o da saudação"
+  );
+
+  elis.enviar({ tipo: "perfil", apelido: "Elis", avatar: "<img src=x>coruja", bio: "B".repeat(400) });
+  const recortado = await ana.aguardar("perfil");
+  conferir(
+    /^[a-z0-9-]*$/.test(recortado?.avatar ?? "!"),
+    `o identificador do mascote sai só com minúsculas, dígitos e hífen (${recortado?.avatar})`
+  );
+  conferir(
+    [...(recortado?.bio ?? "")].length === 160,
+    `a bio é cortada no teto (${[...(recortado?.bio ?? "")].length})`
+  );
+
+  // Um cliente adulterado pode mandar `usuario` na troca de perfil. Se o
+  // servidor o aceitasse, bastaria isso para escrever como outra pessoa — e
+  // para se apresentar como dono do grupo.
+  elis.enviar({ tipo: "perfil", apelido: "Elis", avatar: "coruja", bio: "", usuario: "ana-001" });
+  await ana.aguardar("perfil");
+  elis.enviar({ tipo: "mensagem", canal: canalTexto.id, texto: "quem sou eu" });
+  const autoria = await ana.aguardar("mensagem");
+  conferir(autoria?.mensagem?.autor === "elis-006", "trocar de perfil não troca de identidade");
+  conferir(autoria?.mensagem?.avatar === "coruja", "a mensagem carrega o mascote de quem escreveu");
+
+  fabio.fechar();
+  conferir((await ana.aguardar("saiu"))?.id === bemVindoFabio.eu.id, "a saída do Fábio é anunciada");
+  elis.fechar();
+  conferir((await ana.aguardar("saiu"))?.id === bemVindoElis.eu.id, "e a da Elis também");
+
   console.log("\nSaída");
   bruno.fechar();
   conferir((await ana.aguardar("saiu"))?.id === idBruno, "a saída é anunciada aos demais");
@@ -423,6 +552,13 @@ try {
   ana.enviar({ tipo: "historico", canal: canalTexto.id });
   const historico = await ana.aguardar("historico");
   conferir(historico?.mensagens?.[0]?.texto === "bom dia", "o histórico também sobrevive");
+  // A primeira mensagem foi gravada por uma versão do arquivo sem o campo do
+  // mascote; a segunda, com ele. As duas precisam voltar — sem o `default` no
+  // modelo, uma linha antiga derrubaria a leitura do histórico inteiro.
+  conferir(
+    historico?.mensagens?.some((m) => m.autor === "elis-006" && m.avatar === "coruja"),
+    "o mascote de quem escreveu sobrevive ao reinício"
+  );
 
   ana.fechar();
   await esperar(200);

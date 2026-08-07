@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Ouvir os sons do CALL</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-content: center;
+        gap: 28px;
+        background: #16171c;
+        color: #e6e7ea;
+        font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+      }
+      h1 { margin: 0; font-size: 19px; font-weight: 600; }
+      p { margin: 0; max-width: 40ch; color: #9a9ca5; }
+      .grade { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      button {
+        padding: 14px 18px;
+        border: 1px solid #2e3038;
+        border-radius: 10px;
+        background: #1e2027;
+        color: #e6e7ea;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      button:hover { background: #262931; border-color: #3d404a; }
+      button strong { display: block; font-weight: 600; }
+      button span { color: #9a9ca5; font-size: 13px; }
+      kbd {
+        padding: 1px 5px; border: 1px solid #3d404a; border-radius: 4px;
+        background: #14151a; font: 12px ui-monospace, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      Os quatro sons, tocados de verdade, fora do aplicativo.
+
+      A medição em `sons.html` prova que o som é o que se projetou. Ela não
+      prova que é bom de ouvir — isso não é um número, é um ouvido. Esta
+      página existe para essa parte, e para poder ajustar o desenho sem subir
+      a aplicação inteira a cada tentativa.
+    -->
+    <h1>Os sons do CALL</h1>
+    <p>
+      Um sino só, lido de quatro maneiras. Sobe quando alguém chega, desce
+      quando alguém sai; tem peso de grave quando o evento é seu. Use fone —
+      o grave e o campo estéreo não aparecem no alto-falante do notebook.
+    </p>
+
+    <div class="grade">
+      <button data-som="entrei"><strong>Você entrou</strong><span>sobe, com peso</span></button>
+      <button data-som="sai"><strong>Você saiu</strong><span>desce, com peso</span></button>
+      <button data-som="entrou"><strong>Alguém entrou</strong><span>sobe, leve</span></button>
+      <button data-som="saiu"><strong>Alguém saiu</strong><span>desce, leve</span></button>
+    </div>
+
+    <p>Teclas <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> tocam na mesma ordem.</p>
+
+    <script type="module">
+      import { tocar } from "/src/sons.js";
+
+      // Um contexto só, criado no primeiro clique: fora do Tauri o navegador
+      // não deixa abrir áudio antes de um gesto da pessoa.
+      let ctx = null;
+      let avisos = null;
+
+      function tocarSom(nome) {
+        if (!ctx) {
+          ctx = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
+          avisos = ctx.createGain();
+          // O mesmo volume padrão dos avisos no aplicativo, para que o que se
+          // ouve aqui seja o que se ouve lá.
+          avisos.gain.value = 0.7;
+          avisos.connect(ctx.destination);
+        }
+        if (ctx.state === "suspended") ctx.resume();
+        tocar(ctx, avisos, nome);
+      }
+
+      const ordem = ["entrei", "sai", "entrou", "saiu"];
+      for (const botao of document.querySelectorAll("button")) {
+        botao.addEventListener("click", () => tocarSom(botao.dataset.som));
+      }
+      addEventListener("keydown", (e) => {
+        const i = Number(e.key) - 1;
+        if (ordem[i]) tocarSom(ordem[i]);
+      });
+    </script>
+  </body>
+</html>

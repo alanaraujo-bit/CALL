@@ -11,11 +11,21 @@
  *
  *   microfone → passa-alta 85 Hz → porta de ruído → destino → WebRTC
  *   recebido  → ganho da pessoa → ganho geral → alto-falante
+ *   avisos    → ganho dos avisos → alto-falante
+ *
+ * Os avisos — os sons de entrar e sair da voz, sintetizados em `sons.js` —
+ * penduram-se no mesmo contexto, e não em um `<audio>` solto, por dois
+ * motivos: assim eles saem pelo dispositivo escolhido em "Saída de som", que
+ * vale para o contexto inteiro, e não pelo padrão do sistema; e o volume
+ * deles é independente do volume geral, para que abaixar a voz de todo mundo
+ * não apague os avisos e vice-versa.
  *
  * A passa-alta é nativa e custa quase nada, e tira o que nenhuma supressão de
  * ruído resolve bem: ronco de rede elétrica, trepidação de mesa e o estouro de
  * ar do microfone de mesa perto da boca.
  */
+
+import { tocar as tocarSom } from "./sons.js";
 
 /** Preferências de áudio e seus padrões. Tudo o que a interface pode mudar. */
 export const AUDIO_PADRAO = {
@@ -37,6 +47,11 @@ export const AUDIO_PADRAO = {
   /** Envio contínuo. O `usedtx` economiza banda no silêncio às custas de um
    *  ruído de conforto sintético na entrada da fala. */
   bandaLarga: true,
+  /** Sons de entrada e saída da voz. */
+  sons: true,
+  /** Volume deles, de 0 a 1. Fica abaixo de 1 por padrão porque estes sons
+   *  interrompem uma conversa: eles avisam, não anunciam. */
+  volumeSons: 0.7,
 };
 
 /** Escolhas oferecidas na interface, com o custo declarado. */
@@ -51,6 +66,12 @@ export const BITRATES_AUDIO = [
  *  existe ronco de 50/60 Hz, mesa batendo e sopro. */
 const CORTE_GRAVES = 85;
 
+/** Dois avisos mais próximos do que isto viram um só. Quando três pessoas
+ *  entram na voz ao mesmo tempo, três sinos sobrepostos não são três avisos:
+ *  são um borrão alto. O primeiro toca, os outros são descartados — não
+ *  enfileirados, porque um aviso atrasado já não avisa nada. */
+const ESPACO_ENTRE_AVISOS = 0.09;
+
 export class MotorDeAudio {
   #contexto = null;
   #worklet = null; // AudioWorkletNode da porta de ruído
@@ -59,6 +80,12 @@ export class MotorDeAudio {
   #passaAlta = null;
   #destino = null; // MediaStreamAudioDestinationNode
   #geral = null; // GainNode mestre da reprodução
+  #avisos = null; // GainNode dos sons de entrar e sair
+  // O relógio do contexto começa em zero, então o "nunca tocou" precisa ser
+  // menor que qualquer instante possível — com zero aqui, um aviso disparado
+  // nos primeiros 90 ms de vida do contexto seria descartado como repetido.
+  #ultimoAviso = -Infinity; // instante do último aviso, no relógio do contexto
+  #avisoAte = 0; // instante em que o último aviso se cala
   #saidas = new Map(); // id -> { fonte, ganho }
   #config = { ...AUDIO_PADRAO };
   #ouvinteDeNivel = null;
@@ -96,6 +123,9 @@ export class MotorDeAudio {
       this.#geral = this.#contexto.createGain();
       this.#geral.gain.value = this.#config.volumeGeral;
       this.#geral.connect(this.#contexto.destination);
+      this.#avisos = this.#contexto.createGain();
+      this.#avisos.gain.value = this.#config.volumeSons;
+      this.#avisos.connect(this.#contexto.destination);
       await this.#aplicarSaida();
     }
     if (this.#contexto.state === "suspended") await this.#contexto.resume().catch(() => {});
@@ -227,6 +257,45 @@ export class MotorDeAudio {
     if (saida) saida.ganho.gain.value = volume;
   }
 
+  /* ── Avisos ────────────────────────────────────────────────────── */
+
+  /**
+   * Toca um dos sons de `sons.js` — `entrei`, `entrou`, `sai` ou `saiu`.
+   *
+   * É deliberadamente síncrono. Quem sai da voz toca o som e, na linha
+   * seguinte, desmonta a malha e fecha o contexto; se este método esperasse
+   * qualquer coisa, o contexto fecharia antes de o som chegar a ser agendado,
+   * e a própria saída seria a única sem aviso.
+   *
+   * Devolve `false` quando não tocou — desligado, cedo demais, ou sem
+   * contexto de áudio ainda aberto.
+   */
+  tocarAviso(nome) {
+    if (!this.#config.sons || !this.#contexto || !this.#avisos) return false;
+
+    const agora = this.#contexto.currentTime;
+    if (agora - this.#ultimoAviso < ESPACO_ENTRE_AVISOS) return false;
+    this.#ultimoAviso = agora;
+
+    // Uma aba em segundo plano suspende o contexto; o `resume` é assíncrono,
+    // mas o agendamento abaixo já é feito no relógio parado e toca ao voltar.
+    if (this.#contexto.state === "suspended") this.#contexto.resume().catch(() => {});
+
+    this.#avisoAte = Math.max(this.#avisoAte, tocarSom(this.#contexto, this.#avisos, nome));
+    return true;
+  }
+
+  /** Igual ao anterior, mas abre o contexto se ainda não houver um. É o
+   *  caminho do painel de ajustes, onde se ouve o som sem estar na voz. */
+  async ouvirAviso(nome) {
+    if (!this.#config.sons) return;
+    await this.contexto();
+    // Ouvir de propósito não é o mesmo que ser avisado: dois cliques seguidos
+    // no painel devem tocar duas vezes.
+    this.#ultimoAviso = -Infinity;
+    this.tocarAviso(nome);
+  }
+
   /* ── Ajustes ───────────────────────────────────────────────────── */
 
   /**
@@ -239,6 +308,7 @@ export class MotorDeAudio {
     this.#config = depois;
 
     if (this.#geral) this.#geral.gain.value = depois.volumeGeral;
+    if (this.#avisos) this.#avisos.gain.value = depois.volumeSons;
     if (this.#worklet) {
       this.#worklet.parameters.get("ativa").value = depois.porta ? 1 : 0;
       this.#worklet.parameters.get("limiar").value = depois.limiar;
@@ -289,6 +359,16 @@ export class MotorDeAudio {
     this.soltarMicrofone();
     for (const id of [...this.#saidas.keys()]) this.desligarSaida(id);
     this.medir(null);
+
+    // Sair da voz toca um aviso e desmonta tudo em seguida. Fechar o contexto
+    // agora cortaria esse som no meio da primeira nota — daí a espera pela
+    // cauda do que ainda está soando. O teto de um segundo é só para que um
+    // relógio esquisito nunca prenda o encerramento.
+    const cauda = this.#avisoAte - (this.#contexto?.currentTime ?? 0);
+    if (cauda > 0) await new Promise((pronto) => setTimeout(pronto, Math.min(cauda, 1) * 1000));
+    this.#avisoAte = 0;
+    this.#avisos?.disconnect();
+    this.#avisos = null;
 
     this.#worklet?.disconnect();
     this.#passaAlta?.disconnect();

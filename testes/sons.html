@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Medição dos sons de entrada e saída</title>
+  </head>
+  <body>
+    <!--
+      Mede os sons de `src/sons.js` nas amostras, e não no ouvido.
+
+      "Agradável" e "elegante" não passam em teste nenhum, então cada uma
+      dessas palavras vira aqui um número que pode reprovar o projeto:
+
+        • não clipa, e o nível fica na faixa alvo
+        • não estala — nenhum degrau entre amostras vizinhas
+        • começa e termina em silêncio de verdade
+        • é curto: sai da frente de uma conversa em menos de meio segundo
+        • sobe ao entrar e desce ao sair, medido nas duas notas
+        • o evento seu tem grave; o dos outros não, e é mais baixo
+
+      A renderização é offline: o resultado é determinístico e não depende de
+      haver placa de som na máquina que roda o teste.
+    -->
+    <script type="module">
+      import { tocar, RECEITAS } from "/src/sons.js";
+
+      const TAXA = 48000;
+      const DURACAO = 2; // segundos de renderização; sobra para toda a cauda
+
+      const entregar = (dados) =>
+        fetch("http://127.0.0.1:8123/resultado", {
+          method: "POST",
+          body: JSON.stringify(dados, null, 2),
+        }).catch(() => {});
+
+      const relatorio = [];
+      let falhas = 0;
+      const conferir = (condicao, descricao, medida) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: !!condicao, descricao, medida });
+      };
+
+      const dB = (x) => (x > 0 ? 20 * Math.log10(x) : -Infinity);
+      const arred = (x, casas = 1) =>
+        Number.isFinite(x) ? Number(x.toFixed(casas)) : "-inf";
+
+      /** Renderiza um som isolado e devolve os dois canais. */
+      async function renderizar(nome) {
+        const ctx = new OfflineAudioContext(2, TAXA * DURACAO, TAXA);
+        tocar(ctx, ctx.destination, nome);
+        const buffer = await ctx.startRendering();
+        return [buffer.getChannelData(0), buffer.getChannelData(1)];
+      }
+
+      /** Soma dos canais, que é o que um alto-falante mono entrega. */
+      const somar = ([e, d]) => e.map((v, i) => (v + d[i]) / 2);
+
+      const pico = (x, de = 0, ate = x.length) => {
+        let m = 0;
+        for (let i = de; i < ate; i++) m = Math.max(m, Math.abs(x[i]));
+        return m;
+      };
+
+      /** O maior degrau entre amostras vizinhas. Um estalo é exatamente isso:
+       *  uma descontinuidade que o alto-falante não consegue seguir. */
+      const maiorDegrau = (x) => {
+        let m = 0;
+        for (let i = 1; i < x.length; i++) m = Math.max(m, Math.abs(x[i] - x[i - 1]));
+        return m;
+      };
+
+      /** Instante, em ms, em que o som cai abaixo de um limiar e não volta. */
+      const duracaoAte = (x, limiar) => {
+        for (let i = x.length - 1; i > 0; i--) if (Math.abs(x[i]) > limiar) return (i / TAXA) * 1000;
+        return 0;
+      };
+
+      /** Goertzel: energia de uma única frequência numa janela. Mais barato e
+       *  mais preciso, para uma frequência conhecida, do que uma FFT inteira. */
+      function energia(x, freq, deMs, ateMs) {
+        const de = Math.floor((deMs / 1000) * TAXA);
+        const ate = Math.min(Math.floor((ateMs / 1000) * TAXA), x.length);
+        const w = (2 * Math.PI * freq) / TAXA;
+        const coef = 2 * Math.cos(w);
+        let s1 = 0;
+        let s2 = 0;
+        for (let i = de; i < ate; i++) {
+          const s = x[i] + coef * s1 - s2;
+          s2 = s1;
+          s1 = s;
+        }
+        const potencia = s1 * s1 + s2 * s2 - coef * s1 * s2;
+        return Math.sqrt(Math.max(potencia, 0)) / (ate - de);
+      }
+
+      const BASE = 415.305; // Lá♭4
+      const ALTA = 622.254; // Mi♭5
+      const GRAVE = 103.826; // Lá♭2
+
+      try {
+        const som = {};
+        for (const nome of Object.keys(RECEITAS)) som[nome] = somar(await renderizar(nome));
+
+        for (const [nome, x] of Object.entries(som)) {
+          const p = pico(x);
+
+          // 1. Não clipa. Acima de 1,0 o WebView2 corta a onda no topo, e o
+          //    sino vira um zumbido — é o erro mais audível possível aqui.
+          conferir(p < 1, `${nome}: não clipa`, `pico ${arred(dB(p))} dBFS`);
+
+          // 2. Faixa alvo. Baixo demais some no meio da conversa; alto demais
+          //    assusta. A faixa é estreita de propósito: qualquer mudança nas
+          //    parciais ou nos ganhos que dobre ou divida o nível reprova.
+          conferir(
+            dB(p) > -22 && dB(p) < -10,
+            `${nome}: nível na faixa alvo (−22 a −10 dBFS)`,
+            `${arred(dB(p))} dBFS`
+          );
+
+          // 3. Sem estalo. Um degrau grande entre duas amostras vizinhas é o
+          //    clique de ataque abrupto. Uma senoide de 622 Hz a 48 kHz sobe
+          //    no máximo 8,1% da amplitude por amostra; o teto é folgado.
+          const degrau = maiorDegrau(x);
+          conferir(
+            degrau < p * 0.15,
+            `${nome}: sem estalo no ataque`,
+            `degrau ${arred((degrau / p) * 100)}% do pico`
+          );
+
+          // 4. Começa em silêncio: os 15 ms antes do primeiro evento.
+          const antes = pico(x, 0, Math.floor(0.015 * TAXA));
+          conferir(antes < 1e-5, `${nome}: começa em silêncio`, `${arred(dB(antes))} dBFS`);
+
+          // 5. Termina em silêncio de verdade, e não num degrau.
+          const depois = pico(x, Math.floor(1.5 * TAXA));
+          conferir(depois < 1e-6, `${nome}: cauda chega a zero`, `${arred(dB(depois))} dBFS`);
+
+          // 6. Curto. Medido até 40 dB abaixo do pico, que é onde o som deixa
+          //    de disputar espaço com a fala.
+          const dur = duracaoAte(x, p / 100);
+          conferir(dur < 700, `${nome}: dura menos de 700 ms`, `${arred(dur, 0)} ms até −40 dB`);
+        }
+
+        // 7. A direção do gesto. É a afirmação central do desenho — sobe ao
+        //    entrar, desce ao sair — e é medida nas duas notas, e não olhada.
+        //    Janela A: só a primeira nota soa. Janela B: a segunda domina.
+        for (const [nome, receita] of Object.entries(RECEITAS)) {
+          const x = som[nome];
+          const aBase = energia(x, BASE, 25, 95);
+          const aAlta = energia(x, ALTA, 25, 95);
+          const bBase = energia(x, BASE, 130, 320);
+          const bAlta = energia(x, ALTA, 130, 320);
+
+          const primeira = receita.subindo ? aBase > aAlta : aAlta > aBase;
+          const segunda = receita.subindo ? bAlta > bBase : bBase > bAlta;
+          conferir(
+            primeira && segunda,
+            `${nome}: gesto ${receita.subindo ? "sobe" : "desce"} (Lá♭4 ↔ Mi♭5)`,
+            `A ${arred(dB(aBase))}/${arred(dB(aAlta))} → B ${arred(dB(bBase))}/${arred(dB(bAlta))} dB`
+          );
+        }
+
+        // 8. O peso do grave separa o que é seu do que é dos outros. Sem esta
+        //    diferença as quatro leituras viram duas.
+        const graveMeu = energia(som.entrei, GRAVE, 25, 220);
+        const graveDele = energia(som.entrou, GRAVE, 25, 220);
+        conferir(
+          dB(graveMeu) - dB(graveDele) > 12,
+          "entrei tem grave que entrou não tem",
+          `${arred(dB(graveMeu) - dB(graveDele))} dB de diferença`
+        );
+
+        // 9. E o nível separa também: o evento dos outros é mais discreto.
+        for (const [meu, dele] of [["entrei", "entrou"], ["sai", "saiu"]]) {
+          const d = dB(pico(som[meu])) - dB(pico(som[dele]));
+          conferir(d > 3, `${dele} é mais discreto que ${meu}`, `${arred(d)} dB abaixo`);
+        }
+
+        // 10. As duas notas formam uma quinta justa. É o intervalo que faz o
+        //     som suportar ser ouvido dezenas de vezes por noite; se alguém
+        //     mexer nas frequências e desafinar isso, o teste reprova.
+        const quinta = ALTA / BASE;
+        conferir(
+          Math.abs(quinta - 1.5) / 1.5 < 0.002,
+          "o intervalo é uma quinta justa (3:2)",
+          `razão ${arred(quinta, 4)}`
+        );
+
+        // 11. Sons desligados não tocam — a preferência tem de valer mesmo.
+        const nada = new OfflineAudioContext(2, TAXA * 0.2, TAXA);
+        tocar(nada, nada.destination, "inexistente");
+        const vazio = await nada.startRendering();
+        conferir(
+          pico(vazio.getChannelData(0)) === 0,
+          "um nome desconhecido não produz som",
+          "silêncio"
+        );
+      } catch (erro) {
+        falhas++;
+        relatorio.push({ ok: false, descricao: `exceção: ${erro?.message ?? erro}` });
+      }
+
+      await entregar({ falhas, relatorio });
+      document.title = falhas === 0 ? "ok" : `${falhas} falha(s)`;
+    </script>
+  </body>
+</html>

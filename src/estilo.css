@@ -367,6 +367,69 @@ svg {
   gap: 8px;
 }
 
+/* ── Campo de atalho: grava a combinação de teclas ── */
+
+.atalho-campo {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-p);
+  padding: 8px 11px;
+  cursor: pointer;
+  transition: border-color var(--transicao), background-color var(--transicao);
+}
+
+.atalho-campo:hover {
+  border-color: var(--borda-forte);
+}
+
+.atalho-campo[data-gravando="sim"] {
+  border-color: var(--acento);
+  background: var(--acento-suave);
+  animation: pulsar-atalho 1.3s ease-in-out infinite;
+}
+
+@keyframes pulsar-atalho {
+  50% {
+    border-color: rgba(95, 106, 217, 0.4);
+  }
+}
+
+.atalho-campo__teclas {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+}
+
+.atalho-campo__vazio {
+  color: var(--texto-3);
+}
+
+.atalho-campo__mais {
+  color: var(--texto-3);
+  font-size: 11px;
+}
+
+.atalho-tecla {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  padding: 3px 7px;
+  border: 1px solid var(--borda-forte);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--superficie-3);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--texto);
+}
+
 .campo__composto .campo__entrada {
   flex: 1;
   min-width: 0;
@@ -716,6 +779,26 @@ svg {
   text-transform: uppercase;
 }
 
+/* Com mascote, a arte é o disco inteiro: o fundo e a borda do avatar de
+   iniciais sobrariam como um anel em volta do desenho. */
+.avatar--mascote {
+  background: none;
+  border-color: transparent;
+  overflow: hidden;
+}
+
+.mascote {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* A folha global declara `svg { stroke: currentColor }`, e as formas do
+     desenho herdariam esse traço — um contorno claro por cima de tudo. Zerar
+     aqui basta: quem precisa de traço (bocas, tentáculos) declara o seu no
+     próprio elemento, e atributo vence herança. */
+  fill: none;
+  stroke: none;
+}
+
 /* ─── Coluna: canais ───────────────────────────────────────────── */
 
 .canais {
@@ -980,10 +1063,26 @@ svg {
   margin-bottom: 8px;
 }
 
+.voz__linha {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .voz__estado {
   font-size: 11.5px;
   font-weight: 600;
   color: var(--vivo);
+}
+
+/* Tabular: sem isso o rótulo balança a cada segundo, porque o 1 é mais
+   estreito que os outros algarismos. */
+.voz__tempo {
+  flex: none;
+  font-size: 11px;
+  color: var(--texto-3);
+  font-variant-numeric: tabular-nums;
 }
 
 .voz__canal {
@@ -1117,6 +1216,23 @@ svg {
   height: 5px;
   border-radius: 999px;
   background: var(--vivo);
+}
+
+/* Minimalista de propósito: um número e uma unidade, sem ícone, sem borda
+   viva — a etiqueta de nome já ancora o canto oposto, e duas peças chamativas
+   no mesmo quadro brigariam por atenção. */
+.transmissao__qualidade {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(14, 15, 17, 0.6);
+  backdrop-filter: blur(8px);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--texto-3);
+  letter-spacing: 0.02em;
 }
 
 .transmissao__expandir {
@@ -1478,6 +1594,29 @@ svg {
   white-space: nowrap;
 }
 
+/* Nome e atividade empilhados. O `min-width: 0` em ambos os níveis é o que
+   permite a elipse funcionar: sem ele o conteúdo define a largura mínima do
+   item flex e o nome empurra os ícones de mudo e transmissão para fora. */
+.participante__texto {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.participante__texto .participante__nome {
+  flex: none;
+}
+
+.participante__atividade {
+  font-size: 11px;
+  color: var(--texto-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .participante[data-falando="sim"] .avatar {
   border-color: rgba(79, 201, 140, 0.6);
   box-shadow: 0 0 0 3px rgba(79, 201, 140, 0.1);
@@ -1506,6 +1645,50 @@ svg {
   padding: 14px 10px;
   font-size: 12px;
   color: var(--texto-3);
+}
+
+/* Quem esteve na call e saiu. Fica no rodapé da coluna, apagado: é memória,
+   não presença — não pode disputar atenção com quem está ali agora. */
+.passaram {
+  flex: none;
+  max-height: 30%;
+  overflow-y: auto;
+  padding: 10px 8px;
+  border-top: 1px solid var(--borda);
+}
+
+.passaram__titulo {
+  display: block;
+  padding: 0 8px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+
+.passou {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--texto-3);
+}
+
+.passou__nome {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.passou__tempo {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
 }
 
 /* ─── Diálogo ──────────────────────────────────────────────────── */
@@ -2483,6 +2666,281 @@ select.campo__entrada {
 
 .fonte[aria-pressed="true"] .fonte__nome {
   color: var(--texto);
+}
+
+/* ═══ Perfil ══════════════════════════════════════════════════════ */
+
+/* O bloco do rodapé virou botão. Ele já tinha a cara de um — avatar, nome e
+   estado — e não abria nada; a engrenagem ao lado continua sendo dos ajustes,
+   que são outra coisa. */
+.perfil__eu {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 7px;
+  margin: -5px -7px;
+  border: 0;
+  border-radius: var(--raio-p);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transicao);
+}
+
+.perfil__eu:hover {
+  background: var(--superficie-2);
+}
+
+.avatar--grande {
+  width: 88px;
+  height: 88px;
+  font-size: 30px;
+}
+
+/* ── Escolha de mascote ── */
+
+.mascotes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+/* Na tela de entrada não há espaço para uma grade de três por duas, e o nome
+   de cada mascote seria ruído antes de a pessoa sequer ter entrado. */
+.mascotes--fita {
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+
+.mascote-opcao {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 4px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+  background: var(--superficie-2);
+  cursor: pointer;
+  transition: border-color var(--transicao), background var(--transicao),
+    transform var(--transicao);
+}
+
+.mascote-opcao .avatar {
+  width: 40px;
+  height: 40px;
+}
+
+.mascotes--fita .mascote-opcao {
+  padding: 5px 2px;
+}
+
+.mascotes--fita .mascote-opcao .avatar {
+  width: 30px;
+  height: 30px;
+}
+
+.mascotes--fita .mascote-opcao__nome {
+  display: none;
+}
+
+.mascote-opcao:hover {
+  border-color: var(--borda-forte);
+  background: var(--superficie-3);
+  transform: translateY(-1px);
+}
+
+/* A cor da borda do selecionado é a do próprio mascote, e não o acento do
+   aplicativo: seis opções com a mesma marca roxa por cima empatariam
+   justamente onde a diferença é a cor. */
+.mascote-opcao[aria-pressed="true"] {
+  border-color: var(--cor-mascote);
+  background: var(--superficie-3);
+  box-shadow: 0 0 0 1px var(--cor-mascote);
+}
+
+.mascote-opcao__nome {
+  font-size: 11px;
+  color: var(--texto-3);
+}
+
+.mascote-opcao[aria-pressed="true"] .mascote-opcao__nome {
+  color: var(--texto-2);
+}
+
+/* ── Painel do próprio perfil ── */
+
+.painel-perfil {
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-g);
+  animation: surgir 180ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.painel-perfil__corpo {
+  padding: 14px 20px 16px;
+  overflow-y: auto;
+}
+
+.painel-perfil__rodape {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--borda);
+}
+
+.previa {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+  background: var(--superficie-2);
+}
+
+.previa__texto {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.previa__nome {
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.previa__lema {
+  font-size: 11.5px;
+  color: var(--texto-3);
+}
+
+.previa__bio {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--texto-2);
+  overflow-wrap: anywhere;
+}
+
+textarea.campo__area {
+  resize: none;
+  line-height: 1.45;
+  user-select: text;
+  cursor: text;
+}
+
+/* ── Cartão de alguém ── */
+
+.cartao {
+  position: relative;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  background: var(--superficie-1);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-g);
+  overflow: hidden;
+  animation: surgir 180ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.cartao__capa {
+  height: 74px;
+  background: var(--superficie-3);
+}
+
+.cartao__fechar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(8, 9, 10, 0.35);
+}
+
+.cartao__avatar {
+  position: absolute;
+  top: 32px;
+  left: 20px;
+  border: 3px solid var(--superficie-1);
+  background: var(--superficie-1);
+}
+
+.cartao__corpo {
+  padding: 18px 20px 20px;
+  margin-top: 34px;
+}
+
+.cartao__nome {
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cartao__etiquetas {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.cartao__atividade {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--texto-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cartao__bio {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--texto-2);
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+
+.cartao__vazio {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--texto-3);
+  font-style: italic;
+}
+
+.cartao__acoes {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* As linhas de participante e de quem está na voz viraram botões — elas abrem
+   o cartão da pessoa. Aqui é só desfazer o que o navegador põe num botão; a
+   aparência delas continua sendo a das seções acima.
+
+   As duas já declaram `display: flex`, que torna o botão um bloco: ele ocupa
+   a largura disponível sozinho, e o recuo de 22 px do `.vozinho` continua
+   valendo. Um `width: 100%` aqui é que estouraria a coluna. */
+.participante,
+.vozinho {
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 /* No fim da folha de propósito: estas regras precisam vencer o `display` que

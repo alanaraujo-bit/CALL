@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Teste da gestão de perfil</title>
+  </head>
+  <body>
+    <!--
+      Conduz o perfil na aplicação real, dentro do motor Chromium.
+
+      A parte interessante é a segunda pessoa: em vez de abrir outra janela, a
+      própria página de teste entra no grupo por um WebSocket cru, com mascote
+      e bio. Assim dá para provar o que só existe entre duas pessoas — o cartão
+      de alguém, e a troca de perfil chegando do outro lado — sem depender de
+      duas instâncias e do foco de janela, que é o que torna o
+      `duas-instancias.ps1` frágil.
+    -->
+    <iframe id="app" src="/src/index.html" style="width: 1180px; height: 760px; border: 0"></iframe>
+
+    <script type="module">
+      const entregar = (dados, rota = "/resultado") =>
+        fetch(`http://127.0.0.1:8123${rota}`, {
+          method: "POST",
+          body: JSON.stringify(dados, null, 2),
+        }).catch(() => {});
+
+      const relatorio = [];
+      let falhas = 0;
+      const conferir = (condicao, descricao) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: !!condicao, descricao });
+      };
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+      const aguardar = async (teste, limite = 6000) => {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          if (await teste()) return true;
+          await esperar(100);
+        }
+        return false;
+      };
+
+      const quadro = document.getElementById("app");
+      await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+      const doc = quadro.contentDocument;
+      const jan = quadro.contentWindow;
+
+      const erros = [];
+      jan.addEventListener("error", (e) => erros.push(String(e.message)));
+      jan.addEventListener("unhandledrejection", (e) => erros.push(String(e.reason)));
+      const erroOriginal = jan.console.error.bind(jan.console);
+      jan.console.error = (...a) => {
+        erros.push(a.map((x) => x?.message ?? String(x)).join(" "));
+        erroOriginal(...a);
+      };
+
+      const $ = (id) => doc.getElementById(id);
+      const prefs = () => JSON.parse(jan.localStorage.getItem("call.preferencias") ?? "{}");
+      const teclar = (elemento, valor) => {
+        elemento.value = valor;
+        elemento.dispatchEvent(new jan.Event("input"));
+      };
+
+      try {
+        // ── Tela de entrada: a fita de mascotes ──────────────────────
+        const fita = $("entrada-mascotes");
+        conferir(fita.children.length === 6, `a fita traz os seis mascotes (${fita.children.length})`);
+        conferir(
+          [...fita.children].every((b) => b.querySelector("svg.mascote")),
+          "cada opção é o desenho, e não um retângulo vazio"
+        );
+        conferir(
+          [...fita.children].filter((b) => b.getAttribute("aria-pressed") === "true").length === 1,
+          "quem nunca escolheu já chega com um mascote sorteado"
+        );
+
+        fita.children[4].click();
+        await esperar(80);
+        conferir(
+          fita.children[4].getAttribute("aria-pressed") === "true",
+          "clicar em um mascote o marca"
+        );
+        conferir(prefs().avatar === "polvo", `e a escolha é gravada na hora (${prefs().avatar})`);
+
+        // ── Entrar ───────────────────────────────────────────────────
+        $("campo-apelido").value = "Alan";
+        $("campo-servidor").value = "ws://127.0.0.1:8898";
+        $("formulario-entrada").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+        await esperar(300);
+        conferir(!$("tela-aplicacao").classList.contains("oculto"), "a aplicação abre");
+        conferir(
+          $("avatar-usuario").querySelector("svg.mascote"),
+          "o rodapé mostra o mascote escolhido, e não as iniciais"
+        );
+
+        // ── Painel do próprio perfil ─────────────────────────────────
+        $("botao-perfil").click();
+        await esperar(150);
+        conferir(!$("perfil-dialogo").classList.contains("oculto"), "o painel de perfil abre");
+        conferir(
+          $("perfil-previa-nome").textContent === "Alan",
+          "a prévia começa com o apelido de quem entrou"
+        );
+        conferir(
+          $("perfil-mascotes").children.length === 6,
+          "o painel oferece os seis mascotes"
+        );
+
+        teclar($("perfil-bio"), "Testando a bio.");
+        conferir($("perfil-previa-bio").textContent === "Testando a bio.", "a prévia acompanha a bio");
+        conferir($("perfil-bio-conta").textContent === "15/160", `o contador conta (${$("perfil-bio-conta").textContent})`);
+
+        // Um emoji é um caractere para quem escreve, e dois para o `.length`
+        // do JavaScript. O contador conta o que a pessoa vê.
+        teclar($("perfil-bio"), "🦫");
+        conferir($("perfil-bio-conta").textContent === "1/160", `emoji conta como um (${$("perfil-bio-conta").textContent})`);
+
+        teclar($("perfil-apelido"), "");
+        conferir($("perfil-salvar").disabled, "sem apelido não dá para salvar");
+        teclar($("perfil-apelido"), "Alan A.");
+        conferir(!$("perfil-salvar").disabled, "com apelido, dá");
+
+        $("perfil-mascotes").children[0].click();
+        await esperar(80);
+        conferir(
+          $("perfil-previa-avatar").querySelector("svg.mascote"),
+          "a prévia redesenha com o mascote escolhido"
+        );
+        conferir(
+          $("perfil-previa-lema").textContent.startsWith("Coruja"),
+          `a prévia diz quem é o mascote (${$("perfil-previa-lema").textContent})`
+        );
+
+        // ── Cancelar não muda nada ───────────────────────────────────
+        $("perfil-cancelar").click();
+        await esperar(120);
+        conferir($("perfil-dialogo").classList.contains("oculto"), "cancelar fecha o painel");
+        conferir(prefs().avatar === "polvo", "e não grava o mascote clicado na prévia");
+        conferir($("rotulo-usuario").textContent === "Alan", "nem o apelido");
+
+        // ── Salvar muda ──────────────────────────────────────────────
+        $("botao-perfil").click();
+        await esperar(150);
+        teclar($("perfil-apelido"), "Alan A.");
+        teclar($("perfil-bio"), "Fuso de Brasília.");
+        $("perfil-mascotes").children[0].click();
+        $("perfil-salvar").click();
+        await esperar(200);
+        conferir($("perfil-dialogo").classList.contains("oculto"), "salvar fecha o painel");
+        conferir($("rotulo-usuario").textContent === "Alan A.", "o rodapé mostra o apelido novo");
+        conferir(prefs().avatar === "coruja", `o mascote novo é gravado (${prefs().avatar})`);
+        conferir(prefs().bio === "Fuso de Brasília.", `a bio é gravada (${prefs().bio})`);
+
+        // ── Reabrir traz o que foi salvo ─────────────────────────────
+        $("botao-perfil").click();
+        await esperar(150);
+        conferir($("perfil-bio").value === "Fuso de Brasília.", "reabrir traz a bio salva");
+        conferir(
+          $("perfil-mascotes").children[0].getAttribute("aria-pressed") === "true",
+          "e o mascote salvo aparece marcado"
+        );
+        $("perfil-fechar").click();
+        await esperar(120);
+
+        // ── Um grupo, e uma segunda pessoa de verdade ────────────────
+        $("botao-novo-grupo").click();
+        await esperar(150);
+        doc.querySelector("#dialogo-campos input").value = "Estúdio";
+        $("dialogo-formulario").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+        const entrou = await aguardar(() => $("codigo-convite").textContent.length === 10);
+        conferir(entrou, "o grupo é criado no servidor local");
+        const codigo = $("codigo-convite").textContent;
+
+        const par = new WebSocket("ws://127.0.0.1:8898");
+        await new Promise((ok, falhou) => {
+          par.addEventListener("open", ok, { once: true });
+          par.addEventListener("error", falhou, { once: true });
+        });
+        par.send(
+          JSON.stringify({
+            tipo: "entrar",
+            codigo,
+            apelido: "Bruna",
+            usuario: "bruna-teste",
+            avatar: "raposa",
+            bio: "Segunda pessoa desta call.",
+          })
+        );
+
+        const dois = await aguardar(() => $("lista-participantes").children.length === 2);
+        conferir(dois, "a segunda pessoa aparece na lista");
+
+        const linhaBruna = [...$("lista-participantes").children].find((l) =>
+          l.textContent.includes("Bruna")
+        );
+        conferir(
+          linhaBruna?.querySelector("svg.mascote"),
+          "e aparece com o mascote dela, vindo pela rede"
+        );
+
+        // ── O cartão de alguém ───────────────────────────────────────
+        linhaBruna.click();
+        await esperar(200);
+        conferir(!$("cartao-dialogo").classList.contains("oculto"), "clicar na pessoa abre o cartão");
+        conferir($("cartao-nome").textContent === "Bruna", "o cartão traz o nome dela");
+        conferir(
+          $("cartao-bio").textContent === "Segunda pessoa desta call.",
+          `o cartão traz a bio dela (${$("cartao-bio").textContent})`
+        );
+        conferir($("cartao-vazio").hidden, "e não diz que ela não escreveu nada");
+        conferir(
+          $("cartao-avatar").querySelector("svg.mascote"),
+          "o retrato grande é o mascote dela"
+        );
+        conferir(
+          $("cartao-acoes").children.length === 1,
+          "o cartão oferece o ajuste de volume dela"
+        );
+        $("cartao-fechar").click();
+        await esperar(120);
+        conferir($("cartao-dialogo").classList.contains("oculto"), "o cartão fecha");
+
+        // ── Troca de perfil chegando do outro lado ───────────────────
+        par.send(
+          JSON.stringify({
+            tipo: "perfil",
+            apelido: "Bruna R.",
+            avatar: "axolote",
+            bio: "Troquei de mascote.",
+          })
+        );
+        const trocou = await aguardar(() =>
+          [...$("lista-participantes").children].some((l) => l.textContent.includes("Bruna R."))
+        );
+        conferir(trocou, "a troca de perfil de outra pessoa chega à lista");
+
+        [...$("lista-participantes").children]
+          .find((l) => l.textContent.includes("Bruna R."))
+          .click();
+        await esperar(200);
+        conferir(
+          $("cartao-bio").textContent === "Troquei de mascote.",
+          "e o cartão dela já mostra a bio nova"
+        );
+        $("cartao-fechar").click();
+
+        // ── Clicar em si mesmo abre o editor, não um cartão ──────────
+        [...$("lista-participantes").children]
+          .find((l) => l.textContent.includes("(você)"))
+          .click();
+        await esperar(200);
+        conferir(
+          !$("perfil-dialogo").classList.contains("oculto") &&
+            $("cartao-dialogo").classList.contains("oculto"),
+          "clicar em si mesmo abre o editor"
+        );
+        $("perfil-fechar").click();
+
+        par.close();
+        conferir(erros.length === 0, `nenhum erro de execução (${erros.join(" | ") || "nenhum"})`);
+      } catch (erro) {
+        conferir(false, `erro inesperado: ${erro?.message ?? erro}`);
+        conferir(false, `erros da aplicação: ${erros.join(" | ") || "nenhum"}`);
+      }
+
+      document.title = falhas === 0 ? "PASSOU" : "FALHOU";
+      await entregar({ falhas, relatorio });
+      window.close();
+    </script>
+  </body>
+</html>

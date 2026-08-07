@@ -34,22 +34,71 @@ type Fila = UnboundedSender<Message>;
 const APELIDO_MAX: usize = 24;
 const NOME_MAX: usize = 40;
 const TEXTO_MAX: usize = 2000;
+/// Uma linha sobre a pessoa. O servidor nao le isto, so repassa — o teto e o
+/// que impede um cliente adulterado de empurrar um romance para dentro do
+/// cartao de perfil de todo mundo no grupo.
+const BIO_MAX: usize = 160;
+/// Identificador do mascote. O servidor de proposito **nao** conhece a lista:
+/// mascote e assunto da interface, e uma versao nova do aplicativo com um
+/// setimo desenho nao pode depender de o servidor hospedado ser atualizado
+/// junto. Quem nao reconhece o identificador desenha as iniciais.
+const AVATAR_MAX: usize = 24;
+/// Nome do aplicativo em uso. O servidor nao interpreta este texto — ele so o
+/// repassa —, entao o teto e o que impede um cliente adulterado de empurrar
+/// um romance para dentro da lista de participantes de todo mundo.
+const ATIVIDADE_MAX: usize = 40;
 
 /// Teto de mensagens por janela. Nao e defesa contra um atacante dedicado —
 /// e o que impede um cliente com defeito de encher o disco de quem hospeda.
 const MENSAGENS_POR_JANELA: u32 = 20;
 const JANELA_MS: u64 = 10_000;
 
+/// O que a pessoa apresenta ao grupo. Nao e conta: nada disto e guardado no
+/// acervo, nem confere identidade nenhuma. Viaja na saudacao, vive enquanto a
+/// conexao viver, e some com ela — o cliente e quem lembra, e reapresenta.
+#[derive(Clone)]
+struct Cartao {
+    usuario: String,
+    apelido: String,
+    avatar: String,
+    bio: String,
+}
+
+impl Cartao {
+    /// Le e recorta o cartao de uma mensagem do cliente. Recortar aqui, e nao
+    /// so na interface, e o que vale: a interface e do outro lado da rede.
+    fn ler(v: &Value) -> Self {
+        Cartao {
+            usuario: identidade(v),
+            apelido: limitar(texto_de(v, "apelido"), APELIDO_MAX, "Convidado"),
+            avatar: texto_de(v, "avatar")
+                .chars()
+                .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-')
+                .take(AVATAR_MAX)
+                .collect(),
+            bio: texto_de(v, "bio").trim().chars().take(BIO_MAX).collect(),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Conexao {
     id: u64,
     usuario: String,
     apelido: String,
+    /// Identificador do mascote escolhido, ou vazio para as iniciais.
+    avatar: String,
+    /// Uma linha sobre a pessoa, mostrada no cartao de perfil dela.
+    bio: String,
     grupo: Option<String>,
     canal_voz: Option<String>,
     fila: Fila,
     mudo: bool,
     transmitindo: bool,
+    /// Aplicativo em primeiro plano na maquina da pessoa, quando ela escolhe
+    /// mostrar. Fica na conexao, e nao no acervo: e estado do momento e nao
+    /// deve sobreviver a quem o produziu.
+    atividade: Option<String>,
 }
 
 impl Conexao {
@@ -58,9 +107,12 @@ impl Conexao {
             "id": self.id.to_string(),
             "usuario": self.usuario,
             "apelido": self.apelido,
+            "avatar": self.avatar,
+            "bio": self.bio,
             "canalVoz": self.canal_voz,
             "mudo": self.mudo,
-            "transmitindo": self.transmitindo
+            "transmitindo": self.transmitindo,
+            "atividade": self.atividade
         })
     }
 }
@@ -282,6 +334,7 @@ fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado
         "sair-voz" => sair_voz(id, estado),
         "sinal" => sinal(v, id, estado),
         "estado" => estado_de_midia(v, id, estado),
+        "perfil" => perfil(v, id, estado),
         "mensagem" => mensagem(v, id, fila, estado),
         "historico" => historico(v, id, fila, estado),
         "criar-categoria" => criar_categoria(v, id, fila, estado),
@@ -296,8 +349,7 @@ fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado
 
 fn criar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     let nome = limitar(texto_de(v, "nome"), NOME_MAX, "Meu grupo");
-    let apelido = limitar(texto_de(v, "apelido"), APELIDO_MAX, "Convidado");
-    let usuario = identidade(v);
+    let cartao = Cartao::ler(v);
 
     let mut e = estado.lock().unwrap();
     if e.conexoes.contains_key(&id) {
@@ -305,18 +357,17 @@ fn criar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         return;
     }
 
-    let grupo = Grupo::novo(novo_codigo(), nome, usuario.clone());
+    let grupo = Grupo::novo(novo_codigo(), nome, cartao.usuario.clone());
     let codigo = grupo.codigo.clone();
     e.acervo.grupos.insert(codigo.clone(), grupo);
     e.acervo.salvar_grupos();
 
-    admitir(&mut e, id, usuario, apelido, &codigo, fila);
+    admitir(&mut e, id, cartao, &codigo, fila);
 }
 
 fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     let codigo = texto_de(v, "codigo").trim().to_uppercase();
-    let apelido = limitar(texto_de(v, "apelido"), APELIDO_MAX, "Convidado");
-    let usuario = identidade(v);
+    let cartao = Cartao::ler(v);
 
     let mut e = estado.lock().unwrap();
     if e.conexoes.contains_key(&id) {
@@ -328,28 +379,24 @@ fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         return;
     }
 
-    admitir(&mut e, id, usuario, apelido, &codigo, fila);
+    admitir(&mut e, id, cartao, &codigo, fila);
 }
 
 /// Registra a conexao no grupo, entrega o estado inteiro a ela e anuncia a
 /// chegada aos demais.
-fn admitir(
-    e: &mut Estado,
-    id: u64,
-    usuario: String,
-    apelido: String,
-    codigo: &str,
-    fila: &Fila,
-) {
+fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila) {
     let nova = Conexao {
         id,
-        usuario,
-        apelido,
+        usuario: cartao.usuario,
+        apelido: cartao.apelido,
+        avatar: cartao.avatar,
+        bio: cartao.bio,
         grupo: Some(codigo.to_string()),
         canal_voz: None,
         fila: fila.clone(),
         mudo: false,
         transmitindo: false,
+        atividade: None,
     };
 
     let presentes: Vec<Value> = e.do_grupo(codigo).iter().map(Conexao::resumo).collect();
@@ -491,12 +538,21 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
+    // Ausente e "nao mostro nada", que e diferente de uma cadeia vazia vinda
+    // de um cliente com defeito — os dois viram `None` e ninguem ve nada.
+    let atividade = v
+        .get("atividade")
+        .and_then(Value::as_str)
+        .map(|texto| texto.trim().chars().take(ATIVIDADE_MAX).collect::<String>())
+        .filter(|texto| !texto.is_empty());
+
     let mut e = estado.lock().unwrap();
     let Some(eu) = e.conexoes.get_mut(&id) else {
         return;
     };
     eu.mudo = mudo;
     eu.transmitindo = transmitindo;
+    eu.atividade = atividade.clone();
     let Some(codigo) = eu.grupo.clone() else {
         return;
     };
@@ -505,7 +561,40 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
         "tipo": "estado",
         "de": id.to_string(),
         "mudo": mudo,
-        "transmitindo": transmitindo
+        "transmitindo": transmitindo,
+        "atividade": atividade
+    });
+    e.difundir(&codigo, &aviso, Some(id));
+}
+
+/// Perfil trocado com o grupo ja em andamento. Sem isto, mudar o apelido, o
+/// mascote ou a bio so valeria na proxima entrada, e os outros continuariam
+/// vendo o perfil antigo pelo resto da sessao.
+///
+/// O `usuario` **nao** e relido aqui de proposito. Ele e o que atribui autoria
+/// as mensagens e o que decide quem e o dono do grupo: aceitar uma troca dele
+/// no meio da sessao seria deixar qualquer um se apresentar como outra pessoa
+/// depois de ja ter sido admitido.
+fn perfil(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
+    let cartao = Cartao::ler(v);
+
+    let mut e = estado.lock().unwrap();
+    let Some(eu) = e.conexoes.get_mut(&id) else {
+        return;
+    };
+    eu.apelido = cartao.apelido.clone();
+    eu.avatar = cartao.avatar.clone();
+    eu.bio = cartao.bio.clone();
+    let Some(codigo) = eu.grupo.clone() else {
+        return;
+    };
+
+    let aviso = json!({
+        "tipo": "perfil",
+        "de": id.to_string(),
+        "apelido": cartao.apelido,
+        "avatar": cartao.avatar,
+        "bio": cartao.bio
     });
     e.difundir(&codigo, &aviso, Some(id));
 }
@@ -537,11 +626,16 @@ fn mensagem(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         return;
     }
 
+    // Apelido e avatar sao gravados na mensagem, e nao buscados na hora de
+    // ler: o historico e de quem escreveu naquele dia. Quem trocou de mascote
+    // depois nao reescreve o passado, e quem nem esta no grupo agora continua
+    // aparecendo como apareceu.
     let m = modelo::Mensagem {
         id: novo_id(),
         canal: canal.clone(),
         autor: eu.usuario.clone(),
         apelido: eu.apelido.clone(),
+        avatar: eu.avatar.clone(),
         texto,
         em: agora_ms(),
     };

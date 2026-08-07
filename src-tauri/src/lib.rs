@@ -1,11 +1,16 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, RunEvent, State};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
+mod atividade;
 mod tela;
-use tela::CapturaAtiva;
+use tela::{AudioAtivo, CapturaAtiva};
 
 /// Processo do servidor de sinalizacao, quando esta maquina esta hospedando.
 #[derive(Default)]
@@ -56,6 +61,19 @@ fn encerrar_hospedagem(estado: State<'_, Hospedagem>) -> Result<(), String> {
     Ok(())
 }
 
+/// Traz a janela principal para a frente — do jeito que faz sentido tanto
+/// vindo de um clique num link, de uma segunda instância, ou do ícone da
+/// bandeja: minimizada aceita o foco sem se mostrar, e escondida (depois de
+/// um fechamento que virou bandeja) não sai da minimização sozinha. Os dois
+/// passos juntos cobrem as duas origens.
+fn mostrar_janela_principal(app: &tauri::AppHandle) {
+    if let Some(janela) = app.get_webview_window("main") {
+        let _ = janela.unminimize();
+        let _ = janela.show();
+        let _ = janela.set_focus();
+    }
+}
+
 /// Convite que chegou por `call://` e ainda nao foi consumido pela interface.
 #[derive(Default)]
 struct Convite(Mutex<Option<String>>);
@@ -92,13 +110,9 @@ fn anotar_convite(app: &tauri::AppHandle, endereco: &str) {
         *vaga = Some(codigo);
     }
 
-    if let Some(janela) = app.get_webview_window("main") {
-        // Quem clicou no link espera ver a janela, e nao um icone piscando na
-        // barra de tarefas. `unminimize` antes do foco: uma janela minimizada
-        // aceita o foco sem se mostrar.
-        let _ = janela.unminimize();
-        let _ = janela.set_focus();
-    }
+    // Quem clicou no link espera ver a janela — inclusive se ela estava
+    // escondida na bandeja, e não só minimizada na barra de tarefas.
+    mostrar_janela_principal(app);
     let _ = app.emit("convite", ());
 }
 
@@ -150,6 +164,51 @@ async fn instalar_atualizacao(app: tauri::AppHandle) -> Result<(), String> {
         .download_and_install(|_baixado, _total| {}, || {})
         .await
         .map_err(|erro| erro.to_string())?;
+
+    Ok(())
+}
+
+/// Atalho global de mudo, guardado como string de aceleração
+/// (`"Ctrl+Shift+KeyM"`) para poder desregistrar antes de trocar por outro.
+#[derive(Default)]
+struct AtalhoMudo(Mutex<Option<String>>);
+
+/// Verdadeiro só entre o clique em "Sair" no ícone da bandeja e o
+/// fechamento de fato. É o que diferencia esse fechamento do clique no X da
+/// janela, que deve minimizar para a bandeja, não encerrar o aplicativo.
+#[derive(Default)]
+struct SaindoDeVerdade(AtomicBool);
+
+/// Troca o atalho global de mutar/desmutar. `None` só desliga o anterior.
+///
+/// Precisa ser *global* — não um `keydown` na interface — porque o pedido é
+/// que funcione com a janela sem foco ou escondida na bandeja, os dois casos
+/// em que um `keydown` da própria página nunca dispara.
+#[tauri::command]
+fn definir_atalho_mudo(
+    app: tauri::AppHandle,
+    estado: State<'_, AtalhoMudo>,
+    atalho: Option<String>,
+) -> Result<(), String> {
+    let mut atual = estado
+        .0
+        .lock()
+        .map_err(|_| "Estado interno inconsistente.".to_string())?;
+
+    if let Some(anterior) = atual.take() {
+        let _ = app.global_shortcut().unregister(anterior.as_str());
+    }
+
+    if let Some(novo) = atalho {
+        app.global_shortcut()
+            .on_shortcut(novo.as_str(), |app, _atalho, evento| {
+                if evento.state == ShortcutState::Pressed {
+                    let _ = app.emit("atalho-mudo", ());
+                }
+            })
+            .map_err(|_| "Esse atalho já está em uso por outro programa.".to_string())?;
+        *atual = Some(novo);
+    }
 
     Ok(())
 }
@@ -221,10 +280,7 @@ pub fn run() {
         // decide se este processo continua vivo ou entrega os argumentos a
         // instancia que ja estava aberta.
         construtor = construtor.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(janela) = app.get_webview_window("main") {
-                let _ = janela.unminimize();
-                let _ = janela.set_focus();
-            }
+            mostrar_janela_principal(app);
         }));
     }
 
@@ -232,12 +288,16 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
 
             app.manage(Hospedagem::default());
             app.manage(Convite::default());
             app.manage(CapturaAtiva::default());
+            app.manage(AudioAtivo::default());
+            app.manage(AtalhoMudo::default());
+            app.manage(SaindoDeVerdade::default());
 
             // O instalador registra o esquema no sistema; em desenvolvimento
             // nao passa instalador nenhum, e sem isto o `call://` nao existiria
@@ -262,7 +322,53 @@ pub fn run() {
             if let Some(janela) = app.get_webview_window("main") {
                 liberar_microfone(&janela);
             }
+
+            // Ícone na bandeja: é o que permite ao aplicativo continuar vivo
+            // (e o atalho de mudo continuar valendo) depois que a janela
+            // fecha — ver o tratamento de `CloseRequested` mais abaixo.
+            let abrir = MenuItem::with_id(app, "abrir", "Abrir CALL", true, None::<&str>)?;
+            let sair = MenuItem::with_id(app, "sair", "Sair", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&abrir, &sair])?;
+
+            TrayIconBuilder::with_id("call-bandeja")
+                .tooltip("CALL")
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, evento| match evento.id.as_ref() {
+                    "abrir" => mostrar_janela_principal(app),
+                    "sair" => {
+                        app.state::<SaindoDeVerdade>().0.store(true, Ordering::SeqCst);
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, evento| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = evento
+                    {
+                        mostrar_janela_principal(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
             Ok(())
+        })
+        .on_window_event(|janela, evento| {
+            // O X da janela minimiza para a bandeja, não encerra — do jeito
+            // que o Discord e a maioria dos apps de chamada se comportam.
+            // Fechar de verdade só acontece pelo "Sair" da bandeja, que marca
+            // `SaindoDeVerdade` antes de pedir o fechamento.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = evento {
+                let app = janela.app_handle();
+                if !app.state::<SaindoDeVerdade>().0.load(Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = janela.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             hospedar,
@@ -270,9 +376,13 @@ pub fn run() {
             convite_pendente,
             procurar_atualizacao,
             instalar_atualizacao,
+            definir_atalho_mudo,
             tela::listar_fontes_de_tela,
             tela::iniciar_captura_de_tela,
-            tela::parar_captura_de_tela
+            tela::parar_captura_de_tela,
+            tela::iniciar_audio_da_tela,
+            tela::parar_audio_da_tela,
+            atividade::atividade_em_foco
         ])
         .build(tauri::generate_context!())
         .expect("Falha ao iniciar a aplicação.");
@@ -283,6 +393,7 @@ pub fn run() {
         if let RunEvent::Exit = evento {
             app.state::<Hospedagem>().encerrar();
             let _ = tela::parar_captura_de_tela(app.state::<CapturaAtiva>());
+            let _ = tela::parar_audio_da_tela(app.state::<AudioAtivo>());
         }
     });
 }
