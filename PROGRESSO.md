@@ -1070,6 +1070,37 @@ embarcar — era exatamente a aposta da síntese. `tempo.js` são 3 570 B,
 `atividade.js` 5 736 B, e `atividade.rs` entra no executável sem trazer caixa
 nenhuma junto.
 
+### O teste que não podia falhar
+
+Depois de publicada a 0.6.0, a pergunta "está tudo funcionando?" não tinha
+resposta: cada peça estava verificada isoladamente, mas o aplicativo montado
+nunca tinha sido exercitado numa sessão real de duas pessoas. O roteiro que
+existia para isso, `duas-instancias.ps1`, **passava — e não verificava nada**.
+
+Ele clica por coordenada, e a fita de mascotes da iteração 14 mudou a altura
+da tela de entrada. Os cliques passaram a errar o alvo, as duas janelas nunca
+saíram da tela de entrada, e o roteiro imprimiu "capturado" em cada etapa,
+mediu memória e saiu com código zero. Só tirava foto, e foto não reprova.
+
+Três consertos:
+
+| Problema | Conserto |
+| --- | --- |
+| Cliques na tela de entrada erravam o alvo | Coordenadas remedidas passo a passo, com captura a cada clique |
+| Nenhuma verificação, só capturas | O servidor local grava numa pasta descartável, e um **observador** entra no grupo pelo código lido do disco e assiste ao que é difundido |
+| Voz reprovava numa máquina sem microfone | Detecta o dispositivo de captura no registro e **pula, dizendo por quê** — sem virar falso verde nem falso vermelho |
+
+O observador é o que torna o roteiro capaz de reprovar: ele prova, pelo lado
+do servidor, que as duas janelas reais se encontraram no mesmo grupo, que a
+mensagem de texto atravessou, e que a **atividade em primeiro plano foi
+anunciada** — com o Bloco de Notas trazido à frente de propósito, já que com o
+CALL em foco o aplicativo não anuncia nada.
+
+Essa última é a única prova que existe da cadeia inteira da atividade
+funcionando junta: API do Windows → `atividade.rs` → `invoke` do Tauri →
+`Vigia` e suas duas leituras → servidor → tela da outra pessoa. Nenhum teste
+de unidade cobre a costura entre esses seis pedaços.
+
 ### Limites honestos
 
 O tempo de quem já estava na call antes de você é um piso, e a interface diz
@@ -1081,6 +1112,13 @@ nome feio, e errar para mais seria inventar o que a pessoa está usando.
 E a atividade é um recurso do Windows: `atividade.rs` compila fora dele, mas
 devolve sempre `None`. O CALL só é distribuído para Windows, então isto é
 fronteira declarada, e não dívida.
+
+**A entrada no canal de voz continua sem prova automatizada nesta máquina**,
+que não tem dispositivo de captura: o roteiro pula essa verificação e diz por
+quê. A malha WebRTC é exercitada em `rodar-malha.ps1`, com dispositivo falso
+do Chromium, mas o caminho do aplicativo real — `getUserMedia`, porta de
+ruído, sino de entrada — só se prova numa máquina com microfone. Fica anotado
+como lacuna conhecida, e não como recurso verificado.
 
 ---
 
@@ -1104,10 +1142,16 @@ a prova de contato dos mascotes em quatro tamanhos, e `testes/cena.html` leva a
 aplicação a um estado e para ali, para a captura — é o que permite olhar o
 resultado em vez de deduzi-lo da marcação.
 
-Além delas, três roteiros dirigem a janela real e deixam capturas em
+`testes/duas-instancias.ps1` deixou de ser um roteiro de captura e virou
+suíte: sobe duas janelas reais do build de release contra um servidor local e
+verifica, pelo lado do servidor, que elas se encontram no grupo, trocam
+mensagem e anunciam a atividade em primeiro plano. Ele **reprova** quando os
+cliques erram o alvo, e **pula dizendo por quê** a parte de voz numa máquina
+sem microfone.
+
+Além dele, dois roteiros dirigem a janela real só para deixar capturas em
 `testes/capturas`: `testes/inspecionar.ps1` (uma instância, da tela de entrada
-até o canal de voz), `testes/duas-instancias.ps1` (duas janelas, com mensagem
-de texto entregue de uma a outra) e `testes/ajustes.ps1` (o painel de ajustes
+até o canal de voz) e `testes/ajustes.ps1` (o painel de ajustes
 dentro do WebView2, sob a CSP do Tauri e com os dispositivos de áudio reais da
 máquina). Eles clicam por coordenada, então quebram
 quando o layout muda de altura — e foi assim que o convite truncado e a coluna

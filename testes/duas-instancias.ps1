@@ -74,21 +74,24 @@ function AbrirInstancia($apelido, $x, $y) {
   Start-Sleep -Milliseconds 600
 
   $c = Cliente $h
-  # Coordenadas medidas na tela de entrada com a janela em 1080x740. Ela nao
-  # muda de tamanho durante o teste, e o cartao e centrado.
-  [J]::Clique($h, 794, 311)          # campo de apelido
+  # Coordenadas medidas na tela de entrada com a janela em 1080x740 (area
+  # cliente de 1064x701). O cartao e centrado na vertical, entao abrir o bloco
+  # do servidor proprio empurra tudo que esta abaixo dele para baixo e sobe o
+  # que esta acima -- por isso as posicoes antes e depois do clique diferem, e
+  # por isso elas foram medidas passo a passo em vez de calculadas.
+  [J]::Clique($h, 794, 258)          # campo de apelido
   Digitar "^a"; Digitar $apelido
 
   # O padrao do aplicativo e o servidor hospedado. O teste tem de apontar para
   # o servidor local: senao ele depende da internet, e pior, cria grupos de
   # verdade no servidor que os amigos usam.
-  [J]::Clique($h, 727, 356)          # "Usar um servidor proprio"
-  Start-Sleep -Milliseconds 500
-  [J]::Clique($h, 735, 357)          # campo do servidor
+  [J]::Clique($h, 727, 409)          # "Usar um servidor proprio"
+  Start-Sleep -Milliseconds 700
+  [J]::Clique($h, 735, 410)          # campo do servidor, ja com o bloco aberto
   Digitar "^a"; Digitar "ws://127.0.0.1:8787"
   Start-Sleep -Milliseconds 300
 
-  [J]::Clique($h, 794, 476)          # Continuar
+  [J]::Clique($h, 794, 528)          # Continuar
   Start-Sleep -Seconds 2
   return @{ proc = $p; h = $h; cli = $c }
 }
@@ -106,8 +109,40 @@ Start-Sleep -Milliseconds 800
 # coordenadas de clique sejam previsiveis entre execucoes.
 Remove-Item (Join-Path $env:LOCALAPPDATA "br.com.call.app") -Recurse -Force -ErrorAction SilentlyContinue
 
+# O servidor grava numa pasta descartavel. E o que permite conferir depois, no
+# disco, que o grupo e a mensagem existiram de verdade -- sem depender de ler
+# pixel nenhum.
+$dados = Join-Path $env:TEMP ("call-duas-" + (Get-Random))
+New-Item -ItemType Directory -Force $dados | Out-Null
+$env:DADOS = $dados
+
 Start-Process "target\release\sinalizacao.exe" -ArgumentList "8787" -WindowStyle Hidden
 Start-Sleep -Seconds 1
+
+$falhas = 0
+$pulados = 0
+function Conferir($condicao, $descricao) {
+  if ($condicao) { Write-Output "  ok    $descricao" }
+  else { $script:falhas++; Write-Output "  FALHA $descricao" }
+}
+function Pular($descricao, $motivo) {
+  $script:pulados++
+  Write-Output "  PULADO $descricao -- $motivo"
+}
+
+# Entrar num canal de voz comeca por `getUserMedia`, que falha sem dispositivo
+# de captura. Numa maquina sem microfone o aplicativo esta certo em nao entrar,
+# e o teste estaria errado em chamar isso de defeito -- mas tambem nao pode
+# fingir que verificou. O estado 1 e DEVICE_STATE_ACTIVE.
+function TemMicrofone {
+  $raiz = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture"
+  if (-not (Test-Path $raiz)) { return $false }
+  foreach ($chave in Get-ChildItem $raiz -ErrorAction SilentlyContinue) {
+    $estado = (Get-ItemProperty $chave.PSPath -Name DeviceState -ErrorAction SilentlyContinue).DeviceState
+    if ($estado -eq 1) { return $true }
+  }
+  return $false
+}
 
 Write-Output "Instancia A (ana)"
 $a = AbrirInstancia "ana ribeiro" 0 0
@@ -117,6 +152,34 @@ Start-Sleep -Milliseconds 700
 Digitar "reuniao de equipe"; Start-Sleep -Milliseconds 300; Digitar "{ENTER}"
 Start-Sleep -Seconds 4
 Capturar $a.h "10-A-sozinha"
+
+# Primeira prova, e a que teria pego a quebra silenciosa: se os cliques
+# erraram a tela de entrada, nao ha grupo nenhum no disco do servidor.
+$arquivoGrupos = Join-Path $dados "grupos.json"
+Conferir (Test-Path $arquivoGrupos) "a instancia A chegou ao servidor e criou um grupo"
+if (-not (Test-Path $arquivoGrupos)) {
+  Write-Output "`nA instancia A nao passou da tela de entrada. As coordenadas de clique"
+  Write-Output "provavelmente mudaram junto com o layout. Nada abaixo faz sentido."
+  Get-Process call, sinalizacao -ErrorAction SilentlyContinue | Stop-Process -Force
+  exit 1
+}
+
+$grupos = Get-Content $arquivoGrupos -Raw -Encoding UTF8 | ConvertFrom-Json
+$grupo = @($grupos.grupos)[0]
+if (-not $grupo) { $grupo = @($grupos)[0] }
+$codigo = $grupo.codigo
+Conferir ($grupo.nome -eq "reuniao de equipe") "o grupo tem o nome digitado ($($grupo.nome))"
+
+# O observador entra pelo codigo lido do disco e assiste ao resto pelo lado do
+# servidor. Ele vive 75 s, que cobre o restante do roteiro com folga.
+$relatorioObs = Join-Path $dados "observador.json"
+# O caminho vai entre aspas: `$env:TEMP` contem o nome do usuario, e um espaco
+# ali faz o Start-Process partir o argumento em dois -- o observador gravaria o
+# relatorio num lugar que ninguem le, e o teste reprovaria sem motivo.
+$obs = Start-Process node -PassThru -WindowStyle Hidden -ArgumentList @(
+  "testes/observador.mjs", "8787", $codigo, "75", "`"$relatorioObs`""
+)
+Start-Sleep -Seconds 2
 
 Write-Output "Instancia B (bruno)"
 $b = AbrirInstancia "bruno salles" 760 40
@@ -147,6 +210,45 @@ Start-Sleep -Seconds 6
 Capturar $a.h "14-A-na-voz"
 Capturar $b.h "15-B-na-voz"
 
+# Atividade: com o CALL em primeiro plano o aplicativo nao anuncia nada -- e
+# proposital, ninguem precisa avisar aos amigos que esta usando o CALL para
+# falar com eles. Entao o teste poe outra janela na frente e espera. O Vigia
+# exige duas leituras seguidas de 5 s antes de anunciar; 16 s cobrem isso.
+Write-Output "Atividade em primeiro plano"
+$bloco = Start-Process notepad -PassThru
+Start-Sleep -Seconds 3
+[void][J]::SetForegroundWindow($bloco.MainWindowHandle)
+Start-Sleep -Seconds 16
+Stop-Process -Id $bloco.Id -Force -ErrorAction SilentlyContinue
+
+# --- O que o servidor viu -----------------------------------------------
+
+Write-Output "`nO que o servidor viu"
+Wait-Process -Id $obs.Id -Timeout 90 -ErrorAction SilentlyContinue
+$eventos = @()
+if (Test-Path $relatorioObs) {
+  $eventos = Get-Content $relatorioObs -Raw -Encoding UTF8 | ConvertFrom-Json
+}
+Conferir ($eventos.Count -gt 0) "o observador registrou eventos ($($eventos.Count))"
+
+$entrou = @($eventos | Where-Object { $_.tipo -eq "entrou" })
+Conferir ($entrou.Count -ge 1) "a instancia B entrou no mesmo grupo"
+
+# O texto viaja aninhado: { tipo: "mensagem", mensagem: { texto, autor, ... } }.
+$textos = @($eventos | Where-Object { $_.tipo -eq "mensagem" } | ForEach-Object { $_.mensagem.texto })
+Conferir ($textos -contains "bom dia, bruno") "a mensagem de texto atravessou o servidor"
+
+$naVoz = @($eventos | Where-Object { $_.tipo -eq "entrou-voz" })
+if (TemMicrofone) {
+  Conferir ($naVoz.Count -ge 2) "as duas instancias entraram no canal de voz ($($naVoz.Count))"
+} else {
+  Pular "entrada no canal de voz" "esta maquina nao tem dispositivo de captura"
+}
+
+$comAtividade = @($eventos | Where-Object { $_.tipo -eq "estado" -and $_.atividade })
+$nomes = ($comAtividade.atividade | Select-Object -Unique) -join ", "
+Conferir ($comAtividade.Count -ge 1) "a atividade em primeiro plano foi anunciada ($nomes)"
+
 Write-Output "`n--- memoria com dois participantes ---"
 foreach ($i in @(@{n="A"; p=$a.proc}, @{n="B"; p=$b.proc})) {
   $i.p.Refresh()
@@ -154,6 +256,13 @@ foreach ($i in @(@{n="A"; p=$a.proc}, @{n="B"; p=$b.proc})) {
 }
 
 # Deixar as instancias vivas prende o call.exe e faz a proxima compilacao
-# falhar com "acesso negado" — um erro que nao tem nada a ver com o codigo.
+# falhar com "acesso negado" -- um erro que nao tem nada a ver com o codigo.
 Get-Process call, sinalizacao -ErrorAction SilentlyContinue | Stop-Process -Force
-Write-Output "`nInstancias encerradas."
+Remove-Item $dados -Recurse -Force -ErrorAction SilentlyContinue
+Write-Output "Instancias encerradas."
+
+Write-Output ""
+$aviso = if ($pulados -gt 0) { " ($pulados pulada(s) por falta de hardware)" } else { "" }
+if ($falhas -eq 0) { Write-Output "Duas instancias: todas as verificacoes passaram.$aviso"; exit 0 }
+Write-Output "Duas instancias: $falhas falha(s).$aviso"
+exit 1
