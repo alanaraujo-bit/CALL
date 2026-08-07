@@ -59,8 +59,10 @@
 
       try {
         // ── Entrar na aplicação ──────────────────────────────────────
-        $("campo-apelido").value = "Teste";
-        $("formulario-entrada").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+        // Pela saída sem conta: este teste é sobre os ajustes de voz, e o
+        // cadastro tem servidor do outro lado.
+        $("criar-apelido").value = "Teste";
+        $("botao-sem-conta").click();
         await esperar(300);
         conferir(!$("tela-aplicacao").classList.contains("oculto"), "a aplicação abre");
 

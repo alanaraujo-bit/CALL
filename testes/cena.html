@@ -68,12 +68,31 @@
       };
 
       if (cena === "entrada") {
-        $("campo-apelido").value = "Alan";
+        $("criar-apelido").value = "Alan";
+        $("criar-apelido").dispatchEvent(new jan.Event("input"));
+        document.title = "PRONTO";
+      } else if (cena === "login") {
+        // A folha de entrar, que é a que quase todo mundo vê a partir da
+        // segunda instalação.
+        doc.querySelector('[data-aba="entrar"]').click();
+        await esperar(400);
+        $("entrar-email").value = "alan@exemplo.com";
+        $("entrar-email").dispatchEvent(new jan.Event("input"));
+        $("entrar-senha").value = "coruja-de-brasilia-22";
+        document.title = "PRONTO";
+      } else if (cena === "cadastro") {
+        // A folha de cadastro preenchida, para a captura do portal.
+        $("criar-apelido").value = "Alan";
+        $("criar-apelido").dispatchEvent(new jan.Event("input"));
+        $("criar-email").value = "alan@exemplo.com";
+        $("criar-email").dispatchEvent(new jan.Event("input"));
+        $("criar-senha").value = "coruja-de-brasilia-22";
+        $("criar-senha").dispatchEvent(new jan.Event("input"));
         document.title = "PRONTO";
       } else {
-        $("campo-apelido").value = "Alan";
+        $("criar-apelido").value = "Alan";
         $("campo-servidor").value = servidor;
-        $("formulario-entrada").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+        $("botao-sem-conta").click();
         await esperar(400);
 
         if (cena === "editor") {

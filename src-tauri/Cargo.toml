@@ -1,6 +1,6 @@
 [package]
 name = "call"
-version = "0.7.0"
+version = "0.8.0"
 description = "Comunicacao em grupo com voz e transmissao de tela"
 authors = ["CALL"]
 edition = "2021"
@@ -42,7 +42,15 @@ xcap = "0.9.8"
 image = { version = "0.25.6", default-features = false, features = ["jpeg", "png"] }
 base64 = "0.23.1"
 wasapi = "0.23.0"
+# PKCE do login com o Google: o desafio e o resumo SHA-256 do verificador
+# sorteado a cada tentativa. Ver `src/google.rs`.
+sha2 = "0.10"
+getrandom = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
+# Abrir o navegador padrao no endereco do Google. A versao acompanha a que o
+# `webview2-com` ja traz — duas versoes do mesmo `windows` seriam duas copias
+# das mesmas ligacoes dentro do executavel.
+windows = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 

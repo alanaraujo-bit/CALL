@@ -9,6 +9,7 @@ use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
 mod atividade;
+mod google;
 mod tela;
 use tela::{AudioAtivo, CapturaAtiva};
 
@@ -135,6 +136,20 @@ fn convite_pendente(estado: State<'_, Convite>) -> Option<String> {
 #[tauri::command]
 fn servidor_do_ambiente() -> Option<String> {
     std::env::var("CALL_SERVIDOR").ok().filter(|s| !s.is_empty())
+}
+
+/// Apelido imposto por variavel de ambiente, que faz o aplicativo entrar
+/// direto, sem conta. Devolver `None` e o caso normal.
+///
+/// Existe pelo mesmo motivo de `servidor_do_ambiente`, e pelo mesmo tipo de
+/// dor: os roteiros que dirigem duas janelas reais preenchiam o apelido
+/// clicando numa coordenada da tela de entrada. Coordenada de clique quebra
+/// quando o layout muda de altura — e a tela de entrada acabou de virar um
+/// portal de conta, com aba, mascote e medidor de senha. Uma variavel de
+/// ambiente nao tem altura.
+#[tauri::command]
+fn apelido_do_ambiente() -> Option<String> {
+    std::env::var("CALL_APELIDO").ok().filter(|s| !s.is_empty())
 }
 
 /// Consulta o servidor de atualizacao e devolve a versao nova, se houver.
@@ -389,9 +404,11 @@ pub fn run() {
             encerrar_hospedagem,
             convite_pendente,
             servidor_do_ambiente,
+            apelido_do_ambiente,
             procurar_atualizacao,
             instalar_atualizacao,
             definir_atalho_mudo,
+            google::google_autenticar,
             tela::listar_fontes_de_tela,
             tela::iniciar_captura_de_tela,
             tela::parar_captura_de_tela,

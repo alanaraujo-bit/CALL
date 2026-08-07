@@ -3,6 +3,13 @@ name = "sinalizacao"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Entrar com o Google. Fora por padrao porque arrasta um cliente HTTPS
+# inteiro, e o binario padrao e o sidecar que viaja dentro do instalador —
+# onde o Google nao teria como funcionar de qualquer jeito. A imagem da
+# nuvem compila com `--features google`; ver `src/google.rs`.
+google = ["dep:reqwest"]
+
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "io-util"] }
 tokio-tungstenite = "0.24"
@@ -11,3 +18,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Codigo de convite adivinhavel nao e convite. Entropia vem do sistema.
 getrandom = "0.2"
+# Senha guardada em claro e senha vazada. O Argon2id e caro de proposito:
+# gasta memoria e tempo por tentativa, que e o que torna inviavel varrer um
+# arquivo de hashes com uma placa de video.
+argon2 = { version = "0.5", features = ["std"] }
+# Ja vem junto do Argon2. Usado para guardar a *impressao* dos tokens de
+# sessao em vez dos tokens: um `sessoes.json` vazado nao abre conta nenhuma.
+blake2 = "0.10"
+# So com a opcao `google`.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "json",
+], optional = true }

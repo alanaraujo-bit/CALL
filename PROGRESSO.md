@@ -1193,7 +1193,188 @@ peça da iteração 15 sem prova no aplicativo montado.
 
 ---
 
+## Iteração 17 — Conta: o que sobrevive à troca de computador (0.8.0)
+
+**Motivo:** até aqui o CALL não guardava pessoa nenhuma. A identidade era um
+número sorteado no primeiro uso e gravado no `localStorage` — bastava
+reinstalar o Windows para virar outra pessoa, perder os grupos da coluna da
+esquerda e ver o histórico atribuir as próprias mensagens a um desconhecido. O
+mascote, a bio e o apelido, escolhidos com cuidado, eram um arquivo local.
+
+**Construído:** e-mail e senha, "Entrar com o Google", e uma terceira saída que
+continua sendo o CALL como ele sempre foi.
+
+| Antes | Agora |
+| --- | --- |
+| Identidade sorteada no `localStorage` | `conta-XXXXXXXXXXXX`, decidido pelo servidor a partir de um token |
+| Perfil só neste computador | Apelido, mascote e bio guardados na conta |
+| Grupos só neste computador | A coluna da esquerda volta inteira numa instalação nova |
+| Tela de entrada pedia um apelido | Portal com duas abas, Google, e "entrar sem conta" embaixo |
+
+### A conta não é uma porta
+
+A decisão que organizou o resto: **o convite continua sendo a única chave dos
+grupos.** A conta diz *quem você é*, e nunca *o que você pode*. Não há papel,
+não há permissão nova, e entrar num grupo com conta ou sem dá exatamente no
+mesmo lugar.
+
+Isso é o que permitiu manter a saída sem conta sem que ela vire um caminho de
+segunda classe. O CALL roda em rede local, sem internet, com o servidor dentro
+do próprio instalador: exigir cadastro nesse cenário seria exigir um serviço
+que talvez nem exista. Quem clica em "entrar sem conta" perde o que a conta
+guarda, e nada mais — e a nota embaixo do botão diz isso, em vez de deixar a
+pessoa descobrir depois de formatar a máquina.
+
+### O que a interface faz de diferente
+
+A tela de entrada virou **portal**, e o desenho dele tem duas ideias que valem
+registro:
+
+**A força da senha é desenhada com o glifo da marca.** As cinco barras do CALL
+já são um medidor de som; aqui elas medem outra coisa, com a mesma forma em V
+invertido e cor que sobe do vermelho ao verde. Reaproveitar a marca como
+instrumento é o tipo de piada visual que um produto conta uma vez só — e o
+lugar certo é onde ela também informa.
+
+**A troca de abas é um deslize, e não um corte.** As duas folhas ocupam o mesmo
+palco, com altura animada a partir da que está à frente. As duas têm tamanhos
+bem diferentes — o cadastro tem mascote e medidor —, e o salto seco seria a
+única parte brusca da tela. A folha que sai ganha `visibility: hidden`, que é o
+que tira os campos dela da ordem de foco; `opacity` sozinha deixaria o Tab cair
+num formulário invisível.
+
+Fora isso: prévia do retrato acompanhando a digitação, tique no e-mail quando
+ele passa a ter forma de e-mail, olho na senha, aviso de **Caps Lock** (a causa
+mais comum de "minha senha está certa e não entra"), e o erro do servidor
+mostrado **dentro do cartão, embaixo dos campos** — "senha incorreta" é
+resposta ao que a pessoa acabou de fazer, e um aviso que some em quatro
+segundos no canto da tela não é resposta.
+
+### O Google não passa pelo aplicativo
+
+O CALL não pede a senha do Google, e não poderia: uma tela de login dentro de
+um aplicativo qualquer é exatamente o que um golpe faz, e o próprio Google
+recusa a autenticação vinda de navegador embutido (`disallowed_useragent`). O
+Rust abre o **navegador do sistema** e espera a volta numa porta de laço local
+que só existe durante o login.
+
+A parte que se decidiu contra a corrente: **quem troca o código de autorização
+pelo perfil é o servidor, não o aplicativo.** O Google permite a troca no
+cliente, com o segredo embutido, justamente porque um segredo dentro de um
+`.exe` que qualquer um baixa não é segredo. Recusamos: se a troca fosse aqui, o
+servidor receberia um `id_token` pronto e teria de conferir a assinatura RS256
+contra as chaves públicas do Google — mais código, mais coisa para errar, e um
+`id_token` de *outro* aplicativo passaria por qualquer descuido nessa
+conferência. Vindo por TLS direto do `oauth2.googleapis.com`, em resposta a um
+pedido assinado com o nosso segredo, o miolo pode ser lido sem conferir
+assinatura, e é a própria documentação do Google que diz que esse é o único
+caso em que isso vale.
+
+O PKCE é conferido contra o **vetor do apêndice B da RFC 7636**, e não contra
+si mesmo: se o base64url ou o SHA-256 saírem errados, o Google recusa com uma
+mensagem que não explica nada, e o teste explica.
+
+### O 1,3 MB que não entra no instalador
+
+Falar HTTPS custa caro: cliente HTTP, TLS e raízes de certificado levam o
+servidor de **599.040 B a 1.977.344 B** — 1,3 MB a mais, medido. E o mesmo
+binário viaja dentro do instalador como sidecar, para quem hospeda uma conversa
+na rede local, onde esse 1,3 MB pagaria por um recurso que ali nem teria como
+funcionar: um servidor caseiro não tem `client_secret` nem endereço público
+para o Google devolver ninguém.
+
+O Google ficou atrás da opção de compilação `google`, que só a imagem da nuvem
+liga. Sem ela o servidor compila e roda igual, e responde à interface que o
+botão não existe — a interface então não o mostra. **Um botão que sempre falha
+é pior que botão nenhum.**
+
+**Medido na compilação real:**
+
+| Métrica | 0.7.0 | 0.8.0 |
+| --- | --- | --- |
+| `sinalizacao.exe` (sidecar, sem Google) | 505.344 B | **599.040 B** (+91,5 KB) |
+| Instalador NSIS | 1.940.405 B | **1.996.467 B** (+54,7 KB) |
+| `call.exe` em repouso | 32,2 MB WS / 7,8 MB privado | inalterado |
+
+As 91,5 KB do sidecar são Argon2id e Blake2 — o preço de guardar senha direito,
+e o único crescimento que a conta impõe a quem nunca vai criar uma.
+
+### O `opt-level` que não era preciso
+
+Suspeita razoável, e errada: o Argon2 gasta tempo de propósito, e
+`opt-level = "z"` no projeto inteiro poderia fazer o hash custar mais do que os
+parâmetros pedem — atrasando igual quem ataca e quem só quer entrar. A correção
+óbvia era um `[profile.release.package.argon2] opt-level = 3`.
+
+Medido: **19,0 ms contra 20,3 ms** por verificação, dentro do ruído de duas
+execuções seguidas, ao preço de 3 KB no binário. A explicação está no
+`lto = true`: com LTO gordo a otimização final é refeita para o artefato
+inteiro, e a escolha por pacote quase não sobrevive a ela. As seis linhas de
+configuração saíram, e ficou no lugar um teste `#[ignore]` que imprime o número
+— `cargo test --release -p sinalizacao -- --ignored --nocapture` — para quando
+alguém for rever os parâmetros do Argon2.
+
+### O bug que a suíte nova pegou
+
+A suíte do portal reprovou três verificações na primeira execução, e a causa
+era real, não do teste: **uma sessão recusada pelo servidor deixava a pessoa
+entrar assim mesmo**, como visitante, se houvesse apelido guardado — e o
+cliente continuava se apresentando com o `usuario` da conta, agora sem token
+nenhum para comprová-lo. Quem soubesse o identificador de uma conta poderia
+assinar mensagens como ela e reivindicar a posse dos grupos dela.
+
+Consertado nas duas pontas, porque uma só não basta:
+
+* No servidor, o prefixo `conta-` virou **reservado**: `identidade()` recusa
+  qualquer `usuario` que comece com ele e sorteia outro. Só `Cartao::ler`, a
+  partir de um token conferido, produz um identificador desses.
+* No cliente, uma sessão recusada larga a identidade da conta — token, cadastro
+  em memória e o `usuario`, que volta a ser sorteado — e leva a pessoa ao
+  portal. Entrar assim mesmo seria rebaixar alguém a visitante sem avisar, no
+  aplicativo em que ela acha que continua sendo ela.
+
+Servidor fora do ar é outra coisa, e não é recusa: o token continua guardado e
+viaja na próxima saudação. O CALL funciona sem internet, e a conta não pode ser
+o que passa a exigi-la.
+
+### `CALL_APELIDO`, e o fim de um clique por coordenada
+
+A iteração anterior tirou o endereço do servidor da tela de entrada e criou
+`CALL_SERVIDOR` para não navegar um painel modal por coordenada de clique. O
+portal de conta criou o mesmo problema para o apelido — que era digitado num
+campo achado em `(794, 276)`, numa tela que acabou de ganhar aba, mascote e
+medidor de senha, ou seja, outra altura.
+
+`CALL_APELIDO` faz o aplicativo pular o portal e entrar sem conta. Três linhas
+de Rust, e some junto a etapa que sozinha respondia por **uma execução perdida
+em cada três** no roteiro de duas instâncias — a que precisava de até três
+tentativas porque o Windows recusa o primeiro plano a processos de fundo. Na
+execução desta iteração, a instância A criou o grupo na primeira tentativa.
+
+---
+
 ### Limites honestos
+
+Não há **recuperação de senha**. Esquecer a senha de uma conta que não está
+vinculada ao Google significa criar outra. Não existe envio de e-mail em lugar
+nenhum do projeto, e montar um servidor de e-mail para isto custaria mais do
+que todo o resto do servidor junto — é dívida declarada, não descuido.
+
+O castigo por senha errada — oito falhas seguidas, quinze minutos de espera —
+vive **só em memória**, por e-mail. Reiniciar o servidor perdoa. Não é defesa
+contra um adversário com mil máquinas; é o que torna inviável varrer as senhas
+óbvias de um e-mail conhecido a partir de uma só. Reiniciar o servidor também
+não é algo que um atacante consiga pedir.
+
+O login do Google só funciona no **Windows**: ele abre o navegador por
+`ShellExecuteW`. É a mesma fronteira já declarada da atividade em primeiro
+plano.
+
+A imagem da nuvem passou a compilar com `--features google`, o que arrasta
+`reqwest` e `rustls` na `rust:1-alpine`. Isso **não foi verificado aqui** — a
+compilação com a opção ligada foi provada no Windows/MSVC, e a construção da
+imagem musl só acontece no `docker build` da hospedagem. É o primeiro ponto a
+olhar se o deploy quebrar.
 
 O tempo de quem já estava na call antes de você é um piso, e a interface diz
 isso com o `+` em vez de esconder. A atividade depende do `FileDescription`
@@ -1221,7 +1402,10 @@ existe para essa parte, e ela é de ouvido — nenhum número resolve.
 
 | Suíte | Comando | Cobertura |
 | --- | --- | --- |
-| Protocolo de sinalização | `node testes/sinalizacao.test.mjs` | 74 verificações: criação de grupo, convite recusado, entrada por código, voz isolada por canal, encaminhamento de sinais, difusão de estado, mensagens e histórico, regra de dono, remoção que tira gente da voz, persistência entre execuções do servidor, o cartão de perfil que viaja na saudação, e a atividade — repassada, recortada no teto de 40 caracteres, presente no resumo de quem chega depois, e desligada tanto por texto em branco quanto pela ausência do campo |
+| Protocolo de sinalização | `node testes/sinalizacao.test.mjs` | 112 verificações: criação de grupo, convite recusado, entrada por código, voz isolada por canal, encaminhamento de sinais, difusão de estado, mensagens e histórico, regra de dono, remoção que tira gente da voz, persistência entre execuções do servidor, o cartão de perfil que viaja na saudação, a atividade — repassada, recortada no teto de 40 caracteres, presente no resumo de quem chega depois, e desligada tanto por texto em branco quanto pela ausência do campo — e, desde a iteração 17, as contas: cadastro com e-mail normalizado, senha curta e e-mail malformado recusados no campo certo, e-mail sem conta e senha errada respondendo a mesma coisa, sessão que retoma e sessão que morre ao sair, o `usuario` que vem da conta e não do que o cliente disse ser, o prefixo `conta-` recusado a quem não tem token, perfil e lista de grupos gravados, o hash Argon2id no disco e a impressão do token em vez do token |
+| Contas, no Rust | `cargo test -p sinalizacao` | 7 verificações de unidade: os endereços que as pessoas têm e os que não chegam a lugar nenhum, o piso de oito caracteres, o hash que confere a senha certa e recusa a vazia de uma conta só-Google, a sessão que vale até ser fechada, o castigo depois das falhas seguidas, e o Google achando pelo e-mail a conta que já existia com senha |
+| PKCE e convite, no Rust | `cargo test -p call --lib` | 8 verificações: o `code_challenge` conferido contra o vetor do apêndice B da RFC 7636, o alfabeto e o tamanho do verificador, a URL que vai e volta inteira (inclusive um `%` solto que não pode derrubar a leitura), as formas que um link `call://` real assume, e o que não é um código |
+| Portal de conta | `powershell -File testes/rodar-portal.ps1` | 47 verificações conduzindo a aplicação real contra um servidor de verdade: qual aba abre e por quê, a altura do palco acompanhando a folha à frente, a prévia que segue a digitação, o medidor de força nos cinco níveis, o tique do e-mail, a recusa do servidor mostrada dentro do cartão, o cadastro que abre a aplicação e guarda a sessão, a reabertura que entra direto, o token revogado que devolve ao portal sem rebaixar ninguém a visitante, o olho da senha, a saída da conta que apaga sessão e identidade, e a entrada sem conta continuando a existir |
 | Malha WebRTC e mídia | `powershell -File testes/rodar-malha.ps1` | 44 verificações no próprio motor Chromium: entrada no canal de voz, conexão nos dois lados, áudio com bytes recebidos, vídeo com quadros decodificados, renegociação ao encerrar a tela, limpeza de elos — e, desde a iteração 13, o SDP do Opus, o tráfego de áudio medido nos dois extremos de qualidade, o perfil e o codec da tela efetivamente negociado, o som que acompanha a transmissão, e a porta de ruído renderizada em `OfflineAudioContext` |
 | Painel de ajustes | `powershell -File testes/rodar-interface.ps1` | 22 verificações conduzindo a aplicação real dentro de um quadro: controles refletindo o estado, medidor recebendo nível da porta de ruído, dispositivos enumerados com nome, abas, persistência das escolhas — e os erros de execução da própria aplicação, recolhidos |
 | Convite por link | `powershell -File testes/convite.ps1` | 8 verificações na janela real: o esquema `call://` registrado, o link com o aplicativo aberto trocando de grupo sem abrir segunda instância, e o link com o aplicativo fechado abrindo o CALL e esperando a tela de entrada — os dois provados pelo canal em que a mensagem escrita depois caiu |

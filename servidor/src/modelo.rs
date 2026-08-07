@@ -274,7 +274,7 @@ impl Acervo {
 
 /// Grava por arquivo temporario e rename: no pior caso o arquivo antigo
 /// sobrevive inteiro, e nunca existe um arquivo meio escrito.
-fn gravar_atomico(destino: &Path, corpo: &str) -> std::io::Result<()> {
+pub fn gravar_atomico(destino: &Path, corpo: &str) -> std::io::Result<()> {
     let temporario = destino.with_extension("tmp");
     {
         let mut arquivo = std::fs::File::create(&temporario)?;
@@ -288,7 +288,7 @@ fn gravar_atomico(destino: &Path, corpo: &str) -> std::io::Result<()> {
 /// de uma captura de tela: sem I, L, O, 0 e 1.
 const ALFABETO: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
-fn sortear(tamanho: usize) -> String {
+pub fn sortear(tamanho: usize) -> String {
     let mut bytes = vec![0u8; tamanho];
     if getrandom::getrandom(&mut bytes).is_err() {
         // Sem entropia do sistema nao ha como sortear um codigo que nao seja

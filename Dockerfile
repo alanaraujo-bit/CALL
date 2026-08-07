@@ -30,7 +30,12 @@ panic = "abort"\n\
 strip = true\n\
 incremental = false\n' > Cargo.toml
 
-RUN cargo build --release -p sinalizacao
+# `--features google` e o que separa esta imagem do binario que viaja dentro
+# do instalador do CALL. Ela liga o "Entrar com o Google", que arrasta um
+# cliente HTTPS inteiro -- 599 KB viram 1,93 MB -- e esse 1,3 MB, no sidecar
+# da rede local, pagaria por um recurso que la nem teria como funcionar. Ver
+# `servidor/src/google.rs`.
+RUN cargo build --release -p sinalizacao --features google
 
 # ─── Imagem final ──────────────────────────────────────────────────────
 FROM scratch
@@ -38,8 +43,19 @@ FROM scratch
 COPY --from=construcao /fonte/target/release/sinalizacao /sinalizacao
 
 # Onde o volume do Railway e montado. Sem esta variavel o servidor funciona
-# igual, so que esquece tudo a cada reinicio.
+# igual, so que esquece tudo a cada reinicio -- inclusive as contas.
 ENV DADOS=/dados
+
+# Entrar com o Google precisa das duas variaveis abaixo, definidas no painel
+# da hospedagem e nunca aqui: `GOOGLE_CLIENT_SECRET` e segredo de verdade, e o
+# unico motivo de a troca do codigo acontecer no servidor e nao no aplicativo.
+#
+# Os dois valores saem de um cliente OAuth do tipo "Aplicativo para computador"
+# no Google Cloud Console. Sem eles o servidor sobe igual e apenas responde
+# que o botao nao existe -- e a interface nao o mostra.
+#
+#   GOOGLE_CLIENT_ID=....apps.googleusercontent.com
+#   GOOGLE_CLIENT_SECRET=...
 
 # O Railway injeta PORT; o 8787 vale para quem rodar a imagem na mao.
 ENV PORT=8787

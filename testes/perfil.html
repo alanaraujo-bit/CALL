@@ -48,8 +48,8 @@
       // aplicativo nascer apontado para o servidor deste teste. A página e o
       // quadro têm a mesma origem, logo o mesmo `localStorage`.
       //
-      // Só o servidor: sem apelido, a tela de entrada continua aparecendo, que
-      // é o que este teste precisa exercitar.
+      // Só o servidor: sem apelido e sem sessão, o portal continua aparecendo,
+      // que é o que este teste precisa exercitar.
       localStorage.setItem(
         "call.preferencias",
         JSON.stringify({ servidor: "ws://127.0.0.1:8898" })
@@ -96,10 +96,10 @@
         );
         conferir(prefs().avatar === "polvo", `e a escolha é gravada na hora (${prefs().avatar})`);
 
-        // ── Entrar ───────────────────────────────────────────────────
-        $("campo-apelido").value = "Alan";
-        $("formulario-entrada").dispatchEvent(new jan.Event("submit", { cancelable: true }));
-        await esperar(300);
+        // ── Entrar, pela saída sem conta ─────────────────────────────
+        $("criar-apelido").value = "Alan";
+        $("botao-sem-conta").click();
+        await esperar(400);
         conferir(!$("tela-aplicacao").classList.contains("oculto"), "a aplicação abre");
         conferir(
           $("avatar-usuario").querySelector("svg.mascote"),

@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Teste do portal de conta</title>
+  </head>
+  <body>
+    <!--
+      Conduz o portal de conta na aplicação real, dentro do motor Chromium e
+      contra um servidor de sinalização de verdade.
+
+      O que se prova aqui não é que os campos existem — é que a tela decide
+      certo: qual aba abre, o que a prévia mostra, o que acontece com uma senha
+      errada, e o que sobra guardado depois de cada caminho. Cadastro e login
+      passam pelo Argon2 do servidor, então as esperas são generosas.
+    -->
+    <iframe id="app" style="width: 1180px; height: 820px; border: 0"></iframe>
+
+    <script type="module">
+      const entregar = (dados) =>
+        fetch("http://127.0.0.1:8123/resultado", {
+          method: "POST",
+          body: JSON.stringify(dados, null, 2),
+        }).catch(() => {});
+
+      const relatorio = [];
+      let falhas = 0;
+      const conferir = (condicao, descricao) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: !!condicao, descricao });
+      };
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+      const aguardar = async (teste, limite = 8000) => {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          if (await teste()) return true;
+          await esperar(100);
+        }
+        return false;
+      };
+
+      const SERVIDOR = "ws://127.0.0.1:8899";
+      const quadro = document.getElementById("app");
+
+      /**
+       * Recarrega a aplicação com as preferências semeadas. A página e o
+       * quadro têm a mesma origem, logo o mesmo `localStorage`.
+       *
+       * `herdar` mantém o que a execução anterior gravou, que é o que de fato
+       * acontece quando alguém fecha e reabre o CALL. Substituir tudo faria a
+       * reabertura testar um computador diferente a cada vez — e esconderia
+       * justamente o que o portal decide a partir do que ficou guardado.
+       */
+      async function abrirApp(preferencias = {}, sessao = null, herdar = true) {
+        const anteriores = herdar
+          ? JSON.parse(localStorage.getItem("call.preferencias") ?? "{}")
+          : {};
+        localStorage.setItem(
+          "call.preferencias",
+          JSON.stringify({ ...anteriores, servidor: SERVIDOR, ...preferencias })
+        );
+        if (sessao) localStorage.setItem("call.sessao", JSON.stringify(sessao));
+        else localStorage.removeItem("call.sessao");
+
+        quadro.src = "about:blank";
+        await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+        quadro.src = "/src/index.html";
+        await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+        await esperar(500);
+        return quadro.contentDocument;
+      }
+
+      const erros = [];
+      const vigiarErros = () => {
+        const jan = quadro.contentWindow;
+        jan.addEventListener("error", (e) => erros.push(String(e.message)));
+        jan.addEventListener("unhandledrejection", (e) => erros.push(String(e.reason)));
+      };
+
+      /** Um e-mail por execução: o servidor guarda contas em disco, e repetir
+       *  o mesmo endereço faria o segundo cadastro ser recusado com razão. */
+      const EMAIL = `ana-${Date.now()}@exemplo.com`;
+      const SENHA = "coruja-de-brasilia-22";
+
+      try {
+        /* ── Primeira abertura: quem nunca teve conta ────────────────── */
+
+        let doc = await abrirApp();
+        vigiarErros();
+        const $ = (id) => doc.getElementById(id);
+        const jan = quadro.contentWindow;
+        const teclar = (elemento, valor) => {
+          elemento.value = valor;
+          elemento.dispatchEvent(new jan.Event("input"));
+        };
+        const prefs = () => JSON.parse(jan.localStorage.getItem("call.preferencias") ?? "{}");
+        const sessao = () => JSON.parse(jan.localStorage.getItem("call.sessao") ?? "null");
+
+        conferir(!$("tela-entrada").classList.contains("oculto"), "sem nada guardado, o portal aparece");
+        conferir(
+          $("tela-entrada").dataset.modo === "criar",
+          "quem nunca usou uma conta aqui abre na aba de criar conta"
+        );
+        conferir(
+          $("form-criar").classList.contains("portal__folha--fora") === false &&
+            $("form-entrar").classList.contains("portal__folha--fora"),
+          "e é a folha de cadastro que está à frente"
+        );
+        conferir(
+          $("portal-palco").style.height !== "" && parseFloat($("portal-palco").style.height) > 200,
+          `o palco ganha a altura da folha à frente (${$("portal-palco").style.height})`
+        );
+
+        // O botão do Google só existe quando o servidor tem como completá-lo.
+        conferir(
+          await aguardar(() => $("portal-google").classList.contains("oculto")),
+          "sem o Google configurado no servidor, o botão não aparece"
+        );
+
+        /* ── A prévia acompanha a digitação ──────────────────────────── */
+
+        teclar($("criar-apelido"), "Alan");
+        await esperar(120);
+        conferir($("portal-titulo").textContent === "Alan", "a prévia mostra o apelido digitado");
+        conferir(
+          $("portal-avatar").querySelector("svg.mascote"),
+          "e o retrato é o mascote sorteado, não um círculo vazio"
+        );
+
+        $("entrada-mascotes").children[4].click();
+        await esperar(120);
+        conferir(prefs().avatar === "polvo", `escolher um mascote grava na hora (${prefs().avatar})`);
+
+        /* ── O medidor de força da senha ─────────────────────────────── */
+
+        const nivel = () => Number($("forca").dataset.nivel);
+        teclar($("criar-senha"), "");
+        conferir(nivel() === 0, "senha vazia não acende barra nenhuma");
+        teclar($("criar-senha"), "abc");
+        conferir(nivel() === 1, "senha curta acende uma barra só");
+        teclar($("criar-senha"), "senha1234");
+        conferir(nivel() === 1, "e uma senha da lista dos ataques também");
+        teclar($("criar-senha"), SENHA);
+        conferir(nivel() >= 4, `uma senha longa e variada acende quase tudo (${nivel()})`);
+
+        /* ── O tique do e-mail ───────────────────────────────────────── */
+
+        const caixaEmail = $("criar-email").closest(".campo__caixa");
+        teclar($("criar-email"), "ana@");
+        conferir(caixaEmail.dataset.valido !== "sim", "e-mail pela metade não ganha o tique");
+        teclar($("criar-email"), EMAIL);
+        conferir(caixaEmail.dataset.valido === "sim", "e-mail completo ganha");
+
+        /* ── Recusa do servidor, mostrada no campo certo ─────────────── */
+
+        teclar($("criar-senha"), "curta");
+        $("form-criar").requestSubmit();
+        conferir(
+          await aguardar(() => !$("erro-criar").hidden),
+          "a senha curta volta recusada do servidor"
+        );
+        conferir(
+          $("erro-criar").textContent.length > 0 && $("tela-entrada").classList.contains("oculto") === false,
+          "o erro fica dentro do cartão, e a aplicação não abre"
+        );
+
+        teclar($("criar-senha"), SENHA);
+        conferir($("erro-criar").hidden, "digitar de novo limpa o erro anterior");
+
+        /* ── Cadastro que dá certo ───────────────────────────────────── */
+
+        $("form-criar").requestSubmit();
+        conferir(
+          await aguardar(() => !$("tela-aplicacao").classList.contains("oculto"), 12000),
+          "o cadastro abre a aplicação"
+        );
+        conferir(!!sessao()?.token, "e guarda o token da sessão neste computador");
+        conferir(
+          sessao()?.servidor === SERVIDOR,
+          "junto do servidor em que ele vale — um token não vale em outro"
+        );
+        conferir(
+          prefs().usuario?.startsWith("conta-"),
+          `a identidade passa a ser a da conta (${prefs().usuario})`
+        );
+        conferir(prefs().ultimoEmail === EMAIL, "e o e-mail fica lembrado para a próxima vez");
+        conferir(
+          $("rotulo-usuario").textContent === "Alan",
+          "o rodapé mostra o apelido escolhido no cadastro"
+        );
+
+        // A conta aparece no painel de perfil, que é onde ela mora.
+        $("botao-perfil").click();
+        await esperar(200);
+        conferir(
+          $("perfil-conta").dataset.ligada === "sim",
+          "o painel de perfil mostra que há conta"
+        );
+        conferir($("perfil-conta-detalhe").textContent === EMAIL, "e diz qual é");
+        conferir(
+          $("perfil-conta-acao").textContent === "Sair da conta",
+          "e oferece a saída, e não o cadastro"
+        );
+        $("perfil-cancelar").click();
+        await esperar(150);
+
+        const tokenGuardado = sessao().token;
+
+        /* ── Reabrir com sessão: entra direto ────────────────────────── */
+
+        doc = await abrirApp({ servidor: SERVIDOR }, { token: tokenGuardado, servidor: SERVIDOR });
+        vigiarErros();
+        conferir(
+          await aguardar(() => !doc.getElementById("tela-aplicacao").classList.contains("oculto"), 10000),
+          "reabrir com sessão válida entra direto, sem pedir a senha de novo"
+        );
+        conferir(
+          doc.getElementById("rotulo-usuario").textContent === "Alan",
+          "com o perfil que o servidor guardou, e não o que estava no disco"
+        );
+
+        /* ── Sessão inválida cai no portal, sem alarde ───────────────── */
+
+        doc = await abrirApp({ servidor: SERVIDOR }, { token: "token-que-nao-existe", servidor: SERVIDOR });
+        vigiarErros();
+        conferir(
+          !doc.getElementById("tela-entrada").classList.contains("oculto"),
+          "um token revogado devolve a pessoa ao portal"
+        );
+        conferir(
+          doc.getElementById("tela-entrada").dataset.modo === "entrar",
+          "na aba de entrar, porque agora há uma conta a que voltar"
+        );
+        conferir(
+          doc.getElementById("entrar-email").value === EMAIL,
+          "com o e-mail já preenchido"
+        );
+        conferir(
+          jan.localStorage.getItem("call.sessao") === null,
+          "e a sessão morta é esquecida em vez de ficar tentando"
+        );
+
+        /* ── Login com a senha errada, e depois com a certa ──────────── */
+
+        const doc2 = doc;
+        const $$ = (id) => doc2.getElementById(id);
+        const teclar2 = (elemento, valor) => {
+          elemento.value = valor;
+          elemento.dispatchEvent(new quadro.contentWindow.Event("input"));
+        };
+
+        teclar2($$("entrar-email"), EMAIL);
+        teclar2($$("entrar-senha"), "senha-errada-9");
+        $$("form-entrar").requestSubmit();
+        conferir(
+          await aguardar(() => !$$("erro-entrar").hidden, 12000),
+          "a senha errada é recusada dentro do cartão"
+        );
+        conferir(
+          $$("tela-aplicacao").classList.contains("oculto"),
+          "e a aplicação continua fechada"
+        );
+
+        // O olho: a senha some e volta, e o botão diz em que estado está.
+        conferir($$("entrar-senha").type === "password", "a senha começa escondida");
+        doc2.querySelector('[data-olho="entrar-senha"]').click();
+        conferir($$("entrar-senha").type === "text", "o olho mostra a senha");
+        conferir(
+          doc2.querySelector('[data-olho="entrar-senha"]').getAttribute("aria-pressed") === "true",
+          "e o botão anuncia que está mostrando"
+        );
+        doc2.querySelector('[data-olho="entrar-senha"]').click();
+        conferir($$("entrar-senha").type === "password", "e esconde de novo");
+
+        teclar2($$("entrar-senha"), SENHA);
+        $$("form-entrar").requestSubmit();
+        conferir(
+          await aguardar(() => !$$("tela-aplicacao").classList.contains("oculto"), 12000),
+          "a senha certa abre a aplicação"
+        );
+
+        /* ── Sair da conta ───────────────────────────────────────────── */
+
+        $$("botao-perfil").click();
+        await esperar(200);
+        $$("perfil-conta-acao").click();
+        conferir(
+          await aguardar(() => !$$("tela-entrada").classList.contains("oculto"), 6000),
+          "sair da conta devolve a pessoa ao portal"
+        );
+        conferir(
+          quadro.contentWindow.localStorage.getItem("call.sessao") === null,
+          "e apaga a sessão deste computador"
+        );
+        const depoisDeSair = JSON.parse(
+          quadro.contentWindow.localStorage.getItem("call.preferencias") ?? "{}"
+        );
+        conferir(
+          !depoisDeSair.usuario?.startsWith("conta-"),
+          "a identidade volta a ser sorteada, e não a da conta de quem saiu"
+        );
+
+        /* ── A saída sem conta continua existindo ────────────────────── */
+
+        // Computador limpo de novo: sem apelido e sem e-mail lembrado, que é
+        // a única situação em que a saída sem conta é o caminho oferecido.
+        doc = await abrirApp({}, null, false);
+        vigiarErros();
+        const $3 = (id) => doc.getElementById(id);
+        $3("criar-apelido").value = "Sem conta";
+        $3("botao-sem-conta").click();
+        conferir(
+          await aguardar(() => !$3("tela-aplicacao").classList.contains("oculto"), 4000),
+          "entrar sem conta continua abrindo a aplicação"
+        );
+        conferir(
+          $3("rotulo-usuario").textContent === "Sem conta",
+          "com o apelido que estava no campo, sem mandar ninguém digitar de novo"
+        );
+        conferir(
+          quadro.contentWindow.localStorage.getItem("call.sessao") === null,
+          "e sem inventar sessão nenhuma"
+        );
+
+        $3("botao-perfil").click();
+        await esperar(200);
+        conferir(
+          $3("perfil-conta").dataset.ligada === "nao" &&
+            $3("perfil-conta-acao").textContent === "Criar conta",
+          "e o painel de perfil oferece o cadastro a quem está sem conta"
+        );
+
+        conferir(erros.length === 0, `nenhum erro de execução (${erros.join(" | ") || "nenhum"})`);
+      } catch (erro) {
+        conferir(false, `erro inesperado: ${erro?.message ?? erro}`);
+        conferir(false, `erros da aplicação: ${erros.join(" | ") || "nenhum"}`);
+      }
+
+      document.title = falhas === 0 ? "PASSOU" : "FALHOU";
+      await entregar({ falhas, relatorio });
+      window.close();
+    </script>
+  </body>
+</html>

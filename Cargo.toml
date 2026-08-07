@@ -9,3 +9,16 @@ codegen-units = 1
 panic = "abort"
 strip = true
 incremental = false
+
+# Nao ha excecao para o Argon2 aqui, e isso foi medido, nao suposto.
+#
+# O Argon2 gasta tempo de proposito, e a suspeita razoavel era que
+# `opt-level = "z"` fizesse o hash custar mais do que os parametros pedem —
+# atrasando igual quem ataca e quem so quer entrar. Compilar o pacote em
+# `opt-level = 3` deu **19,0 ms contra 20,3 ms** por verificacao, diferenca
+# dentro do ruido de duas execucoes seguidas, ao preco de 3 KB no binario.
+#
+# A explicacao esta no `lto = true` logo acima: com LTO gordo, a otimizacao
+# final e refeita para o artefato inteiro, e a escolha por pacote quase nao
+# sobrevive a ela. Medir custou dez minutos e apagou seis linhas de
+# configuracao que existiriam so por precaucao.

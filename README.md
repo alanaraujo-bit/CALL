@@ -5,7 +5,7 @@ texto**, **chat de voz** e **transmissão de tela**. Interface inteiramente em
 português do Brasil.
 
 Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
-empacotador e sem Electron. O instalador tem 1,85 MB e o executável ocupa
+empacotador e sem Electron. O instalador tem 1,90 MB e o executável ocupa
 32 MB de memória residente em repouso — 7,9 MB deles em memória privada.
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
@@ -36,20 +36,28 @@ detecta a versão nova e oferece a atualização.
 
 ## Como usar
 
-### 1. Abra, escolha um apelido e um mascote
+### 1. Abra, entre ou crie uma conta
 
 Não há nada a configurar. O aplicativo já vem apontado para o servidor oficial
 do CALL, hospedado — ninguém precisa deixar máquina ligada nem passar IP.
 
-A tela de entrada oferece seis mascotes — coruja, raposa, axolote, capivara,
-polvo e dragão —, desenhados para o CALL. Quem não escolher nenhum ganha um
-sorteado, para que ninguém apareça como mais um círculo cinza igual ao dos
-outros.
+A tela de entrada pergunta uma coisa só: quem você é. **Criar conta** pede
+apelido, mascote, e-mail e senha numa folha só, com a prévia do seu retrato
+acompanhando o que você digita e a força da senha desenhada nas mesmas cinco
+barras da marca do CALL. **Entrar** é para quem já tem conta, aqui ou pelo
+Google. E **entrar sem conta**, embaixo, é a saída de sempre — o CALL inteiro
+funciona sem cadastro, inclusive sem internet.
+
+O mascote sai daqui: são seis — coruja, raposa, axolote, capivara, polvo e
+dragão —, desenhados para o CALL. Quem não escolher nenhum ganha um sorteado,
+para que ninguém apareça como mais um círculo cinza igual ao dos outros.
 
 **Essa tela aparece uma vez só.** Da segunda abertura em diante o aplicativo
-vai direto para os grupos: boas-vindas se dá uma vez, e um clique diário em
-"Continuar" que não decide nada é pedágio, não recurso. Apelido, bio e mascote
-passam a ser trocados em **Meu perfil**, no canto inferior esquerdo.
+vai direto para os grupos: boas-vindas se dá uma vez, e um clique diário que
+não decide nada é pedágio, não recurso. Com conta, a sessão vale 90 dias e é
+conferida em silêncio na partida; sem conta, basta ter um apelido guardado.
+Apelido, bio, mascote e a própria conta passam a ser tratados em **Meu
+perfil**, no canto inferior esquerdo.
 
 O servidor apenas apresenta os participantes uns aos outros e guarda a
 estrutura dos grupos e o histórico dos canais de texto. **Áudio e vídeo nunca
@@ -137,10 +145,41 @@ ver o cartão dessa pessoa: mascote, bio, se é dona do grupo e o que ela está
 usando. O volume dela também fica ali (e continua no botão direito, para quem
 já tinha o atalho na mão). O volume é lembrado entre sessões.
 
-O perfil fica **neste computador** e viaja junto de você a cada entrada em um
-grupo. O servidor não guarda nada disso: ele repassa aos outros enquanto você
-está conectado e esquece quando você fecha o CALL. Não é conta e não autentica
-ninguém — quem troca de máquina começa de novo.
+Sem conta, o perfil fica **neste computador** e viaja junto de você a cada
+entrada em um grupo: o servidor repassa aos outros enquanto você está
+conectado e esquece quando você fecha o CALL. Com conta, ele fica guardado —
+ver abaixo.
+
+### 6. Conta (opcional)
+
+Na primeira abertura o CALL oferece **criar conta** ou **entrar**, e uma
+terceira saída, discreta: **entrar sem conta**. As três funcionam, e a
+terceira é o CALL como ele sempre foi.
+
+A conta existe para uma coisa só: **trocar de computador sem virar outra
+pessoa**. Ela guarda apelido, mascote, bio e a lista de grupos — formate a
+máquina, instale o CALL de novo, entre, e a coluna da esquerda volta inteira.
+Sem ela, a identidade é um número sorteado no primeiro uso e gravado neste
+computador: perdê-lo é perder a autoria do que você escreveu e a posse dos
+grupos que criou.
+
+O que a conta **não** faz: não dá acesso a grupo nenhum (isso continua sendo
+questão de ter o convite), não muda quem pode o quê, e não é exigida para
+nada. Também não existe no servidor que você mesmo hospeda com "Hospedar" —
+ali não há cadastro a fazer, e é o cenário sem internet.
+
+**Entrar com o Google** aparece quando o servidor está configurado para ele. O
+CALL não pede sua senha do Google: ele abre o **navegador do sistema**, com a
+barra de endereço à vista em `accounts.google.com`, e espera a volta numa porta
+local que só existe durante o login. O segredo da aplicação fica no servidor, e
+a troca do código acontece lá — nunca dentro do `.exe`.
+
+Sua conta fica em **Meu perfil**, embaixo do mascote: qual é, e como sair dela.
+Sair derruba a sessão no servidor, e não só neste computador.
+
+Senhas são guardadas com **Argon2id**, e o que fica em disco é o hash. Tokens
+de sessão valem 90 dias, e o arquivo guarda a impressão deles, não os tokens:
+um `sessoes.json` vazado não abre conta nenhuma.
 
 ---
 
@@ -158,10 +197,19 @@ de voz**. A mídia não passa por ele: cada participante abre uma conexão diret
 com cada um dos outros (topologia em malha), e a malha se forma por canal —
 estar no mesmo grupo não é estar na mesma conversa.
 
-A persistência são dois arquivos, e nenhum banco de dados: `grupos.json`,
-reescrito inteiro a cada mudança de estrutura, e `mensagens.jsonl`, só
-acréscimo, compactado quando cresce demais. Sem a variável de ambiente `DADOS`
-o servidor funciona igual e esquece tudo ao fechar — é o caso do sidecar.
+A persistência são quatro arquivos, e nenhum banco de dados: `grupos.json`,
+reescrito inteiro a cada mudança de estrutura; `mensagens.jsonl`, só
+acréscimo, compactado quando cresce demais; `contas.json`, com os hashes
+Argon2id; e `sessoes.json`, com a impressão dos tokens vivos. Sem a variável
+de ambiente `DADOS` o servidor funciona igual e esquece tudo ao fechar — é o
+caso do sidecar, onde não há conta a guardar.
+
+O **"Entrar com o Google" fica atrás da opção de compilação `google`**, que só
+a imagem da nuvem liga. Ele arrasta um cliente HTTPS inteiro para trocar o
+código de autorização pelo perfil — o servidor sai de 599 KB para 1,93 MB —, e
+esse 1,3 MB viajaria dentro do instalador de todo mundo para servir a um
+recurso que o servidor caseiro nem teria como oferecer: ele não tem
+`client_secret` nem endereço público.
 
 | Arquivo | Responsabilidade |
 | --- | --- |
@@ -169,6 +217,7 @@ o servidor funciona igual e esquece tudo ao fechar — é o caso do sidecar.
 | `src/estilo.css` | Tema escuro e componentes visuais |
 | `src/app.js` | Estado da aplicação, canais, conversa, voz e palco |
 | `src/sinal.js` | Cliente do canal de sinalização |
+| `src/conta.js` | Cadastro, login, sessão e força de senha |
 | `src/rtc.js` | Malha WebRTC com negociação perfeita |
 | `src/avatares.js` | Os seis mascotes, desenhados em SVG |
 | `src/perfil.js` | Painel do próprio perfil e cartão de outra pessoa |
@@ -176,9 +225,12 @@ o servidor funciona igual e esquece tudo ao fechar — é o caso do sidecar.
 | `src/tempo.js` | Tempo em call e histórico de quem passou por ela |
 | `src/atividade.js` | O que mostrar do programa em uso, e com que calma |
 | `src-tauri/src/atividade.rs` | Qual programa está em primeiro plano |
+| `src-tauri/src/google.rs` | PKCE, navegador do sistema e porta de retorno |
 | `src-tauri/src/lib.rs` | Comandos nativos, permissões e ajuste de memória |
 | `servidor/src/main.rs` | Protocolo do servidor |
 | `servidor/src/modelo.rs` | Grupos, mensagens e persistência em disco |
+| `servidor/src/contas.rs` | Contas, senhas e sessões |
+| `servidor/src/google.rs` | Troca do código de autorização com o Google |
 
 ---
 
@@ -202,18 +254,29 @@ Copy-Item target\release\sinalizacao.exe `
 ### Testes
 
 ```powershell
-node testes/sinalizacao.test.mjs             # protocolo do servidor
+cargo test -p sinalizacao                    # e-mail, senha, sessão e castigo
+cargo test -p call --lib                     # PKCE, convite e atividade
+node testes/sinalizacao.test.mjs             # protocolo do servidor, contas inclusas
+node testes/tempo.test.mjs                   # cronômetro e histórico da call
+node testes/atividade.test.mjs               # política do que se anuncia
 powershell -File testes/rodar-malha.ps1      # malha WebRTC e áudio no motor real
+powershell -File testes/rodar-portal.ps1     # entrar e criar conta na aplicação real
+powershell -File testes/rodar-perfil.ps1     # perfil, mascotes e cartão de alguém
 powershell -File testes/rodar-interface.ps1  # painel de ajustes na aplicação real
+powershell -File testes/rodar-sons.ps1       # o sino, medido na amostra renderizada
 powershell -File testes/duas-instancias.ps1  # duas janelas reais no mesmo grupo
 powershell -File testes/convite.ps1          # o link call:// abrindo o grupo
-powershell -File testes/ajustes.ps1          # o painel dentro do WebView2
 ```
 
-Os três primeiros são automáticos e não pedem permissões de mídia. Os três
-últimos dirigem a interface real e deixam capturas em `testes/capturas`; eles
-tomam o mouse e o teclado enquanto rodam, e não devem correr ao mesmo tempo —
-cada um começa encerrando o servidor local do outro.
+Tudo até `rodar-sons.ps1` é automático e roda sem tomar a tela — os `rodar-*`
+usam o Edge em modo *headless*. Os dois últimos dirigem janelas reais, deixam
+capturas em `testes/capturas`, tomam o mouse e o teclado enquanto rodam, e não
+devem correr ao mesmo tempo: cada um começa encerrando o servidor local do
+outro.
+
+`CALL_APELIDO` faz o aplicativo pular o portal de conta e entrar direto, sem
+conta, com o apelido dado — é assim que os roteiros de janela real evitam
+preencher formulário por coordenada de clique.
 
 ---
 
@@ -227,6 +290,17 @@ cada um começa encerrando o servidor local do outro.
 - A porta 8787 só entra em jogo para quem usa **Hospedar**: nesse caso ela
   precisa estar liberada no firewall da máquina que hospeda. Com o servidor
   oficial, não há porta a abrir.
-- O servidor oficial não autentica ninguém. Quem tem o código do convite
-  entra, e o identificador de usuário é o que o cliente informa — bom o
-  bastante para um grupo de amigos, e não para dados sensíveis.
+- **O convite continua sendo a única chave dos grupos.** A conta diz quem você
+  é, não o que você pode: quem tem o código entra, com conta ou sem. Isso é
+  deliberado, e é o que mantém o CALL utilizável entre amigos — mas significa
+  que ele não serve para dados sensíveis.
+- Quem entra sem conta continua se identificando por um número que o próprio
+  cliente informa, e que não prova nada. O prefixo `conta-` é o único
+  reservado: alegá-lo sem token é recusado pelo servidor.
+- Não há recuperação de senha. Esquecer a senha de uma conta que não está
+  vinculada ao Google significa criar outra — não existe envio de e-mail em
+  lugar nenhum do projeto, e inventar um servidor de e-mail para isto custaria
+  mais do que todo o resto do servidor junto.
+- O login do Google só funciona no Windows: ele abre o navegador por
+  `ShellExecuteW`. É a mesma fronteira já declarada da atividade em primeiro
+  plano, e o CALL só é distribuído para Windows.

@@ -5,6 +5,7 @@ import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
 import { Vigia } from "./atividade.js";
 import { avatarSugerido, iniciais, pintarAvatar } from "./avatares.js";
 import { editarPerfil, montarEscolhaDeMascotes, mostrarCartao, saneado } from "./perfil.js";
+import * as conta from "./conta.js";
 
 /* ═══ Atalhos ═══════════════════════════════════════════════════ */
 
@@ -45,8 +46,20 @@ const estado = {
    *  aparecer com as iniciais. */
   avatar: "",
   /** Uma linha sobre você, mostrada no cartão para quem está no mesmo grupo.
-   *  Fica neste computador e viaja na saudação; o servidor não a guarda. */
+   *  Viaja na saudação; quem tem conta a encontra de volta em outra máquina. */
   bio: "",
+
+  /** A conta em que se entrou — `{ id, email, apelido, avatar, bio, atalhos,
+   *  google }` —, ou `null` para quem entrou sem conta. Quem está aqui tem o
+   *  `usuario` decidido pelo servidor, e não pelo próprio cliente. */
+  conta: null,
+  /** Token da sessão. Vive no `localStorage`, fora das preferências, porque
+   *  sair da conta é apagar um item — e não editar um objeto. */
+  token: "",
+  /** Último e-mail usado neste computador. Não é sessão: é a diferença entre
+   *  abrir o CALL na aba "Entrar" com o campo pronto, e abrir num formulário
+   *  em branco perguntando quem você é. */
+  ultimoEmail: "",
   /** Grupos que este computador conhece — [{ codigo, nome }]. O servidor é a
    *  fonte da verdade; isto é só a lista de atalhos da coluna da esquerda. */
   atalhos: [],
@@ -144,6 +157,7 @@ function carregarPreferencias() {
         ? SERVIDOR_PADRAO
         : bruto.servidor;
     estado.usuario = bruto.usuario || "";
+    estado.ultimoEmail = typeof bruto.ultimoEmail === "string" ? bruto.ultimoEmail : "";
     const perfil = saneado({ avatar: bruto.avatar, bio: bruto.bio });
     estado.avatar = perfil.avatar;
     estado.bio = perfil.bio;
@@ -187,6 +201,7 @@ function salvarPreferencias() {
       apelido: estado.apelido,
       servidor: estado.servidor,
       usuario: estado.usuario,
+      ultimoEmail: estado.ultimoEmail,
       avatar: estado.avatar,
       bio: estado.bio,
       atalhos: estado.atalhos,
@@ -205,6 +220,21 @@ function lembrarGrupo(codigo, nome) {
   if (existente) existente.nome = nome;
   else estado.atalhos.push({ codigo, nome });
   salvarPreferencias();
+}
+
+/**
+ * Sobe para a conta o que a conta promete guardar. Sem conta não faz nada —
+ * e é por isso que quem chama não precisa perguntar antes.
+ *
+ * Dentro de um grupo aproveita o socket que já está aberto; fora dele, abre
+ * uma transação curta. Falhar em silêncio é deliberado: a próxima entrada em
+ * grupo grava tudo de novo na saudação, e um aviso de rede para quem só
+ * trocou de mascote seria ruído.
+ */
+function sincronizarConta(campos) {
+  if (!estado.token) return;
+  const enviar = sinal.conectado ? (pedido) => sinal.enviar(pedido) : null;
+  conta.guardar(estado.servidor, estado.token, campos, enviar);
 }
 
 /* ═══ Avisos ════════════════════════════════════════════════════ */
@@ -391,48 +421,346 @@ function fecharMenu() {
   $("menu").classList.add("oculto");
 }
 
-/* ═══ Tela de entrada ═══════════════════════════════════════════ */
+/* ═══ Portal: entrar, criar conta, ou nenhum dos dois ═══════════ */
 
-function prepararEntrada() {
-  $("campo-apelido").value = estado.apelido;
+/**
+ * A tela de entrada é boas-vindas, e boas-vindas se dá uma vez: quem já tem
+ * sessão ou apelido guardado nunca mais a vê. Ela existe para decidir *quem
+ * você é* — com conta, que atravessa computadores, ou sem, que é o CALL como
+ * ele sempre foi e continua funcionando sem internet nenhuma.
+ *
+ * Apelido e mascote também vivem em "Meu perfil", e o endereço do servidor
+ * nos ajustes: nada aqui é a única porta para nada.
+ */
+
+let modoDoPortal = "entrar";
+let googleDoServidor = { disponivel: false, clienteId: "" };
+let portalOcupado = false;
+
+function prepararPortal() {
   $("campo-servidor").value = estado.servidor;
+  $("botao-hospedar").addEventListener("click", hospedar);
+
+  // Quem já usou uma conta aqui abre na aba de entrar, com o e-mail pronto.
+  // Quem nunca usou não tem o que entrar, e a aba útil é a de criar.
+  $("criar-apelido").value = estado.apelido;
+  $("entrar-email").value = estado.ultimoEmail;
+  $("criar-email").value = "";
 
   // A escolha vale na hora e é guardada na hora: quem clica num mascote e
   // fecha o aplicativo sem entrar em grupo nenhum o encontra escolhido depois.
   montarEscolhaDeMascotes($("entrada-mascotes"), estado.avatar, (id) => {
     estado.avatar = id;
     salvarPreferencias();
+    refletirPortal();
   });
 
-  $("botao-hospedar").addEventListener("click", hospedar);
+  for (const aba of $("portal-abas").querySelectorAll(".segmentado__aba")) {
+    aba.addEventListener("click", () => trocarModoDoPortal(aba.dataset.aba));
+  }
 
-  $("formulario-entrada").addEventListener("submit", (evento) => {
+  for (const olho of document.querySelectorAll(".olho")) {
+    olho.setAttribute("aria-pressed", "false");
+    olho.addEventListener("click", () => {
+      const campo = $(olho.dataset.olho);
+      const mostrando = campo.type === "text";
+      campo.type = mostrando ? "password" : "text";
+      olho.setAttribute("aria-pressed", String(!mostrando));
+      olho.title = mostrando ? "Mostrar a senha" : "Esconder a senha";
+      campo.focus();
+    });
+  }
+
+  // Caps Lock é a causa mais comum de "minha senha está certa e não entra", e
+  // a única que o próprio campo pode denunciar antes do erro acontecer.
+  for (const [campo, aviso] of [
+    ["entrar-senha", "entrar-caps"],
+    ["criar-senha", "criar-caps"],
+  ]) {
+    const olhar = (evento) => {
+      $(aviso).hidden = !evento.getModifierState?.("CapsLock");
+    };
+    $(campo).addEventListener("keyup", olhar);
+    $(campo).addEventListener("keydown", olhar);
+    $(campo).addEventListener("blur", () => ($(aviso).hidden = true));
+  }
+
+  for (const id of ["entrar-email", "criar-email"]) {
+    $(id).addEventListener("input", () => {
+      $(id).closest(".campo__caixa").dataset.valido = conta.pareceEmail($(id).value)
+        ? "sim"
+        : "nao";
+      limparErro();
+    });
+  }
+
+  $("criar-apelido").addEventListener("input", refletirPortal);
+  $("criar-senha").addEventListener("input", () => {
+    const { nivel, texto } = conta.forcaDaSenha($("criar-senha").value);
+    $("forca").dataset.nivel = String(nivel);
+    $("forca-texto").textContent = texto;
+    limparErro();
+  });
+  $("entrar-senha").addEventListener("input", limparErro);
+
+  $("form-entrar").addEventListener("submit", (evento) => {
     evento.preventDefault();
-    const apelido = $("campo-apelido").value.trim();
-    if (!apelido) return;
-
-    estado.apelido = apelido;
+    entrarNaConta();
+  });
+  $("form-criar").addEventListener("submit", (evento) => {
+    evento.preventDefault();
+    criarConta();
+  });
+  $("botao-google").addEventListener("click", entrarPeloGoogle);
+  $("botao-sem-conta").addEventListener("click", () => {
+    // Sem conta o apelido é o que a pessoa digitou na aba de cadastro, ou o
+    // que já estava guardado. Ninguém deve ser mandado de volta a um campo
+    // para escolher um nome que já existe.
+    const escolhido = $("criar-apelido").value.trim() || estado.apelido;
+    estado.apelido = escolhido || "Convidado";
     salvarPreferencias();
     abrirAplicacao();
   });
+
+  window.addEventListener("resize", medirPalcoDoPortal);
+  // A altura da folha muda quando a fonte do sistema termina de carregar, e
+  // a medida feita antes disso deixaria o cartão cortado por alguns pixels.
+  document.fonts?.ready.then(medirPalcoDoPortal);
+
+  $("entrar-email").closest(".campo__caixa").dataset.valido = conta.pareceEmail(
+    estado.ultimoEmail
+  )
+    ? "sim"
+    : "nao";
+
+  trocarModoDoPortal(estado.ultimoEmail ? "entrar" : "criar", true);
+}
+
+function trocarModoDoPortal(modo, imediato = false) {
+  modoDoPortal = modo;
+  $("tela-entrada").dataset.modo = modo;
+  limparErro();
+
+  for (const aba of $("portal-abas").querySelectorAll(".segmentado__aba")) {
+    aba.setAttribute("aria-selected", String(aba.dataset.aba === modo));
+  }
+  $("portal-abas").style.setProperty("--indice", modo === "criar" ? "1" : "0");
+
+  for (const folha of $("portal-palco").querySelectorAll(".portal__folha")) {
+    folha.classList.toggle("portal__folha--fora", folha.dataset.folha !== modo);
+  }
+
+  refletirPortal();
+  medirPalcoDoPortal();
+
+  // Foco no primeiro campo vazio da folha que entrou — e não no primeiro
+  // campo: quem chega com o e-mail preenchido quer o cursor na senha.
+  if (!imediato) {
+    const campos = folhaDoPortal().querySelectorAll(".campo__entrada");
+    const alvo = [...campos].find((c) => !c.value) ?? campos[0];
+    alvo?.focus();
+  }
+}
+
+const folhaDoPortal = () => $(modoDoPortal === "criar" ? "form-criar" : "form-entrar");
+
+/** A altura do palco acompanha a folha à frente; as duas têm tamanhos bem
+ *  diferentes, e um salto seco seria a única parte brusca da tela. */
+function medirPalcoDoPortal() {
+  $("portal-palco").style.height = `${folhaDoPortal().offsetHeight}px`;
+}
+
+/** A prévia: o mesmo desenho que os outros vão ver, e não uma promessa. */
+function refletirPortal() {
+  const criando = modoDoPortal === "criar";
+  const apelido = criando ? $("criar-apelido").value.trim() : estado.apelido;
+
+  pintarAvatar($("portal-avatar"), { avatar: estado.avatar, apelido });
+
+  if (criando) {
+    $("portal-titulo").textContent = apelido || "Quem é você aqui?";
+    $("portal-legenda").textContent = "Assim os outros vão te ver no grupo.";
+  } else {
+    $("portal-titulo").textContent = apelido ? `Olá de novo, ${apelido}` : "Bem-vindo de volta";
+    $("portal-legenda").textContent =
+      estado.ultimoEmail || "Entre para levar seus grupos com você.";
+  }
+}
+
+function limparErro() {
+  for (const id of ["erro-entrar", "erro-criar"]) {
+    if (!$(id).hidden) {
+      $(id).hidden = true;
+      $(id).textContent = "";
+    }
+  }
+  medirPalcoDoPortal();
 }
 
 /**
- * Troca a tela de entrada pela aplicação.
- *
- * A tela de entrada é boas-vindas, e boas-vindas se dá uma vez: quem já tem
- * apelido guardado nunca mais a vê. Antes ela aparecia a cada abertura, com
- * os campos já preenchidos, pedindo um clique em "Continuar" que não decidia
- * nada — um pedágio diário para chegar onde a pessoa já queria estar.
- *
- * Apelido e mascote passaram a viver em "Meu perfil", e o endereço do
- * servidor nos ajustes. Nada do que estava aqui se perdeu; só saiu do
- * caminho.
+ * Mostra a recusa dentro do cartão, e não como aviso passageiro no canto:
+ * "senha incorreta" é resposta ao que a pessoa acabou de fazer, e some junto
+ * com a próxima tecla que ela digitar.
  */
+function mostrarErroDoPortal(erro) {
+  const caixa = $(modoDoPortal === "criar" ? "erro-criar" : "erro-entrar");
+  caixa.textContent = erro?.message ?? String(erro);
+  caixa.hidden = false;
+  medirPalcoDoPortal();
+
+  const campo = {
+    email: modoDoPortal === "criar" ? "criar-email" : "entrar-email",
+    senha: modoDoPortal === "criar" ? "criar-senha" : "entrar-senha",
+    apelido: "criar-apelido",
+  }[erro?.campo];
+  if (campo) $(campo)?.focus();
+}
+
+/** O botão vira relógio enquanto o servidor pensa. O rótulo não muda: um
+ *  texto que troca de largura faria o cartão inteiro pular. */
+function esperando(botao, ligado) {
+  portalOcupado = ligado;
+  botao.classList.toggle("botao--esperando", ligado);
+  botao.disabled = ligado;
+  $("botao-google").disabled = ligado || !googleDoServidor.disponivel;
+}
+
+async function entrarNaConta() {
+  if (portalOcupado) return;
+  const botao = $("botao-entrar-conta");
+  limparErro();
+  esperando(botao, true);
+
+  try {
+    const sessao = await conta.entrar(
+      estado.servidor,
+      $("entrar-email").value,
+      $("entrar-senha").value
+    );
+    assumirConta(sessao);
+  } catch (erro) {
+    mostrarErroDoPortal(erro);
+  } finally {
+    esperando(botao, false);
+  }
+}
+
+async function criarConta() {
+  if (portalOcupado) return;
+  const botao = $("botao-criar-conta");
+  limparErro();
+  esperando(botao, true);
+
+  try {
+    const sessao = await conta.cadastrar(estado.servidor, {
+      email: $("criar-email").value,
+      senha: $("criar-senha").value,
+      apelido: $("criar-apelido").value,
+      avatar: estado.avatar,
+      bio: estado.bio,
+    });
+    assumirConta(sessao);
+  } catch (erro) {
+    mostrarErroDoPortal(erro);
+  } finally {
+    esperando(botao, false);
+  }
+}
+
+/** O botão do Google só existe quando o servidor tem como completá-lo: um
+ *  botão que sempre falha é pior que botão nenhum. */
+async function perguntarPeloGoogle() {
+  googleDoServidor = await conta.configuracaoDoGoogle(estado.servidor);
+  $("portal-google").classList.toggle("oculto", !googleDoServidor.disponivel);
+  $("botao-google").disabled = !googleDoServidor.disponivel;
+}
+
+async function entrarPeloGoogle() {
+  if (portalOcupado || !googleDoServidor.disponivel) return;
+  const botao = $("botao-google");
+  limparErro();
+  portalOcupado = true;
+  botao.disabled = true;
+  $("botao-google-texto").textContent = "Esperando o navegador…";
+
+  try {
+    // O Rust abre o navegador do sistema e espera a volta numa porta local.
+    // Nada de senha do Google dentro do CALL — ver `src-tauri/src/google.rs`.
+    const passagem = await invocar("google_autenticar", {
+      clienteId: googleDoServidor.clienteId,
+    });
+    const sessao = await conta.entrarComGoogle(estado.servidor, passagem);
+    assumirConta(sessao);
+  } catch (erro) {
+    mostrarErroDoPortal(erro instanceof Error ? erro : new Error(String(erro)));
+  } finally {
+    portalOcupado = false;
+    botao.disabled = false;
+    $("botao-google-texto").textContent = "Continuar com o Google";
+  }
+}
+
+/**
+ * A conta assume o lugar da identidade sorteada: `usuario` passa a ser o
+ * identificador dela, que é o mesmo em qualquer computador. É isso que faz o
+ * histórico continuar reconhecendo quem escreveu, e o grupo continuar tendo
+ * dono depois de uma reinstalação.
+ */
+function assumirConta(sessao, { abrir = true } = {}) {
+  estado.token = sessao.token;
+  estado.conta = sessao.conta;
+  estado.usuario = sessao.conta.id;
+  estado.ultimoEmail = sessao.conta.email;
+  estado.apelido = sessao.conta.apelido || estado.apelido;
+  if (sessao.conta.avatar) estado.avatar = sessao.conta.avatar;
+  if (sessao.conta.bio) estado.bio = sessao.conta.bio;
+
+  fundirAtalhos(sessao.conta.atalhos);
+  conta.guardarSessao(sessao.token, estado.servidor);
+  salvarPreferencias();
+
+  if (abrir) abrirAplicacao();
+}
+
+/**
+ * Junta os grupos da conta com os que já estavam neste computador.
+ *
+ * Fundir, e não substituir: quem usou o CALL sem conta e depois criou uma
+ * perderia a coluna inteira, e quem entrou num grupo com o computador
+ * offline perderia esse grupo na primeira sincronização. O nome que vale é o
+ * da conta, porque ele passou pelo servidor mais recentemente.
+ */
+function fundirAtalhos(daConta) {
+  if (!Array.isArray(daConta)) return;
+
+  const juntos = new Map(estado.atalhos.map((a) => [a.codigo, a]));
+  for (const atalho of daConta) {
+    if (atalho?.codigo) juntos.set(atalho.codigo, { ...atalho });
+  }
+  estado.atalhos = [...juntos.values()];
+}
+
 function abrirAplicacao() {
-  $("tela-entrada").classList.add("oculto");
+  const portal = $("portal");
+  portal.classList.add("portal--indo");
+
+  // A aplicação é montada já, e a tela de entrada só sai depois do recuo do
+  // cartão: montar depois faria a espera aparecer como uma tela preta.
   $("tela-aplicacao").classList.remove("oculto");
-  prepararAplicacao();
+  // Quem saiu da conta e entrou de novo já tem tudo ligado; repetir aqui
+  // duplicaria cada ouvinte, e cada clique passaria a valer por dois.
+  if (aplicacaoPronta) {
+    mostrarMeuPerfil();
+    desenharAtalhos();
+    redesenhar();
+  } else {
+    prepararAplicacao();
+  }
+
+  setTimeout(() => {
+    $("tela-entrada").classList.add("oculto");
+    portal.classList.remove("portal--indo");
+  }, 220);
 }
 
 async function hospedar() {
@@ -575,11 +903,13 @@ function mostrarMeuPerfil() {
 }
 
 async function abrirMeuPerfil() {
+  mostrarContaNoPerfil();
   const escolhido = await editarPerfil(estado);
   if (!escolhido) return;
 
   Object.assign(estado, escolhido);
   salvarPreferencias();
+  sincronizarConta(escolhido);
   mostrarMeuPerfil();
 
   // Dentro de um grupo a saudação já passou, e sem este aviso o perfil novo só
@@ -592,6 +922,95 @@ async function abrirMeuPerfil() {
   }
 
   avisar("Perfil salvo.", "bom");
+}
+
+/**
+ * A linha da conta dentro do painel de perfil.
+ *
+ * Ela mora aqui, e não numa tela própria, porque é o que sustenta tudo que
+ * está acima dela: sem conta, o apelido, o mascote e a bio valem só nesta
+ * máquina — e a linha diz isso em vez de deixar a pessoa descobrir sozinha
+ * depois de formatar o computador.
+ */
+function mostrarContaNoPerfil() {
+  const linha = $("perfil-conta");
+  const acao = $("perfil-conta-acao");
+  const ligada = Boolean(estado.conta);
+
+  linha.dataset.ligada = ligada ? "sim" : "nao";
+  $("perfil-conta-titulo").textContent = ligada
+    ? estado.conta.google
+      ? "Conta do Google"
+      : "Conta do CALL"
+    : "Você está sem conta";
+  $("perfil-conta-detalhe").textContent = ligada
+    ? estado.conta.email
+    : "Seu perfil e seus grupos ficam só neste computador.";
+  acao.textContent = ligada ? "Sair da conta" : "Criar conta";
+
+  acao.onclick = () => (ligada ? sairDaConta() : voltarAoPortal());
+}
+
+/**
+ * Larga tudo que veio da conta: token, cadastro em memória e — o que importa
+ * — a identidade.
+ *
+ * O `usuario` de quem entrou com conta é o identificador dela, e ele é o que
+ * assina as mensagens e diz quem é o dono de um grupo. Continuar apresentando
+ * esse identificador sem o token que o comprova seria dizer-se dono de uma
+ * conta a que já não se pertence. O servidor recusa essa alegação de qualquer
+ * jeito — `identidade`, em `main.rs` —, e o cliente não deve nem tentá-la.
+ */
+function largarIdentidadeDaConta() {
+  estado.token = "";
+  estado.conta = null;
+  conta.esquecerSessao();
+  if (estado.usuario.startsWith("conta-")) {
+    estado.usuario = crypto.randomUUID().replace(/-/g, "");
+  }
+  salvarPreferencias();
+}
+
+/**
+ * Sair da conta derruba a sessão no servidor, e não só neste computador: um
+ * token que continua valendo depois de "sair" não é uma saída.
+ *
+ * Depois disso o CALL volta ao portal. Não continuamos na aplicação com a
+ * identidade da conta na mão — ela deixou de ser nossa.
+ */
+async function sairDaConta() {
+  const token = estado.token;
+  largarIdentidadeDaConta();
+
+  $("perfil-dialogo").classList.add("oculto");
+  desligar();
+  voltarAoPortal();
+  avisar("Você saiu da conta.", "bom");
+
+  try {
+    await conta.sair(estado.servidor, token);
+  } catch {
+    // O servidor pode estar fora do ar. Localmente já saímos, e a sessão
+    // vence sozinha — insistir aqui só travaria a interface.
+  }
+}
+
+/**
+ * Volta para a tela de entrada. A aplicação é escondida, e não desmontada:
+ * `prepararAplicacao` liga ouvintes uma vez só, e montá-la de novo os
+ * duplicaria — cada clique passaria a valer por dois.
+ */
+function voltarAoPortal() {
+  $("perfil-dialogo").classList.add("oculto");
+  $("tela-aplicacao").classList.add("oculto");
+  $("tela-entrada").classList.remove("oculto");
+  $("portal").classList.remove("portal--indo");
+  $("entrar-email").value = estado.ultimoEmail;
+  $("entrar-senha").value = "";
+  $("criar-senha").value = "";
+  trocarModoDoPortal(estado.ultimoEmail ? "entrar" : "criar", true);
+  medirPalcoDoPortal();
+  perguntarPeloGoogle();
 }
 
 function aoPerfilDeOutro({ de, apelido, avatar, bio }) {
@@ -718,6 +1137,10 @@ async function conectar(saudacao) {
     const boasVindas = await sinal.conectar(estado.servidor, {
       ...saudacao,
       apelido: estado.apelido,
+      // Com token, o servidor ignora o `usuario` e usa o da conta: quem tem
+      // conta não se apresenta, se identifica. Sem token, a saudação é
+      // exatamente a que sempre foi.
+      token: estado.token,
       usuario: estado.usuario,
       avatar: estado.avatar,
       bio: estado.bio,
@@ -731,16 +1154,25 @@ async function conectar(saudacao) {
   }
 }
 
-function assumirGrupo({ eu, grupo, presentes }) {
+function assumirGrupo({ eu, grupo, presentes, conta: daConta }) {
   estado.grupo = grupo;
   estado.meuId = eu.id;
   malha.definirIdentidade(eu.id);
+
+  // A saudação com token volta com a conta inteira. É aqui que os grupos de
+  // outra máquina aparecem na coluna da esquerda, sem transação separada.
+  if (daConta) {
+    estado.conta = daConta;
+    fundirAtalhos(daConta.atalhos);
+    mostrarContaNoPerfil();
+  }
 
   estado.membros.clear();
   estado.membros.set(eu.id, { ...eu, apelido: estado.apelido, avatar: estado.avatar, bio: estado.bio });
   for (const membro of presentes) estado.membros.set(membro.id, membro);
 
   lembrarGrupo(grupo.codigo, grupo.nome);
+  sincronizarConta({ atalhos: estado.atalhos });
   ajustarVigia();
   atualizarConexao(true);
   desenharAtalhos();
@@ -780,6 +1212,9 @@ function esquecerGrupo(codigo) {
   if (codigo === estado.grupo?.codigo) desligar();
   estado.atalhos = estado.atalhos.filter((a) => a.codigo !== codigo);
   salvarPreferencias();
+  // Esquecer num computador é esquecer na conta: sem isto, o grupo voltaria
+  // sozinho na próxima entrada, e "esquecer" não teria significado nenhum.
+  sincronizarConta({ atalhos: estado.atalhos });
   desenharAtalhos();
 }
 
@@ -3123,11 +3558,65 @@ carregarPreferencias();
 const servidorDoAmbiente = await invocar("servidor_do_ambiente").catch(() => null);
 if (servidorDoAmbiente) estado.servidor = servidorDoAmbiente;
 
-prepararEntrada();
+// Um apelido imposto pelo ambiente pula o portal e entra sem conta. Serve aos
+// roteiros que dirigem janelas reais — e a quem sobe o CALL numa rede local
+// sem querer cadastro nenhum.
+const apelidoDoAmbiente = await invocar("apelido_do_ambiente").catch(() => null);
+if (apelidoDoAmbiente) {
+  estado.apelido = apelidoDoAmbiente;
+  salvarPreferencias();
+}
 
-// Quem já se apresentou uma vez entra direto. A tela de entrada só existe
-// para quem ainda não tem apelido guardado.
-if (estado.apelido) abrirAplicacao();
+prepararPortal();
+
+/**
+ * Quem entra direto, e quem vê o portal.
+ *
+ * 1. Com sessão guardada para *este* servidor, o token é conferido e a pessoa
+ *    entra direto, com o perfil e os grupos da conta já em mãos.
+ * 2. Uma sessão que o servidor recusa — vencida, ou derrubada de outra
+ *    máquina — leva ao portal, mesmo havendo apelido guardado. Entrar assim
+ *    mesmo seria rebaixar alguém a visitante sem avisar, no aplicativo em que
+ *    ela acha que continua sendo ela.
+ * 3. Sem sessão nenhuma, mas com apelido guardado — quem usava o CALL antes
+ *    das contas —, entra direto como sempre entrou. Ninguém é obrigado a
+ *    criar conta para voltar a um aplicativo que já usava.
+ * 4. Sem nada, o portal.
+ *
+ * O servidor fora do ar não é recusa: o token continua guardado e viaja na
+ * próxima saudação. O CALL funciona sem internet, e a conta não pode ser o
+ * que passa a exigi-la.
+ */
+const guardada = conta.sessaoGuardada();
+let entrouPelaSessao = false;
+let sessaoRecusada = false;
+
+if (guardada?.token && guardada.servidor === estado.servidor) {
+  // Assumido desde já: se o servidor estiver fora do ar, a saudação ainda
+  // leva o token e a identidade da conta continua sendo comprovável.
+  estado.token = guardada.token;
+  try {
+    const sessao = await conta.retomar(estado.servidor, guardada.token);
+    if (sessao) {
+      assumirConta(sessao, { abrir: false });
+      entrouPelaSessao = true;
+    } else {
+      largarIdentidadeDaConta();
+      sessaoRecusada = true;
+    }
+  } catch {
+    /* servidor fora do ar: segue com o token guardado */
+  }
+}
+
+if (entrouPelaSessao || (estado.apelido && !sessaoRecusada)) {
+  abrirAplicacao();
+} else {
+  refletirPortal();
+  // Perguntar pelo Google custa uma conexão curta ao servidor. Só quem vai
+  // mesmo ver o botão paga por ela.
+  perguntarPeloGoogle();
+}
 
 // Um link clicado com o CALL já aberto chega por evento; um link que abriu o
 // CALL já está guardado antes desta linha rodar. Os dois entram pela mesma

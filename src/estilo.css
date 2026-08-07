@@ -122,9 +122,13 @@ svg {
   position: relative;
   height: 100%;
   display: flex;
-  align-items: center;
+  /* `flex-start` mais `margin: auto` na moldura: centralizado quando cabe,
+     rolando desde o topo quando não cabe. Com `align-items: center` o excesso
+     sairia pelas duas pontas e o começo do cartão ficaria inalcançável — que
+     é exatamente o que acontecia na folha de cadastro numa janela baixa. */
+  align-items: flex-start;
   justify-content: center;
-  padding: 40px;
+  padding: 28px 40px;
   overflow: auto;
   background: var(--fundo);
 }
@@ -146,9 +150,33 @@ svg {
     var(--fundo);
 }
 
+/* A mancha respira: as duas luzes deslizam devagar, num ciclo de meio minuto
+   e com deslocamento pequeno. É lento o bastante para nunca chamar atenção —
+   quem olha direto não vê nada acontecer — e vivo o bastante para a tela não
+   parecer uma captura de tela enquanto alguém digita a senha. Só transforma,
+   então não repinta nem custa bateria. */
+.entrada__mancha::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background: radial-gradient(38% 34% at 30% 32%, rgba(95, 106, 217, 0.13), transparent 62%),
+    radial-gradient(30% 28% at 74% 70%, rgba(79, 201, 140, 0.06), transparent 64%);
+  animation: aurora 34s ease-in-out infinite alternate;
+}
+
+@keyframes aurora {
+  from {
+    transform: translate3d(-2%, -1.5%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(3%, 2.5%, 0) scale(1.08);
+  }
+}
+
 .entrada__moldura {
   position: relative;
   z-index: 1;
+  margin: auto 0;
   width: 100%;
   max-width: 860px;
   display: grid;
@@ -293,32 +321,558 @@ svg {
 
 /* ─── Cartão de entrada ────────────────────────────────────────── */
 
+/* A quarta linha da vitrine só existe enquanto a aba de cadastro está à
+   frente. Não é escondida com `display`: ela desliza e some, porque a troca
+   de aba é um movimento e um item aparecendo do nada seria o único salto. */
+.entrada__recurso--conta {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+  overflow: hidden;
+  transition: max-height 260ms cubic-bezier(0.32, 0.72, 0.28, 1),
+    opacity 200ms ease, transform 260ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.entrada[data-modo="criar"] .entrada__recurso--conta {
+  max-height: 60px;
+  opacity: 1;
+  transform: none;
+}
+
+/* O `gap` da lista se aplicaria também ao item colapsado, deixando um vão de
+   16 px de nada. Só o item visível ganha o respiro. */
+.entrada__recursos {
+  gap: 0;
+}
+.entrada__recurso {
+  margin-bottom: 16px;
+}
+.entrada__recurso--conta {
+  margin-bottom: 0;
+}
+.entrada[data-modo="criar"] .entrada__recurso--conta {
+  margin-bottom: 0;
+  padding-top: 16px;
+}
+
 .entrada__cartao {
   min-width: 0;
   background: var(--superficie-1);
   border: 1px solid var(--borda);
   border-radius: var(--raio-g);
-  padding: 26px 24px 22px;
+  padding: 20px 22px 18px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
 }
 
-.entrada__cartao-titulo {
+/* ─── Portal: entrar, criar conta, ou nenhum dos dois ──────────── */
+
+/* A saída da tela de entrada é uma só, e é esta: o cartão recua um passo e
+   se apaga enquanto a aplicação assume. Sem isso, a troca é um corte seco
+   entre duas telas que não se parecem em nada. */
+.portal {
+  transition: opacity 220ms ease, transform 220ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.portal--indo {
+  opacity: 0;
+  transform: scale(0.97) translateY(-4px);
+  pointer-events: none;
+}
+
+.portal__previa {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 14px;
+}
+
+.portal__retrato {
+  width: 40px;
+  height: 40px;
   font-size: 15px;
+}
+
+.portal__dizeres {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.portal__titulo {
+  font-size: 14.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.portal__legenda {
+  font-size: 11.5px;
+  color: var(--texto-3);
+}
+
+/* ── Segmentado: entrar / criar conta ── */
+
+/* Duas abas e uma pílula que desliza entre elas. A pílula é um elemento só,
+   e não um fundo que acende no botão ativo: é o deslize que conta que as duas
+   folhas são o mesmo lugar visto de dois jeitos, e não duas telas. */
+.segmentado {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 14px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+}
+
+.segmentado__pilula {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: calc(var(--raio-m) - 3px);
+  background: var(--superficie-3);
+  border: 1px solid var(--borda-forte);
+  transform: translateX(calc(var(--indice, 0) * 100%));
+  transition: transform 260ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.segmentado__aba {
+  position: relative;
+  z-index: 1;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  border-radius: calc(var(--raio-m) - 3px);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--texto-3);
+  cursor: pointer;
+  transition: color var(--transicao);
+}
+
+.segmentado__aba[aria-selected="true"] {
+  color: var(--texto);
+}
+
+.segmentado__aba:hover {
+  color: var(--texto-2);
+}
+
+/* ── Palco das duas folhas ── */
+
+/* A altura é escrita pelo JS a partir da folha à frente. As duas têm tamanhos
+   bem diferentes — o cadastro tem mascote e medidor de senha —, e um salto
+   seco entre elas seria a única parte brusca da tela. */
+.portal__palco {
+  position: relative;
+  overflow: hidden;
+  transition: height 260ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.portal__folha {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  transition: opacity 180ms ease, transform 260ms cubic-bezier(0.32, 0.72, 0.28, 1),
+    visibility 260ms;
+}
+
+/* A folha que saiu não pode receber Tab nem clique: `visibility` é o que tira
+   os campos dela da ordem de foco, e `opacity` sozinha não faria isso. */
+.portal__folha--fora {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.portal__folha[data-folha="entrar"].portal__folha--fora {
+  transform: translateX(-18px);
+}
+.portal__folha[data-folha="criar"].portal__folha--fora {
+  transform: translateX(18px);
+}
+
+.portal__folha .botao--largo {
+  margin-top: 2px;
+  height: 37px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13.5px;
+}
+.portal__folha .botao--largo svg {
+  width: 15px;
+  height: 15px;
+  transition: transform var(--transicao);
+}
+.portal__folha .botao--largo:hover:not(:disabled) svg {
+  transform: translateX(2px);
+}
+
+/* Enquanto o servidor responde. O botão não troca de texto para "Entrando…"
+   e volta: um rótulo que muda de largura faz o cartão inteiro pular. */
+.botao--esperando {
+  pointer-events: none;
+  opacity: 0.7;
+}
+.botao--esperando svg {
+  animation: girar-espera 700ms linear infinite;
+  transform-origin: 50% 50%;
+}
+@keyframes girar-espera {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Erro do formulário ── */
+
+/* Erro de senha é resposta, e não aviso passageiro: mora dentro do cartão,
+   embaixo dos campos, e fica até a pessoa mexer neles. Os avisos do canto da
+   tela somem em quatro segundos — tempo de ler, não de reagir. */
+.portal__erro {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: -2px;
+  padding: 8px 10px;
+  border-radius: var(--raio-p);
+  background: var(--perigo-suave);
+  border: 1px solid rgba(226, 100, 93, 0.24);
+  color: #f0a19c;
+  font-size: 12px;
+  line-height: 1.45;
+  animation: erro-chegando 200ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+@keyframes erro-chegando {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* ── Campo com algo dentro: olho da senha, selo do e-mail ── */
+
+.campo__caixa {
+  position: relative;
+  display: flex;
+}
+
+.campo__caixa .campo__entrada {
+  padding-right: 36px;
+}
+
+.campo__cabecalho {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.campo__aviso {
+  font-size: 11px;
+  color: #e0b969;
+}
+
+.olho {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--raio-p);
+  background: none;
+  color: var(--texto-3);
+  cursor: pointer;
+  transition: color var(--transicao), background var(--transicao);
+}
+
+.olho:hover {
+  color: var(--texto-2);
+  background: var(--superficie-3);
+}
+
+.olho svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* O risco é o estado padrão — senha escondida. Ele some quando a senha está à
+   mostra, que é o mesmo desenho que todo mundo já entende. */
+.olho__risco {
+  transition: opacity var(--transicao);
+}
+.olho[aria-pressed="true"] .olho__risco {
+  opacity: 0;
+}
+
+/* Um tique discreto quando o e-mail passa a ter forma de e-mail. Não valida
+   nada além da forma, e não impede ninguém de continuar: é confirmação, e
+   não guarda. */
+.campo__selo {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  width: 15px;
+  height: 15px;
+  color: var(--vivo);
+  transform: translateY(-50%) scale(0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transicao), transform var(--transicao);
+}
+
+.campo__selo svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 2.2;
+}
+
+.campo__caixa[data-valido="sim"] .campo__selo {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+/* ── Força da senha ── */
+
+/* As mesmas cinco barras da marca do CALL, que já são um medidor de som. Uma
+   barra que sobe diz o que "média" não diz — e reaproveitar o glifo da marca
+   como instrumento é o tipo de piada visual que o produto pode contar uma vez
+   só, no lugar onde ela ajuda. */
+.forca {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 2px;
+}
+
+.forca__barras {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+  flex: none;
+}
+
+.forca__barras i {
+  width: 3px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--superficie-3);
+  transition: height var(--transicao), background var(--transicao);
+}
+
+/* Altura em V invertido, como no glifo: as do meio são as mais altas. A cor é
+   que conta o nível — a forma é sempre a mesma marca. */
+.forca__barras i:nth-child(1),
+.forca__barras i:nth-child(5) {
+  height: 6px;
+}
+.forca__barras i:nth-child(2),
+.forca__barras i:nth-child(4) {
+  height: 11px;
+}
+.forca__barras i:nth-child(3) {
+  height: 16px;
+}
+
+.forca[data-nivel="1"] i:nth-child(-n + 1),
+.forca[data-nivel="2"] i:nth-child(-n + 2),
+.forca[data-nivel="3"] i:nth-child(-n + 3),
+.forca[data-nivel="4"] i:nth-child(-n + 4),
+.forca[data-nivel="5"] i {
+  background: var(--acento);
+}
+
+.forca[data-nivel="1"] i:nth-child(-n + 1),
+.forca[data-nivel="2"] i:nth-child(-n + 2) {
+  background: var(--perigo);
+}
+
+.forca[data-nivel="5"] i {
+  background: var(--vivo);
+}
+
+.forca__texto {
+  font-size: 11px;
+  color: var(--texto-3);
+  line-height: 1.4;
+}
+
+/* ── Google ── */
+
+.portal__ou {
+  position: relative;
+  margin: 14px 0 10px;
+  text-align: center;
+}
+
+.portal__ou::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid var(--borda);
+}
+
+.portal__ou span {
+  position: relative;
+  padding: 0 10px;
+  background: var(--superficie-1);
+  color: var(--texto-3);
+  font-size: 11px;
+}
+
+/* Branco, como manda a identidade do Google, e é de propósito que ele
+   destoe: é um botão que leva para fora do aplicativo, e parecer nativo aqui
+   seria disfarçar isso. */
+.botao-google {
+  width: 100%;
+  height: 37px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--raio-p);
+  background: #f6f7f9;
+  color: #1f1f1f;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transicao), transform var(--transicao),
+    box-shadow var(--transicao);
+}
+
+.botao-google:hover:not(:disabled) {
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+}
+
+.botao-google:active {
+  transform: translateY(1px);
+}
+
+.botao-google:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.botao-google__g {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* A folha global manda `svg { fill: none; stroke: currentColor }`, que
+   apagaria as quatro cores e ainda riscaria o desenho. */
+.botao-google__g path {
+  stroke: none;
+}
+
+/* ── Rodapé do portal ── */
+
+.portal__rodape {
+  margin-top: 14px;
+  text-align: center;
+}
+
+/* Não é botão: é uma saída, e uma saída não compete com a porta. */
+.elo {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  color: var(--texto-2);
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--texto-3);
+  cursor: pointer;
+  transition: color var(--transicao);
+}
+
+.elo:hover {
+  color: var(--texto);
+}
+
+.portal__nota {
+  margin-top: 5px;
+  color: var(--texto-3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* ── A conta dentro do painel de perfil ── */
+
+.conta-linha {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+}
+
+.conta-linha__glifo {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--acento-suave);
+  border: 1px solid rgba(95, 106, 217, 0.22);
+  color: #a8b0f2;
+}
+
+.conta-linha__glifo svg {
+  width: 16px;
+  height: 16px;
+}
+
+.conta-linha[data-ligada="sim"] .conta-linha__glifo {
+  background: rgba(79, 201, 140, 0.14);
+  border-color: rgba(79, 201, 140, 0.28);
+  color: var(--vivo);
+}
+
+.conta-linha__texto {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+
+.conta-linha__texto strong {
+  font-size: 12.5px;
   font-weight: 600;
 }
 
-.entrada__rodape {
-  margin-top: 18px;
-  color: var(--texto-3);
+.conta-linha__texto span {
   font-size: 11.5px;
-  line-height: 1.5;
-}
-
-.formulario {
-  margin-top: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  color: var(--texto-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ─── Campos ───────────────────────────────────────────────────── */
@@ -528,24 +1082,6 @@ svg {
 .botao:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-#botao-continuar {
-  margin-top: 6px;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 13.5px;
-}
-#botao-continuar svg {
-  width: 15px;
-  height: 15px;
-  transition: transform var(--transicao);
-}
-#botao-continuar:hover svg {
-  transform: translateX(2px);
 }
 
 .botao--hospedar {
@@ -2772,12 +3308,12 @@ select.campo__entrada {
 }
 
 .mascotes--fita .mascote-opcao {
-  padding: 5px 2px;
+  padding: 4px 2px;
 }
 
 .mascotes--fita .mascote-opcao .avatar {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
 }
 
 .mascotes--fita .mascote-opcao__nome {
@@ -3032,6 +3568,27 @@ textarea.campo__area {
   }
   .entrada__recurso {
     text-align: left;
+  }
+}
+
+/* Numa janela baixa a vitrine encolhe antes de qualquer coisa sumir: ela
+   explica o produto, e quem já está preenchendo o formulário decidiu. */
+@media (max-height: 700px) {
+  .entrada {
+    padding: 18px 32px;
+  }
+  .entrada__slogan {
+    margin-top: 16px;
+    font-size: 20px;
+  }
+  .entrada__lead {
+    margin-top: 8px;
+  }
+  .entrada__recursos {
+    margin-top: 20px;
+  }
+  .entrada__recurso {
+    margin-bottom: 12px;
   }
 }
 

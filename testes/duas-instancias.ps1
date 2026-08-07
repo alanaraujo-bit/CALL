@@ -5,12 +5,14 @@
 # o grupo criado pela primeira ja aparece na lista da segunda, que entra nele
 # sem precisar digitar o codigo do convite.
 #
-# Efeito colateral disso, desde que a tela de entrada passou a ser pulada para
-# quem ja tem apelido guardado: a segunda janela herda o apelido da primeira e
-# as duas aparecem como "ana ribeiro". Nao atrapalha o que este roteiro prova
-# -- que duas instancias reais se encontram, conversam e anunciam atividade --
-# e quem cobre identidade separada e o `rodar-perfil.ps1`, com duas pessoas de
-# verdade.
+# Cada janela recebe o proprio apelido por `CALL_APELIDO`, que faz o portal de
+# conta ser pulado e a entrada acontecer sem conta -- este roteiro prova que
+# duas instancias reais se encontram, conversam e anunciam atividade, e nao
+# tem nada a ver com cadastro. Quem cobre contas e o `sinalizacao.test.mjs`.
+#
+# As duas continuam compartilhando o `localStorage`, entao a identidade
+# sorteada e a mesma nas duas; quem cobre identidade separada de verdade e o
+# `rodar-perfil.ps1`.
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -77,6 +79,12 @@ function AbrirInstancia($apelido, $x, $y) {
   # ambiente e o que evita navegar um painel modal por coordenada de clique --
   # e o que garante que este teste nunca toque no servidor de verdade.
   $env:CALL_SERVIDOR = "ws://127.0.0.1:8787"
+  # O apelido tambem vem do ambiente. Antes ele era digitado num campo achado
+  # por coordenada de clique -- e a tela de entrada virou um portal de conta,
+  # com aba, mascote e medidor de senha, ou seja, com outra altura. Uma
+  # variavel de ambiente nao tem altura, e de quebra some a etapa que sozinha
+  # respondia por uma execucao perdida em cada tres.
+  $env:CALL_APELIDO = $apelido
   $p = Start-Process "target\release\call.exe" -PassThru
   Start-Sleep -Seconds 6
   $p.Refresh()
@@ -85,21 +93,12 @@ function AbrirInstancia($apelido, $x, $y) {
   Start-Sleep -Milliseconds 600
 
   $c = Cliente $h
-  # Coordenadas lidas de uma captura da propria janela em 1080x740 (area
-  # cliente de 1064x701), e nao do navegador: o viewport do Edge headless nao
-  # bate com a area cliente do WebView2, e medir la da 46 px de erro na
-  # vertical. Sao so duas agora -- o endereco do servidor saiu daqui e passa
-  # por CALL_SERVIDOR.
-  #
-  # O clique numa area morta antes de tudo nao e supersticao: o Windows recusa
+  # O clique numa area morta nao e supersticao: o Windows recusa
   # SetForegroundWindow a processos em segundo plano, e sem trazer a janela
-  # para a frente primeiro o teclado vai para outro lugar. Sem isto, uma
-  # execucao em cada tres perdia o apelido.
-  [J]::Clique($h, 250, 620)          # area morta da vitrine, so para focar
-  [J]::Clique($h, 794, 276)          # campo de apelido
-  Digitar "^a"; Digitar $apelido
-  [J]::Clique($h, 794, 443)          # Continuar
-  Start-Sleep -Seconds 2
+  # para a frente primeiro o teclado dos passos seguintes vai para outro lugar.
+  # Area vazia da coluna da conversa, que nao tem nada clicavel.
+  [J]::Clique($h, 600, 400)
+  Start-Sleep -Milliseconds 400
   return @{ proc = $p; h = $h; cli = $c }
 }
 

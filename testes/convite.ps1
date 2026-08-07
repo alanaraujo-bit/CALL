@@ -101,18 +101,26 @@ function Digitar($texto) {
 # tela fica intacta. Dali em diante e teclado: a ordem de foco (apelido,
 # "Usar um servidor proprio", campo do servidor, Hospedar, Continuar)
 # sobrevive a mudancas de altura do cartao, que a coordenada nao sobrevive.
+# Atravessa o portal de conta pela saida sem conta -- este roteiro e sobre o
+# esquema `call://`, e nao sobre cadastro.
+#
+# Por ordem de foco, e nao por coordenada: o portal muda de altura conforme a
+# folha a frente, e um clique em pixel fixo erraria o alvo na primeira vez que
+# um campo mudasse de tamanho. A ordem, essa, esta na marcacao e e estavel.
+#
+# O apelido tambem chega por `CALL_APELIDO` quando o processo e aberto por
+# este roteiro; esta funcao existe para o caso em que o aplicativo foi aberto
+# pelo proprio link, pela mao do sistema, sem herdar variavel nenhuma.
 function PreencherEntrada($h, $apelido) {
-  [J]::Clique($h, 794, 311)   # campo de apelido, com a janela em 1080x740
+  [J]::Clique($h, 600, 500)   # area morta, so para trazer a janela a frente
   Start-Sleep -Milliseconds 300
+  # corpo -> aba "Entrar" -> aba "Criar conta" -> campo de apelido
+  Digitar "{TAB 3}"
   Digitar "^a"
   Digitar $apelido
-  Digitar "{TAB}"          # "Usar um servidor proprio"
-  Digitar " "              # abre a secao recolhida
-  Start-Sleep -Milliseconds 400
-  Digitar "{TAB}"          # campo do servidor
-  Digitar "^a"
-  Digitar "ws://127.0.0.1:8787"
-  Digitar "{TAB}{TAB}"     # Hospedar, Continuar
+  # apelido -> 6 mascotes -> e-mail -> senha -> olho -> "Criar minha conta"
+  # -> "Entrar sem conta"
+  Digitar "{TAB 11}"
   Digitar "{ENTER}"
   Start-Sleep -Seconds 2
 }
@@ -211,12 +219,18 @@ function ServidorVivo() {
 
 # ── 1. Dois grupos, criados pela janela real ──────────────────────
 Write-Output "`n--- preparando dois grupos ---"
+# O endereco do servidor saiu da tela de entrada na 0.7.0 e o apelido saiu na
+# 0.8.0. Os dois passam a vir do ambiente: e o que garante que este roteiro
+# nunca toque no servidor de verdade, e o que dispensa preencher um formulario
+# por coordenada de clique.
+$env:CALL_SERVIDOR = "ws://127.0.0.1:8787"
+$env:CALL_APELIDO = "Alan Araujo"
 $app = Start-Process "target\release\call.exe" -PassThru
 $h = Janela $app
 [void][J]::MoveWindow($h, 60, 40, 1080, 740, $true)
 Start-Sleep -Milliseconds 800
 
-PreencherEntrada $h "Alan Araujo"
+Start-Sleep -Seconds 1
 $r = New-Object J+RECT
 [void][J]::GetClientRect($h, [ref]$r)
 $altura = $r.B - $r.T
@@ -254,8 +268,11 @@ Conferir "a janela trocou de grupo: escreveu num canal de equipe" `
 Write-Output "`n--- link com o CALL fechado ---"
 Get-Process call -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
-# Perfil zerado: o convite tera de esperar a tela de entrada ser preenchida,
-# que e o caso de quem clica no link sem nunca ter aberto o CALL.
+# Perfil zerado: o convite tera de esperar o portal de conta ser atravessado,
+# que e o caso de quem clica no link sem nunca ter aberto o CALL. E por isso
+# que a variavel de ambiente sai de cena aqui -- ela pularia justamente a
+# espera que este trecho existe para provar.
+Remove-Item Env:\CALL_APELIDO -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $env:LOCALAPPDATA "br.com.call.app") -Recurse -Force -ErrorAction SilentlyContinue
 
 Start-Process "call://entrar/$codigoEstudio"

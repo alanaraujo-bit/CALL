@@ -521,6 +521,156 @@ try {
   ana.fechar();
   carla.fechar();
   await esperar(200);
+
+  /* ─── Contas ──────────────────────────────────────────────────── */
+
+  console.log("\nContas");
+
+  const balcao = await cliente(null);
+
+  balcao.enviar({
+    tipo: "cadastrar",
+    email: "  Ana@Exemplo.COM ",
+    senha: "segredo-bom-1",
+    apelido: "Ana",
+    avatar: "coruja",
+    bio: "gosto de coruja",
+  });
+  const cadastro = await balcao.aguardar("sessao", 4000);
+  conferir(!!cadastro?.token, "o cadastro devolve um token de sessão");
+  conferir(cadastro?.conta?.email === "ana@exemplo.com", "o e-mail é normalizado em minúsculas");
+  conferir(cadastro?.conta?.apelido === "Ana", "o perfil escolhido no cadastro fica guardado");
+  conferir(cadastro?.conta?.avatar === "coruja", "com o mascote junto");
+  conferir(cadastro?.conta?.id?.startsWith("conta-"), "a conta ganha um identificador próprio");
+  conferir(
+    cadastro?.conta?.senha === undefined && cadastro?.conta?.google === false,
+    "a senha não volta para o cliente, nem em forma de hash"
+  );
+
+  balcao.enviar({ tipo: "cadastrar", email: "ana@exemplo.com", senha: "outra-senha-9", apelido: "Ana 2" });
+  const repetido = await balcao.aguardar("recusa", 4000);
+  conferir(repetido?.campo === "email", "o e-mail ocupado é recusado no campo do e-mail");
+
+  balcao.enviar({ tipo: "cadastrar", email: "curta@exemplo.com", senha: "1234567", apelido: "Curta" });
+  conferir((await balcao.aguardar("recusa"))?.campo === "senha", "senha de sete caracteres não passa");
+
+  balcao.enviar({ tipo: "cadastrar", email: "sem-arroba", senha: "segredo-bom-1", apelido: "X" });
+  conferir((await balcao.aguardar("recusa"))?.campo === "email", "e-mail sem forma de e-mail não passa");
+
+  balcao.enviar({ tipo: "cadastrar", email: "sem-nome@exemplo.com", senha: "segredo-bom-1", apelido: "  " });
+  conferir((await balcao.aguardar("recusa"))?.campo === "apelido", "cadastro sem apelido não passa");
+
+  balcao.enviar({ tipo: "entrar-conta", email: "ana@exemplo.com", senha: "segredo-bom-1" });
+  const login = await balcao.aguardar("sessao", 4000);
+  conferir(!!login?.token, "a senha certa abre uma sessão");
+  conferir(login?.token !== cadastro?.token, "cada entrada abre uma sessão nova");
+  conferir(login?.conta?.id === cadastro?.conta?.id, "e é a mesma conta");
+
+  balcao.enviar({ tipo: "entrar-conta", email: "ana@exemplo.com", senha: "senha-errada-1" });
+  const errada = await balcao.aguardar("recusa", 4000);
+  balcao.enviar({ tipo: "entrar-conta", email: "ninguem@exemplo.com", senha: "senha-errada-1" });
+  const inexistente = await balcao.aguardar("recusa", 4000);
+  conferir(errada?.campo === "senha", "a senha errada é recusada");
+  conferir(
+    errada?.motivo === inexistente?.motivo,
+    "e-mail sem conta e senha errada dão a mesma resposta — o servidor não conta quem tem conta aqui"
+  );
+
+  balcao.enviar({ tipo: "retomar", token: login.token });
+  conferir((await balcao.aguardar("sessao"))?.conta?.id === login.conta.id, "o token retoma a sessão");
+  balcao.enviar({ tipo: "retomar", token: "token-inventado" });
+  conferir(!!(await balcao.aguardar("sem-sessao")), "um token inventado não retoma nada");
+
+  balcao.enviar({ tipo: "google-config" });
+  const google = await balcao.aguardar("google");
+  conferir(
+    google?.disponivel === false,
+    "sem as variáveis do Google, o servidor diz que o botão não existe"
+  );
+
+  balcao.enviar({
+    tipo: "guardar",
+    token: login.token,
+    apelido: "Aninha",
+    bio: "mudei de ideia",
+    atalhos: [{ codigo: "XXXXXXXXXX", nome: "Grupo à mão" }, { codigo: "curto", nome: "lixo" }],
+  });
+  const guardada = await balcao.aguardar("conta");
+  conferir(guardada?.conta?.apelido === "Aninha", "o perfil gravado na conta volta atualizado");
+  conferir(
+    guardada?.conta?.atalhos?.length === 1,
+    "um código com forma errada não entra na lista de grupos da conta"
+  );
+
+  balcao.enviar({ tipo: "guardar", token: "token-inventado", apelido: "Invasora" });
+  conferir(!!(await balcao.aguardar("sem-sessao")), "sem token válido não se grava nada");
+
+  balcao.fechar();
+
+  // Entrar num grupo com a conta: é aqui que o identificador do cliente
+  // deixa de valer, e é isso que faz a autoria sobreviver a uma reinstalação.
+  const comConta = await cliente({
+    tipo: "entrar",
+    codigo,
+    token: login.token,
+    usuario: "identidade-mentirosa",
+    apelido: "Aninha",
+    avatar: "coruja",
+    bio: "mudei de ideia",
+  });
+  const bemVindaConta = await comConta.aguardar("bem-vindo", 4000);
+  conferir(
+    bemVindaConta?.eu?.usuario === login.conta.id,
+    "com token, o `usuario` é o da conta e não o que o cliente disse ser"
+  );
+  conferir(!!bemVindaConta?.conta, "a saudação com token volta com a conta inteira");
+  conferir(
+    bemVindaConta?.conta?.atalhos?.some((a) => a.codigo === codigo),
+    "e o grupo em que se acabou de entrar já está na lista dela"
+  );
+
+  // O prefixo `conta-` é reservado a quem provou o token. Sem esta recusa,
+  // bastaria dizer-se `conta-XYZ` para assinar mensagens como outra pessoa.
+  const impostor = await cliente({
+    tipo: "entrar",
+    codigo,
+    usuario: login.conta.id,
+    apelido: "Impostor",
+  });
+  const bemVindoImpostor = await impostor.aguardar("bem-vindo", 4000);
+  conferir(
+    bemVindoImpostor?.eu?.usuario !== login.conta.id,
+    "dizer-se dono de uma conta sem token não faz de ninguém dono dela"
+  );
+  conferir(
+    !bemVindoImpostor?.conta,
+    "e quem se diz assim não recebe conta nenhuma de volta"
+  );
+  impostor.fechar();
+  await esperar(150);
+
+  comConta.enviar({ tipo: "perfil", token: login.token, apelido: "Ana de novo", avatar: "raposa", bio: "" });
+  await esperar(150);
+  comConta.fechar();
+  await esperar(150);
+
+  const conferindo = await cliente(null);
+  conferindo.enviar({ tipo: "retomar", token: login.token });
+  const depois = await conferindo.aguardar("sessao", 4000);
+  conferir(
+    depois?.conta?.apelido === "Ana de novo" && depois?.conta?.avatar === "raposa",
+    "trocar de perfil dentro do grupo grava na conta"
+  );
+
+  conferindo.enviar({ tipo: "sair-conta", token: login.token });
+  await conferindo.aguardar("sem-sessao");
+  conferindo.enviar({ tipo: "retomar", token: login.token });
+  conferir(
+    !!(await conferindo.aguardar("sem-sessao")),
+    "sair da conta derruba a sessão no servidor, e não só no computador"
+  );
+  conferindo.fechar();
+  await esperar(200);
 } finally {
   servidor.kill();
   await esperar(300);
@@ -534,6 +684,31 @@ conferir(existsSync(join(PASTA, "mensagens.jsonl")), "as mensagens vão para men
 conferir(
   !readFileSync(join(PASTA, "grupos.json"), "utf8").startsWith("﻿"),
   "o arquivo de grupos não sai com marca de ordem de bytes"
+);
+conferir(existsSync(join(PASTA, "contas.json")), "as contas vão para contas.json");
+conferir(existsSync(join(PASTA, "sessoes.json")), "e as sessões para sessoes.json");
+
+const arquivoDeContas = readFileSync(join(PASTA, "contas.json"), "utf8");
+conferir(
+  !arquivoDeContas.includes("segredo-bom-1"),
+  "a senha não aparece em claro no arquivo de contas"
+);
+conferir(
+  arquivoDeContas.includes("$argon2id$"),
+  "o que está lá é um hash Argon2id, e não a senha nem um resumo simples"
+);
+// O token tem 40 caracteres do alfabeto do convite; a marca gravada tem 64
+// hexadecimais. Conferir a forma é o que prova que o arquivo não guarda o
+// token — e não uma leitura otimista de que ele "não parece estar lá".
+const sessoesGravadas = JSON.parse(readFileSync(join(PASTA, "sessoes.json"), "utf8"));
+conferir(
+  sessoesGravadas.length > 0 &&
+    sessoesGravadas.every((s) => /^[0-9a-f]{64}$/.test(s.marca) && s.token === undefined),
+  "as sessões guardam a impressão do token, e não o token"
+);
+conferir(
+  sessoesGravadas.every((s) => s.expira > Date.now()),
+  "e cada uma sabe quando vence"
 );
 
 servidor = await subirServidor();
@@ -559,6 +734,24 @@ try {
     historico?.mensagens?.some((m) => m.autor === "elis-006" && m.avatar === "coruja"),
     "o mascote de quem escreveu sobrevive ao reinício"
   );
+
+  // A conta também atravessa o reinício — e é ela que carrega os grupos.
+  const voltando = await cliente(null);
+  voltando.enviar({ tipo: "entrar-conta", email: "ana@exemplo.com", senha: "segredo-bom-1" });
+  const denovo = await voltando.aguardar("sessao", 4000);
+  conferir(!!denovo?.token, "a conta sobrevive ao fechamento do servidor");
+  conferir(denovo?.conta?.apelido === "Ana de novo", "com o perfil que tinha");
+  conferir(
+    denovo?.conta?.atalhos?.some((a) => a.codigo === codigo),
+    "e com a lista de grupos, que é o que uma conta promete guardar"
+  );
+
+  voltando.enviar({ tipo: "entrar-conta", email: "ana@exemplo.com", senha: "senha-errada-1" });
+  conferir(
+    (await voltando.aguardar("recusa", 4000))?.campo === "senha",
+    "e a senha errada continua sendo recusada depois do reinício"
+  );
+  voltando.fechar();
 
   ana.fechar();
   await esperar(200);
