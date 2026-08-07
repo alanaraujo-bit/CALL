@@ -1,0 +1,66 @@
+<!doctype html>
+<!--
+  Fonte da imagem de cabeçalho do instalador NSIS (150x57).
+  O NSIS não deixa pintar o fundo das páginas internas — elas continuam
+  claras, no padrão do Windows. Por isso este cabeçalho usa fundo claro
+  também: um fundo escuro aqui ficaria como um remendo colado sobre a página.
+  A marca entra pela cor do acento, não pelo contraste do fundo.
+
+  Para regerar:
+    msedge --headless=new --disable-gpu --hide-scrollbars \
+      --window-size=150,57 --screenshot=cabecalho.png cabecalho.html
+    depois converter cabecalho.png -> cabecalho.bmp (24bpp) via PowerShell.
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 150px;
+        height: 57px;
+        overflow: hidden;
+        background: #f4f5f6;
+        font-family: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI",
+          system-ui, -apple-system, Arial, sans-serif;
+      }
+      .linha {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        padding-right: 14px;
+      }
+      .glifo {
+        display: flex;
+        align-items: center;
+        gap: 2.5px;
+        height: 20px;
+      }
+      .glifo i {
+        width: 3px;
+        border-radius: 2px;
+        background: #5f6ad9;
+        display: block;
+      }
+      .glifo i:nth-child(1) { height: 8px; }
+      .glifo i:nth-child(2) { height: 14px; }
+      .glifo i:nth-child(3) { height: 20px; }
+      .glifo i:nth-child(4) { height: 12px; }
+      .glifo i:nth-child(5) { height: 7px; }
+      .nome {
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: #1a1c20;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="linha">
+      <span class="glifo"><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="nome">CALL</span>
+    </div>
+  </body>
+</html>

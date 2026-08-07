@@ -1,0 +1,353 @@
+<!doctype html>
+<!--
+  Fonte do cartão de compartilhamento (Open Graph / Twitter Card) do CALL.
+
+  Não é uma imagem desenhada num editor: é a mesma identidade visual do
+  aplicativo e do site — HTML e CSS reais, capturados em 1200x630 por um
+  navegador headless. A mesma lógica da maquete do hero em docs/index.html:
+  "não é captura de tela, é a interface".
+
+  Para regerar depois de editar:
+    msedge --headless=new --disable-gpu --hide-scrollbars \
+      --window-size=1200,630 --screenshot=docs/imagens/cartao.png \
+      docs/imagens/cartao.html
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        background: #0e0f11;
+        font-family: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI",
+          system-ui, -apple-system, "Inter", "Helvetica Neue", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .fundo {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(52% 60% at 82% 8%, rgba(95, 106, 217, 0.24), transparent 60%),
+          radial-gradient(46% 50% at 6% 96%, rgba(79, 201, 140, 0.09), transparent 62%),
+          #0e0f11;
+      }
+
+      /* Malha de pontos sutil, ecoando a topologia do fundo do hero. */
+      .malha {
+        position: absolute;
+        inset: 0;
+        opacity: 0.5;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.055) 1px, transparent 1.4px);
+        background-size: 34px 34px;
+        background-position: -10px -10px;
+        -webkit-mask-image: radial-gradient(60% 75% at 68% 40%, #000 0%, transparent 78%);
+        mask-image: radial-gradient(60% 75% at 68% 40%, #000 0%, transparent 78%);
+      }
+
+      .miolo {
+        position: relative;
+        height: 100%;
+        padding: 76px 84px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .marca {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .marca__glifo {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        height: 40px;
+      }
+      .marca__glifo i {
+        width: 6px;
+        border-radius: 3px;
+        background: #5f6ad9;
+        display: block;
+      }
+      .marca__glifo i:nth-child(1) { height: 15px; background: #7b84e4; }
+      .marca__glifo i:nth-child(2) { height: 27px; background: #6b75dd; }
+      .marca__glifo i:nth-child(3) { height: 40px; background: #5f6ad9; }
+      .marca__glifo i:nth-child(4) { height: 23px; background: #6b75dd; }
+      .marca__glifo i:nth-child(5) { height: 12px; background: #7b84e4; }
+
+      .marca__nome {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: #e9ebee;
+      }
+
+      .selo {
+        margin-top: 30px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        padding: 7px 15px 7px 12px;
+        border-radius: 999px;
+        background: rgba(95, 106, 217, 0.14);
+        border: 1px solid rgba(95, 106, 217, 0.32);
+        font-size: 15px;
+        font-weight: 600;
+        color: #a8b0f2;
+      }
+      .selo i {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: #4fc98c;
+        box-shadow: 0 0 0 4px rgba(79, 201, 140, 0.18);
+      }
+
+      .titulo {
+        margin-top: 26px;
+        font-size: 62px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        line-height: 1.08;
+        color: #f4f5f7;
+        max-width: 780px;
+      }
+      .titulo em {
+        font-style: normal;
+        color: #98a1f5;
+      }
+
+      .lead {
+        margin-top: 22px;
+        max-width: 620px;
+        font-size: 22px;
+        line-height: 1.5;
+        color: #9ba1a9;
+      }
+
+      .recursos {
+        margin-top: 40px;
+        display: flex;
+        gap: 14px;
+      }
+
+      .recurso {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 18px 11px 13px;
+        border-radius: 12px;
+        background: #141619;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+      }
+      .recurso svg {
+        width: 20px;
+        height: 20px;
+        flex: none;
+        stroke: #a8b0f2;
+        fill: none;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .recurso span {
+        font-size: 17px;
+        font-weight: 600;
+        color: #e9ebee;
+        white-space: nowrap;
+      }
+
+      .rodape {
+        position: absolute;
+        right: 84px;
+        bottom: 54px;
+        font-size: 16px;
+        color: #6a7079;
+        letter-spacing: 0.02em;
+      }
+      .rodape strong {
+        color: #9ba1a9;
+      }
+
+      /* Vislumbre da interface real, e não um retângulo decorativo: mesma
+         estrutura de colunas do aplicativo, só que resumida. Ancorada fora
+         do centro de leitura para não competir com o título. */
+      .vislumbre {
+        position: absolute;
+        top: 66px;
+        right: -64px;
+        width: 560px;
+        height: 500px;
+        transform: rotate(4.5deg);
+        border-radius: 18px;
+        overflow: hidden;
+        background: #141619;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        box-shadow: 0 50px 120px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.2);
+      }
+      .vislumbre__barra {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 14px;
+        background: #191c20;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .vislumbre__ponto {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #2a2e35;
+      }
+      .vislumbre__corpo {
+        display: flex;
+        height: calc(100% - 34px);
+      }
+      .vislumbre__canais {
+        width: 168px;
+        flex: none;
+        padding: 16px 12px;
+        border-right: 1px solid rgba(255, 255, 255, 0.06);
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .vislumbre__canal {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 9px;
+        border-radius: 7px;
+        font-size: 12px;
+        color: #9ba1a9;
+      }
+      .vislumbre__canal i {
+        width: 12px;
+        height: 12px;
+        border-radius: 4px;
+        background: #2a2e35;
+        flex: none;
+      }
+      .vislumbre__canal--ativo {
+        background: rgba(95, 106, 217, 0.16);
+        color: #cdd2f7;
+      }
+      .vislumbre__canal--ativo i {
+        background: #5f6ad9;
+      }
+      .vislumbre__canal--voz i {
+        background: #4fc98c;
+        border-radius: 999px;
+      }
+      .vislumbre__palco {
+        flex: 1;
+        padding: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .vislumbre__tela {
+        width: 100%;
+        height: 100%;
+        border-radius: 12px;
+        background:
+          radial-gradient(60% 90% at 30% 20%, rgba(95, 106, 217, 0.35), transparent 60%),
+          radial-gradient(50% 70% at 80% 80%, rgba(79, 201, 140, 0.18), transparent 65%),
+          #0e0f11;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        position: relative;
+      }
+      .vislumbre__etiqueta {
+        position: absolute;
+        left: 14px;
+        bottom: 14px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(14, 15, 17, 0.75);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        font-size: 12px;
+        color: #cfd2d8;
+      }
+      .vislumbre__etiqueta i {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: #4fc98c;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="fundo"></div>
+    <div class="malha"></div>
+
+    <div class="vislumbre">
+      <div class="vislumbre__barra">
+        <span class="vislumbre__ponto"></span>
+        <span class="vislumbre__ponto"></span>
+        <span class="vislumbre__ponto"></span>
+      </div>
+      <div class="vislumbre__corpo">
+        <div class="vislumbre__canais">
+          <div class="vislumbre__canal"><i></i>geral</div>
+          <div class="vislumbre__canal vislumbre__canal--ativo"><i></i>projetos</div>
+          <div class="vislumbre__canal"><i></i>memes</div>
+          <div class="vislumbre__canal vislumbre__canal--voz"><i></i>Sala de voz</div>
+        </div>
+        <div class="vislumbre__palco">
+          <div class="vislumbre__tela">
+            <span class="vislumbre__etiqueta"><i></i>transmitindo</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="miolo">
+      <div class="marca">
+        <span class="marca__glifo"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="marca__nome">CALL</span>
+      </div>
+
+      <span class="selo"><i></i>Windows · grátis · código aberto</span>
+
+      <h1 class="titulo">Sua equipe,<br /><em>num só lugar.</em></h1>
+
+      <p class="lead">
+        Grupos com canais de texto e voz, e transmissão de tela — tudo
+        trafegando direto entre os participantes.
+      </p>
+
+      <div class="recursos">
+        <div class="recurso">
+          <svg viewBox="0 0 20 20"><path d="M11 4L6.5 7.5H3v5h3.5L11 16z" /><path d="M14 7.5a4 4 0 0 1 0 5" /></svg>
+          <span>Voz</span>
+        </div>
+        <div class="recurso">
+          <svg viewBox="0 0 20 20"><path d="M7 3L5 17M15 3l-2 14M3.5 7.5h14M2.5 12.5h14" /></svg>
+          <span>Texto</span>
+        </div>
+        <div class="recurso">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M9 21h6" /></svg>
+          <span>Transmissão de tela</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="rodape"><strong>alanaraujo-bit.github.io</strong>/CALL</div>
+  </body>
+</html>

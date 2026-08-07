@@ -27,6 +27,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["call"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/alanaraujo-bit/CALL/releases/latest/download/latest.json"
@@ -47,7 +52,10 @@
       "nsis": {
         "installMode": "currentUser",
         "languages": ["PortugueseBR"],
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "nsis/cabecalho.bmp",
+        "sidebarImage": "nsis/lateral.bmp"
       }
     }
   }

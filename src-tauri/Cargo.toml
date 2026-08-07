@@ -16,6 +16,13 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
+# Protocolo call://, para o convite virar um clique em vez de um código
+# colado a mao. O single-instance e quem entrega a URL quando o aplicativo
+# ja esta aberto: sem ele, cada clique no link abriria uma instancia nova.
+tauri-plugin-deep-link = "2"
+# A opcao `deep-link` e quem faz a segunda instancia entregar a URL a primeira
+# em vez de so morrer: sem ela, clicar no link com o CALL aberto nao faria nada.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # Sem rustls e sem zip: no Windows o TLS vem do proprio sistema (Schannel) e o
 # pacote de atualizacao e o instalador .exe, nao um arquivo compactado. As duas
 # opcoes padrao custariam centenas de KB no instalador sem servir a nada aqui.

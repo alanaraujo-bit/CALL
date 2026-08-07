@@ -1,0 +1,123 @@
+<!doctype html>
+<!--
+  Fonte da imagem lateral do instalador NSIS (164x314) — a bem-vinda e o
+  fim da instalação. Este painel é imagem cheia, sem texto do sistema por
+  cima, então é o único lugar do instalador onde a identidade escura do
+  CALL aparece inteira.
+
+  Para regerar:
+    msedge --headless=new --disable-gpu --hide-scrollbars \
+      --window-size=164,314 --screenshot=lateral.png lateral.html
+    depois converter lateral.png -> lateral.bmp (24bpp) via PowerShell.
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 164px;
+        height: 314px;
+        overflow: hidden;
+        background: #0e0f11;
+        font-family: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI",
+          system-ui, -apple-system, Arial, sans-serif;
+      }
+      .fundo {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(85% 40% at 50% 12%, rgba(95, 106, 217, 0.32), transparent 62%),
+          radial-gradient(70% 34% at 50% 100%, rgba(79, 201, 140, 0.12), transparent 65%),
+          #0e0f11;
+      }
+      .malha {
+        position: absolute;
+        inset: 0;
+        opacity: 0.4;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.07) 1px, transparent 1.3px);
+        background-size: 22px 22px;
+      }
+      .miolo {
+        position: relative;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-top: 56px;
+      }
+      .glifo {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        height: 34px;
+      }
+      .glifo i {
+        width: 5px;
+        border-radius: 2.5px;
+        background: #5f6ad9;
+        display: block;
+      }
+      .glifo i:nth-child(1) { height: 13px; background: #7b84e4; }
+      .glifo i:nth-child(2) { height: 23px; background: #6b75dd; }
+      .glifo i:nth-child(3) { height: 34px; background: #5f6ad9; }
+      .glifo i:nth-child(4) { height: 20px; background: #6b75dd; }
+      .glifo i:nth-child(5) { height: 10px; background: #7b84e4; }
+
+      .nome {
+        margin-top: 16px;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: #f4f5f7;
+      }
+
+      .tagline {
+        margin-top: 18px;
+        width: 118px;
+        text-align: center;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #aeb3f2;
+        font-weight: 600;
+      }
+
+      .lista {
+        margin-top: 40px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 128px;
+      }
+      .item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        color: #9ba1a9;
+      }
+      .item i {
+        width: 5px;
+        height: 5px;
+        border-radius: 999px;
+        background: #4fc98c;
+        flex: none;
+        box-shadow: 0 0 0 3px rgba(79, 201, 140, 0.15);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="fundo"></div>
+    <div class="malha"></div>
+    <div class="miolo">
+      <span class="glifo"><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="nome">CALL</span>
+      <p class="tagline">Sua equipe,<br />num só lugar.</p>
+      <div class="lista">
+        <div class="item"><i></i>Grupos com canais</div>
+        <div class="item"><i></i>Voz e texto</div>
+        <div class="item"><i></i>Transmissão de tela</div>
+      </div>
+    </div>
+  </body>
+</html>

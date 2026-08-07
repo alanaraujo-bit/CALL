@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Convite para o CALL</title>
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#0e0f11" />
+
+    <!-- Sem og:image próprio: o cartão da home já é a prévia de qualquer link
+         do domínio para quem não define o seu. Um convite não precisa de
+         imagem nova — precisa do código, rápido, para quem já viu o link no
+         WhatsApp e só quer entrar. -->
+    <meta property="og:title" content="Você foi convidado para o CALL" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://alanaraujo-bit.github.io/CALL/imagens/cartao.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="stylesheet" href="../estilo.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e0f11'/%3E%3Cg fill='%235f6ad9'%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5'/%3E%3Crect x='12' y='9' width='3' height='14' rx='1.5'/%3E%3Crect x='17' y='6' width='3' height='20' rx='1.5'/%3E%3Crect x='22' y='11' width='3' height='10' rx='1.5'/%3E%3C/g%3E%3C/svg%3E"
+    />
+  </head>
+  <body class="pagina-convite">
+    <div class="pagina-convite__fundo" aria-hidden="true"></div>
+
+    <main class="pagina-convite__cartao">
+      <a class="marca marca--convite" href="../">
+        <span class="marca__glifo" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="marca__nome">CALL</span>
+      </a>
+
+      <p class="pagina-convite__saudacao" id="saudacao">Você foi convidado para um grupo.</p>
+
+      <div class="pagina-convite__codigo" id="bloco-codigo" hidden>
+        <span class="pagina-convite__codigo-rotulo">Código do convite</span>
+        <div class="pagina-convite__codigo-linha">
+          <span class="pagina-convite__codigo-valor" id="valor-codigo">—</span>
+          <button class="botao botao--sutil botao--pequeno" type="button" id="botao-copiar">
+            Copiar
+          </button>
+        </div>
+      </div>
+
+      <div class="pagina-convite__vazio" id="bloco-vazio" hidden>
+        <p>Este link não trouxe um código de convite.</p>
+        <p>Peça para quem te chamou reenviar o link, ou visite a página do CALL.</p>
+      </div>
+
+      <div class="pagina-convite__acoes" id="acoes">
+        <button class="botao botao--primario botao--grande" type="button" id="botao-abrir">
+          <span>Abrir no CALL</span>
+        </button>
+        <a class="botao botao--sutil botao--grande" id="botao-baixar"
+           href="https://github.com/alanaraujo-bit/CALL/releases/latest">
+          <span>Baixar o CALL para Windows</span>
+        </a>
+      </div>
+
+      <p class="pagina-convite__aviso" id="aviso" aria-live="polite"></p>
+
+      <p class="pagina-convite__rodape">
+        Áudio, vídeo e transmissão de tela trafegam direto entre os participantes —
+        o CALL nunca vê o conteúdo da sua conversa.
+      </p>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const parametros = new URLSearchParams(location.search);
+      const codigo = (parametros.get("c") || "").trim().toUpperCase();
+      const grupo = (parametros.get("g") || "").trim();
+      const apelido = (parametros.get("a") || "").trim();
+
+      if (codigo) {
+        $("valor-codigo").textContent = codigo;
+        $("bloco-codigo").hidden = false;
+
+        $("saudacao").textContent =
+          apelido && grupo
+            ? `${apelido} te chamou para o grupo “${grupo}”.`
+            : grupo
+              ? `Você foi convidado para o grupo “${grupo}”.`
+              : "Você foi convidado para um grupo no CALL.";
+
+        document.title = grupo ? `Convite para "${grupo}" — CALL` : "Convite para o CALL";
+      } else {
+        $("bloco-vazio").hidden = false;
+        $("acoes").hidden = true;
+        $("saudacao").textContent = "Link de convite incompleto";
+      }
+
+      function avisar(texto) {
+        $("aviso").textContent = texto;
+      }
+
+      $("botao-copiar")?.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(codigo);
+          avisar("Código copiado.");
+        } catch {
+          // Clipboard API pode estar bloqueada (navegador embutido do
+          // WhatsApp, por exemplo). Selecionar o texto é o que sobra.
+          const alcance = document.createRange();
+          alcance.selectNodeContents($("valor-codigo"));
+          const selecao = getSelection();
+          selecao.removeAllRanges();
+          selecao.addRange(alcance);
+          avisar("Não copiou sozinho — o código já está selecionado, use Ctrl+C.");
+        }
+      });
+
+      $("botao-abrir")?.addEventListener("click", () => {
+        if (!codigo) return;
+
+        avisar("Abrindo o CALL…");
+
+        // Sem servidor por trás desta página, não há como saber se o
+        // aplicativo está instalado. O truque de sempre: tentar abrir o
+        // protocolo e, se a aba continuar visível depois de um tempo, é
+        // porque ninguém atendeu — provavelmente não está instalado.
+        let saiu = false;
+        const aoEsconder = () => {
+          saiu = true;
+        };
+        document.addEventListener("visibilitychange", aoEsconder, { once: true });
+        window.addEventListener("blur", aoEsconder, { once: true });
+
+        const destino = new URL(`call://entrar/${encodeURIComponent(codigo)}`);
+        if (grupo) destino.searchParams.set("g", grupo);
+        location.href = destino.toString();
+
+        setTimeout(() => {
+          document.removeEventListener("visibilitychange", aoEsconder);
+          window.removeEventListener("blur", aoEsconder);
+          if (!saiu) {
+            avisar("Não abriu sozinho? Talvez o CALL ainda não esteja instalado nesta máquina.");
+          }
+        }, 1800);
+      });
+    </script>
+  </body>
+</html>

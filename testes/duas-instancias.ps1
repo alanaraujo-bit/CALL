@@ -63,6 +63,9 @@ function Cliente($h) {
 }
 
 function AbrirInstancia($apelido, $x, $y) {
+  # Sem isto a segunda chamada morreria na partida: o aplicativo passou a ser
+  # de instancia unica para que o link `call://` chegue a janela ja aberta.
+  $env:CALL_INSTANCIAS_MULTIPLAS = "1"
   $p = Start-Process "target\release\call.exe" -PassThru
   Start-Sleep -Seconds 6
   $p.Refresh()
