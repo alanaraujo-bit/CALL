@@ -1742,6 +1742,382 @@ svg {
 
 /* ─── Janelas estreitas ────────────────────────────────────────── */
 
+/* ═══ Ajustes de voz e vídeo ══════════════════════════════════════ */
+
+.perfil .icone {
+  /* Empurrado para a borda: o nome do meio pode ser longo, e o botão não deve
+     ser o que encolhe. */
+  margin-left: auto;
+  flex: none;
+}
+
+.ajustes {
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-g);
+  animation: surgir 180ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.ajustes__topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 0;
+}
+
+.ajustes__titulo {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.ajustes__abas {
+  display: flex;
+  gap: 4px;
+  padding: 14px 20px 0;
+  border-bottom: 1px solid var(--borda);
+}
+
+.aba {
+  border: 0;
+  background: none;
+  color: var(--texto-3);
+  font-size: 12.5px;
+  padding: 7px 10px 9px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color var(--transicao), border-color var(--transicao);
+}
+
+.aba:hover {
+  color: var(--texto-2);
+}
+
+.aba[aria-selected="true"] {
+  color: var(--texto);
+  border-bottom-color: var(--acento);
+}
+
+.ajustes__corpo {
+  padding: 18px 20px 20px;
+  overflow-y: auto;
+}
+
+.ajustes__risco {
+  border: 0;
+  border-top: 1px solid var(--borda);
+  margin: 16px 0;
+}
+
+.ajuste + .ajuste,
+.chave + .ajuste,
+.ajuste + .chave,
+.chave + .chave {
+  margin-top: 14px;
+}
+
+.ajuste--recuado {
+  margin-left: 30px;
+  padding-left: 12px;
+  border-left: 1px solid var(--borda);
+}
+
+.ajuste__cabecalho {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.ajuste__rotulo {
+  display: block;
+  font-size: 12px;
+  color: var(--texto-2);
+  margin-bottom: 6px;
+}
+
+.ajuste__cabecalho .ajuste__rotulo {
+  margin-bottom: 0;
+}
+
+.ajuste__valor {
+  font-size: 11.5px;
+  color: var(--texto-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ajuste__dica {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--texto-3);
+}
+
+.ajuste__dica--solta {
+  margin-top: 16px;
+}
+
+select.campo__entrada {
+  appearance: none;
+  /* A seta é desenhada aqui porque a nativa do WebView2 vem clara e destoa do
+     resto da folha. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--texto-3) 50%),
+    linear-gradient(135deg, var(--texto-3) 50%, transparent 50%);
+  background-position: calc(100% - 15px) center, calc(100% - 10px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 30px;
+  cursor: pointer;
+}
+
+/* ── Medidor de entrada ── */
+
+.medidor {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--superficie-3);
+  overflow: hidden;
+}
+
+.medidor__nivel {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: 999px;
+  background: var(--texto-3);
+  /* Sem transição na descida o medidor pisca; com transição longa ele mente
+     sobre o ataque. 60 ms acompanha a voz e não treme. */
+  transition: width 60ms linear, background-color var(--transicao);
+}
+
+.medidor[data-aberta="sim"] .medidor__nivel {
+  background: var(--vivo);
+}
+
+/* Piso de ruído medido: a sombra do que a porta considera silêncio. */
+.medidor__piso {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.medidor__limiar {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  left: 0;
+  background: var(--acento);
+  transition: left 200ms linear;
+}
+
+/* ── Deslizantes ── */
+
+.deslizante {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  background: none;
+  cursor: pointer;
+}
+
+.deslizante::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--superficie-3);
+}
+
+.deslizante::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--texto-2);
+  border: 0;
+  transition: background-color var(--transicao);
+}
+
+.deslizante:hover::-webkit-slider-thumb {
+  background: var(--texto);
+}
+
+.deslizante:focus-visible::-webkit-slider-thumb {
+  background: var(--acento);
+}
+
+/* ── Chaves ── */
+
+.chave {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.chave input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chave__marca {
+  flex: none;
+  position: relative;
+  width: 30px;
+  height: 17px;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda-forte);
+  transition: background-color var(--transicao), border-color var(--transicao);
+}
+
+.chave__marca::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--texto-3);
+  transition: transform var(--transicao), background-color var(--transicao);
+}
+
+.chave input:checked + .chave__marca {
+  background: var(--acento-suave);
+  border-color: var(--acento);
+}
+
+.chave input:checked + .chave__marca::after {
+  transform: translateX(13px);
+  background: var(--acento);
+}
+
+.chave input:focus-visible + .chave__marca {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+.chave__texto {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chave__texto strong {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.chave__texto span {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--texto-3);
+}
+
+/* ── Escolhas em linha e perfis ── */
+
+.opcoes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+
+.opcao {
+  border: 1px solid var(--borda);
+  background: var(--superficie-2);
+  border-radius: var(--raio-p);
+  padding: 7px 4px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--transicao), background-color var(--transicao);
+}
+
+.opcao__nome {
+  display: block;
+  font-size: 11.5px;
+}
+
+.opcao__detalhe {
+  display: block;
+  font-size: 10.5px;
+  color: var(--texto-3);
+  margin-top: 1px;
+}
+
+.opcao:hover {
+  border-color: var(--borda-forte);
+}
+
+.opcao[aria-pressed="true"] {
+  border-color: var(--acento);
+  background: var(--acento-suave);
+}
+
+.perfis {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.perfil-tela {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid var(--borda);
+  background: var(--superficie-2);
+  border-radius: var(--raio-m);
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transicao), background-color var(--transicao);
+}
+
+.perfil-tela:hover {
+  border-color: var(--borda-forte);
+}
+
+.perfil-tela[aria-pressed="true"] {
+  border-color: var(--acento);
+  background: var(--acento-suave);
+}
+
+.perfil-tela__texto {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.perfil-tela__nome {
+  font-size: 12.5px;
+}
+
+.perfil-tela__resumo {
+  font-size: 11.5px;
+  color: var(--texto-3);
+}
+
+.perfil-tela__detalhe {
+  flex: none;
+  font-size: 11px;
+  color: var(--texto-2);
+  font-variant-numeric: tabular-nums;
+}
+
 /* No fim da folha de propósito: estas regras precisam vencer o `display` que
    cada coluna declara acima, e a especificidade das duas é a mesma. */
 

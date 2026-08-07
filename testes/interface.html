@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Teste da interface de ajustes</title>
+  </head>
+  <body>
+    <!--
+      Carrega a aplicação real num quadro e conduz o painel de ajustes.
+
+      A suíte da malha exercita o motor; esta exercita a interface — que é onde
+      moram os erros que só aparecem em tempo de execução: um `id` trocado, um
+      ouvinte ligado a um elemento que ainda não existe, um `await` faltando.
+      O `iframe` é o que permite ver o console e o DOM da aplicação de fora sem
+      instrumentá-la por dentro.
+    -->
+    <iframe id="app" src="/src/index.html" style="width: 1100px; height: 720px; border: 0"></iframe>
+
+    <script type="module">
+      const entregar = (dados, rota = "/resultado") =>
+        fetch(`http://127.0.0.1:8123${rota}`, {
+          method: "POST",
+          body: JSON.stringify(dados, null, 2),
+        }).catch(() => {});
+
+      const relatorio = [];
+      let falhas = 0;
+      const conferir = (condicao, descricao) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: !!condicao, descricao });
+      };
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+      const aguardar = async (teste, limite = 6000) => {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          if (await teste()) return true;
+          await esperar(120);
+        }
+        return false;
+      };
+
+      const quadro = document.getElementById("app");
+      await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+      const doc = quadro.contentDocument;
+      const jan = quadro.contentWindow;
+
+      // Erros de execução da aplicação são o alvo principal deste teste; sem
+      // recolhê-los, um ouvinte quebrado apareceria só como "nada acontece".
+      const erros = [];
+      jan.addEventListener("error", (e) => erros.push(String(e.message)));
+      jan.addEventListener("unhandledrejection", (e) => erros.push(String(e.reason)));
+      const erroOriginal = jan.console.error.bind(jan.console);
+      jan.console.error = (...a) => {
+        erros.push(a.map((x) => x?.message ?? String(x)).join(" "));
+        erroOriginal(...a);
+      };
+
+      const $ = (id) => doc.getElementById(id);
+
+      try {
+        // ── Entrar na aplicação ──────────────────────────────────────
+        $("campo-apelido").value = "Teste";
+        $("formulario-entrada").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+        await esperar(300);
+        conferir(!$("tela-aplicacao").classList.contains("oculto"), "a aplicação abre");
+
+        // ── Abrir os ajustes ─────────────────────────────────────────
+        $("botao-ajustes").click();
+        conferir(!$("ajustes").classList.contains("oculto"), "o painel de ajustes abre");
+
+        // ── Controles refletem o estado ──────────────────────────────
+        conferir($("ajuste-porta").checked === true, "a porta de ruído vem ligada por padrão");
+        conferir($("bloco-limiar").hidden === false, "a sensibilidade aparece com a porta ligada");
+        conferir($("valor-ganho").textContent === "100%", "o volume do microfone parte de 100%");
+        conferir($("valor-limiar").textContent === "−50 dB", "a sensibilidade parte de −50 dB");
+        conferir(
+          $("ajuste-bitrate").children.length === 4,
+          "as quatro qualidades de voz são oferecidas"
+        );
+        conferir(
+          [...$("ajuste-bitrate").children].filter(
+            (b) => b.getAttribute("aria-pressed") === "true"
+          ).length === 1,
+          "exatamente uma qualidade de voz fica marcada"
+        );
+        conferir($("ajuste-perfil").children.length === 4, "os quatro perfis de tela são oferecidos");
+        conferir(
+          [...$("ajuste-perfil").children].find((b) => b.getAttribute("aria-pressed") === "true")
+            ?.dataset.perfil === "equilibrado",
+          "o perfil padrão da tela é o equilibrado"
+        );
+
+        // ── Microfone e medidor ──────────────────────────────────────
+        const mediu = await aguardar(
+          async () => $("medidor-nivel").style.width !== "" && $("medidor-estado").textContent !== "parado"
+        );
+        conferir(mediu, `o medidor recebe nível do microfone (${$("medidor-estado").textContent})`);
+        conferir(
+          $("medidor-limiar").style.left !== "",
+          "a marca do limiar é posicionada na barra"
+        );
+        // A primeira opção é sempre "Padrão do sistema"; exigir mais de uma é o
+        // que prova que a enumeração aconteceu e que os rótulos chegaram — sem
+        // permissão concedida, o navegador devolve a lista com nomes vazios.
+        conferir(
+          $("ajuste-entrada").options.length > 1,
+          `os microfones do sistema são listados (${$("ajuste-entrada").options.length - 1})`
+        );
+        conferir(
+          [...$("ajuste-entrada").options].slice(1).every((o) => o.textContent.trim() !== ""),
+          "cada microfone listado tem nome"
+        );
+
+        // ── Desligar a porta esconde a sensibilidade ─────────────────
+        $("ajuste-porta").checked = false;
+        $("ajuste-porta").dispatchEvent(new jan.Event("change"));
+        await esperar(150);
+        conferir($("bloco-limiar").hidden === true, "desligar a porta esconde a sensibilidade");
+        $("ajuste-porta").checked = true;
+        $("ajuste-porta").dispatchEvent(new jan.Event("change"));
+
+        // ── Trocar de aba ────────────────────────────────────────────
+        doc.querySelector('.aba[data-aba="tela"]').click();
+        conferir(
+          doc.querySelector('.ajustes__painel[data-painel="tela"]').hidden === false &&
+            doc.querySelector('.ajustes__painel[data-painel="voz"]').hidden === true,
+          "as abas trocam de painel"
+        );
+
+        // ── Escolher outro perfil persiste ───────────────────────────
+        [...$("ajuste-perfil").children].find((b) => b.dataset.perfil === "nitido").click();
+        await esperar(120);
+        conferir(
+          [...$("ajuste-perfil").children].find((b) => b.getAttribute("aria-pressed") === "true")
+            ?.dataset.perfil === "nitido",
+          "escolher um perfil marca o escolhido"
+        );
+        conferir(
+          JSON.parse(jan.localStorage.getItem("call.preferencias")).perfilTela === "nitido",
+          "o perfil escolhido é gravado nas preferências"
+        );
+
+        // ── Qualidade da voz persiste ────────────────────────────────
+        doc.querySelector('.aba[data-aba="voz"]').click();
+        $("ajuste-bitrate").children[3].click();
+        await esperar(120);
+        conferir(
+          JSON.parse(jan.localStorage.getItem("call.preferencias")).audio.bitrate === 128000,
+          "a qualidade da voz escolhida é gravada"
+        );
+
+        // ── Fechar ───────────────────────────────────────────────────
+        $("ajustes-fechar").click();
+        conferir($("ajustes").classList.contains("oculto"), "o painel fecha");
+
+        // ── E reabre com o que foi escolhido ─────────────────────────
+        $("botao-ajustes").click();
+        await esperar(300);
+        conferir(
+          $("ajuste-bitrate").children[3].getAttribute("aria-pressed") === "true",
+          "reabrir o painel mostra a escolha anterior"
+        );
+        $("ajustes-fechar").click();
+
+        conferir(erros.length === 0, `nenhum erro de execução (${erros.join(" | ") || "nenhum"})`);
+      } catch (erro) {
+        conferir(false, `erro inesperado: ${erro?.message ?? erro}`);
+        conferir(false, `erros da aplicação: ${erros.join(" | ") || "nenhum"}`);
+      }
+
+      document.title = falhas === 0 ? "PASSOU" : "FALHOU";
+      await entregar({ falhas, relatorio });
+      window.close();
+    </script>
+  </body>
+</html>

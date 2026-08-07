@@ -509,14 +509,256 @@ teste prova: texto e voz atravessam entre duas janelas distintas.
 
 ---
 
+## Iteração 13 — O convite vira um link
+
+**Motivo:** convidar alguém era mandar dez caracteres por WhatsApp e explicar o
+resto — baixe ali, abra, clique em "Entrar com convite", cole isto. Cada passo
+desses é um lugar onde a pessoa desiste.
+
+**Construído:** o cartão do convite passou a copiar um endereço, e não o
+código. O endereço abre uma página do próprio site (`docs/entrar/`) que mostra
+o grupo e o convite, com dois botões: "Abrir no CALL", que entra no grupo pelo
+protocolo `call://`, e o instalador, para quem ainda não tem o aplicativo.
+O código continua acessível em "Copiar código do convite", no menu do grupo —
+ele é o que se dita por voz.
+
+**Por que o link não é `call://` direto:** um esquema que ninguém registrou não
+abre nada e não explica nada. A página no meio é o que distingue "não está
+instalado" de "não funcionou", e é ela que sabe oferecer o instalador. Sem
+servidor por trás, ela descobre isso do jeito possível: dispara o protocolo e
+observa se a aba perdeu o foco.
+
+**O que sustenta o `call://` do lado do aplicativo:** o esquema é registrado
+pelo instalador NSIS a partir do `tauri.conf.json`, e também em tempo de
+execução — sem isso ele não existiria em uma máquina onde o CALL nunca foi
+instalado, que é o caso de qualquer compilação de desenvolvimento. O código
+vem de `call://entrar/CODIGO`, é validado no Rust (dez caracteres
+alfanuméricos, e nada mais atravessa: o valor vem de um clique em uma página
+qualquer da internet) e entregue à interface por um caminho único — um evento
+avisa que existe convite, e um comando o entrega e o esquece. Se o aviso e a
+leitura da partida se cruzarem, o segundo encontra a vaga vazia em vez de
+entrar no grupo duas vezes.
+
+**O convite sabe esperar.** Um link clicado por quem nunca abriu o CALL cai na
+tela de entrada, sem apelido escolhido e sem servidor confirmado. Entrar no
+grupo ali seria aparecer para os outros como alguém sem nome: o convite fica
+guardado e só é usado quando a tela de entrada é preenchida.
+
+### O preço da instância única, registrado
+
+Para um link clicado com o CALL aberto chegar à janela que já existe, o
+aplicativo passou a ser de instância única — sem isso, cada clique abriria uma
+janela nova. O custo é direto: **duas janelas na mesma máquina deixaram de ser
+possíveis**, e é exatamente disso que depende o `duas-instancias.ps1`, o
+roteiro que prova texto e voz atravessando entre duas pessoas.
+
+A saída é uma variável de ambiente explícita (`CALL_INSTANCIAS_MULTIPLAS`), que
+só os roteiros de teste usam. Preferiu-se isso a descobrir o problema na
+próxima vez que alguém rodasse a suíte.
+
+### Verificado
+
+Um roteiro novo, `testes/convite.ps1`, dirige a janela real e prova os dois
+caminhos — oito verificações, todas automáticas:
+
+| O quê | Como |
+| --- | --- |
+| Link com o CALL aberto | O aplicativo está no grupo "estudio"; o `call://` do grupo "equipe" é disparado, nenhuma segunda instância aparece, e a janela original escreve uma mensagem que o servidor grava **num canal de equipe** |
+| Link com o CALL fechado | Perfil zerado, aplicativo encerrado, o link abre o CALL sozinho, ele espera a tela de entrada ser preenchida e só então entra no grupo — provado do mesmo jeito, pelo canal em que a mensagem caiu |
+| Registro do esquema | `HKCU\Software\Classes\call\shell\open\command` existe depois da primeira execução |
+
+A pergunta "em qual grupo a janela está?" tem resposta visual na captura, mas
+captura precisa de olho humano. A mensagem escrita depois de entrar responde
+sozinha: ela cai num canal, e um canal pertence a um grupo só.
+
+Também foram executadas, sem alterações: 46 verificações do protocolo, a malha
+WebRTC no motor real, e o `duas-instancias.ps1` — que continua abrindo as duas
+janelas graças à saída registrada acima.
+
+**Duas armadilhas do próprio teste, e não do produto:**
+
+1. *O clique caía no console.* O Windows recusa `SetForegroundWindow` vindo de
+   um processo que não tem o foco, e recusa em silêncio: a janela do teste
+   ficava por cima, o clique ia para ela, e a falha aparecia muito depois,
+   como um grupo que não existia. O roteiro agora empresta a fila de entrada de
+   quem está na frente (`AttachThreadInput`) e **confere** que a janela veio,
+   em vez de presumir.
+
+2. *O servidor local morria no meio da execução.* O sintoma era o pior
+   possível — "Não foi possível falar com o servidor", que é indistinguível de
+   um convite que não funcionou. A causa não estava no convite: todos os
+   roteiros deste projeto começam matando `sinalizacao.exe`, então dois deles
+   ao mesmo tempo se derrubam. O roteiro passou a conferir o servidor
+   separadamente e a informar se ele saiu por defeito próprio ou foi morto de
+   fora.
+
+**Custo em disco, medido:** o instalador foi de 1,65 MB para **1,69 MB** — o
+preço do `deep-link`, do `single-instance` e das imagens do instalador. O
+`call.exe` foi de 4,26 MB para 4,32 MB.
+
+### Acabamento que veio junto
+
+- **Cartão de link do site.** `docs/index.html` ganhou as marcas Open Graph e
+  Twitter completas, com uma imagem de 1200×630 gerada a partir do próprio HTML
+  do site — o endereço colado numa conversa deixa de aparecer como texto cru.
+- **Instalador com identidade.** Ícone próprio, cabeçalho (150×57) e lateral
+  (164×314) no formato BMP de 24 bits que o NSIS exige.
+- **`[hidden]` na folha do site.** O mesmo defeito já registrado na iteração 11
+  para o aplicativo: regras de componente com `display` explícito vencem o
+  `[hidden]` do navegador, que é de prioridade mais baixa. Sem a correção, a
+  página de convite mostraria ao mesmo tempo o código e o aviso de link
+  incompleto.
+
+---
+
+## Iteração 13 — Qualidade de áudio e de transmissão
+
+**Motivo:** o áudio era o que o Chromium entregasse por conta própria, e a
+transmissão de tela tinha exatamente um ajuste — o que estava escrito no código.
+Nenhum dos dois era escolha de ninguém.
+
+### O que estava errado, medido
+
+O primeiro número da iteração é o mais importante: com o teto de banda declarado
+em 32 kbps e depois em 128 kbps, o tráfego real de áudio foi de **32 para 129
+kbps**. Isso confirma, e não estima, que a negociação padrão estava mesmo em
+32 kbps mono — cerca de metade do que o Discord usa em canal comum.
+
+Faltava, além disso: escolher microfone e alto-falante, volume de entrada,
+volume por pessoa, qualquer filtro de ruído além do supressor do próprio motor,
+e qualquer escolha de qualidade de tela.
+
+### Áudio
+
+O grafo passou a existir. Antes a captura ia crua do `getUserMedia` para a
+conexão e o recebido ia cru para um `<audio>` solto; agora:
+
+```
+microfone → passa-alta 85 Hz → porta de ruído → destino → WebRTC
+recebido  → ganho da pessoa → ganho geral → alto-falante
+```
+
+O `<audio>` continua no código, **mudo**, só para o Chromium não considerar o
+fluxo remoto sem consumidor. Quem reproduz é o grafo — é o único jeito de haver
+volume por pessoa e escolha de dispositivo de saída.
+
+No Opus: `useinbandfec=1` (correção de erro em banda, que faz 5% de perda soar
+como nada em vez de um talho), `usedtx=0`, `stereo=0` explícito, e o teto de
+recepção declarado sempre em 128 kbps — **não** na qualidade escolhida. Foi uma
+correção de raciocínio no caminho: a `fmtp` diz ao outro lado o que aceitamos
+receber, então pôr a escolha do usuário nela faria quem escolhesse "econômico"
+limitar a voz de todos os outros. Cada máquina governa o próprio envio, pelo
+`maxBitrate` do remetente.
+
+### A porta de ruído, e o defeito que só a medição pegou
+
+O supressor do Chromium tira chiado estacionário e é cego para o resto: o "tom
+de sala" — respiração, teclado, o eco baixo do cômodo — é inaudível sozinho e
+insuportável somado a cinco pessoas.
+
+A porta é um `AudioWorkletProcessor` com piso de ruído adaptativo: o limiar não
+é um número que o usuário adivinha, ele acompanha o ruído medido da sala com uma
+margem por cima, e o deslizante é só o chão dele.
+
+**A primeira versão foi reprovada pelo próprio teste, e o motivo era
+estrutural.** Ela era um expansor puro: a atenuação crescia com a distância
+abaixo do limiar. Só que o limiar de fechamento é, por construção, `piso +
+margem − histerese` — ou seja, fica poucos decibéis acima do ruído de fundo. O
+ruído nunca chegava a ficar longe o bastante do limiar para ganhar mais do que
+uns 5 dB de corte. O expansor mordia o próprio rabo. Medido: **5,7 dB** de
+atenuação, quando a intenção eram 32.
+
+E foi o mesmo número — 5,7 dB com a porta *desligada* — que denunciou o segundo
+defeito: `port.postMessage` para ligar e desligar corria contra a renderização, e
+a mensagem chegava depois do áudio já processado. Virou `AudioParam`, que vale na
+hora.
+
+Corrigidos os dois, separando quem decide (a máquina de estados, com histerese e
+permanência) de quem suaviza (a rampa por amostra):
+
+| Medida | Antes | Depois |
+| --- | --- | --- |
+| Ruído de sala atenuado | 5,7 dB | **32,0 dB** |
+| Perda no miolo da fala | — | **0,00 dB** |
+| Primeiros 25 ms de uma palavra | — | **0,9 dB** |
+| Cauda depois da última sílaba | — | **0,0 dB** |
+| Desligada | 5,7 dB de perda | **0,00 dB** |
+
+Os dois números do meio são os que separam uma porta boa de uma que estraga a
+voz: comer o ataque da palavra e fechar em cima da última sílaba são os defeitos
+que fazem todo mundo desligar a supressão de ruído.
+
+### Transmissão de tela
+
+Quatro perfis, de 720p30 a 1440p60. E o codec deixou de ser o que viesse:
+
+- **VP9** nos perfis de até 30 quadros, onde sobra CPU para pagar por ele e o
+  ganho em imagem parada com texto é grande.
+- **H.264** nos de 60 quadros, porque tem codificador em hardware em toda GPU
+  dos últimos dez anos — é ele que mantém a promessa de ser leve num jogo.
+
+Verificado que o VP9 foi realmente negociado, e não apenas pedido.
+
+O som do sistema passou a acompanhar a tela, **numa trilha própria**, no mesmo
+fluxo do vídeo. É o que permite ao outro lado distingui-lo da voz — e, sobretudo,
+não passá-lo pelos filtros feitos para voz: um cancelador de eco e uma porta de
+ruído destroem música e efeitos de jogo. Ele sai no teto do codec, com
+`contentHint = "music"`.
+
+Isso obrigou uma correção no ajuste do Opus: com duas seções de áudio na
+descrição, a versão que mexia só na primeira deixaria o som do sistema com a
+negociação padrão — justamente o que se quis corrigir.
+
+### Ressalvas honestas
+
+- **O som do sistema não foi verificado numa captura real do Windows.** O que a
+  suíte prova é o encaminhamento: duas trilhas de áudio separadas, em fluxos
+  distintos, com o bitrate e a dica certos. Se o seletor nativo entrega ou não o
+  áudio depende do que se compartilha — a aplicação avisa quando a captura veio
+  sem som.
+- **Os perfis não foram medidos em rede ruim.** O que está provado é que o teto,
+  os quadros e a política de degradação chegam ao codificador, e que trocar de
+  perfil durante uma transmissão vale na hora.
+- A porta de ruído foi medida com voz sintética — fundamental grave, dois
+  harmônicos e modulação silábica —, não com voz humana gravada. Ela exercita o
+  detector de forma parecida com voz; não é voz.
+
+### Custo
+
+O instalador compilado nesta iteração deu **1,71 MB**, contra 1,65 MB na
+anterior. O número é honesto e a atribuição não seria: esta compilação carrega
+também as mudanças de outra frente de trabalho no `lib.rs` e no `Cargo.toml`, e
+os 60 KB não são todos do áudio.
+
+O que é atribuível com precisão é o código: dois arquivos novos somando **20 KB**
+(`audio.js` e `porta-de-ruido.js`), mais os acréscimos em `app.js`, `rtc.js`,
+`index.html` e `estilo.css`. Zero dependências novas — a porta de ruído é
+`AudioWorklet` do próprio motor, não uma biblioteca embarcada.
+
+A janela com o painel aberto e o microfone em teste ficou em **31,6 MB** de
+*working set* — a mesma faixa de uma janela num canal de voz, porque é o mesmo
+`AudioContext`. Abrir os ajustes não custa memória nova.
+
+### Verificado
+
+| O quê | Como |
+| --- | --- |
+| Malha e mídia | 44 verificações no motor Chromium real, incluindo tráfego de áudio medido nos dois extremos de qualidade e o codec efetivamente negociado |
+| Porta de ruído | Renderização fora do tempo real, em `OfflineAudioContext`: mesmo sinal sempre, resultado inteiro disponível para medir |
+| Painel de ajustes | 22 verificações conduzindo a aplicação real num quadro, recolhendo os erros de execução dela |
+| Protocolo | 49 verificações, sem regressão |
+| Janela real | Painel aberto no WebView2, sob a CSP do Tauri, com os dispositivos de áudio da máquina |
+
+---
+
 ## Estado final medido
 
 ### Peso em disco
 
 | Artefato | Tamanho |
 | --- | --- |
-| Instalador `CALL_0.1.0_x64-setup.exe` | **1,65 MB** |
-| `call.exe` | 4,26 MB |
+| Instalador `CALL_0.3.0_x64-setup.exe` | **1,69 MB** |
+| `call.exe` | 4,32 MB |
 | `sinalizacao.exe` (sidecar) | 0,48 MB |
 
 ### Memória
@@ -569,13 +811,17 @@ existe no sistema.
 | Suíte | Comando | Cobertura |
 | --- | --- | --- |
 | Protocolo de sinalização | `node testes/sinalizacao.test.mjs` | 46 verificações: criação de grupo, convite recusado, entrada por código, voz isolada por canal, encaminhamento de sinais, difusão de estado, mensagens e histórico, regra de dono, remoção que tira gente da voz, e persistência entre execuções do servidor |
-| Malha WebRTC | `powershell -File testes/rodar-malha.ps1` | 17 verificações no próprio motor Chromium: entrada no canal de voz, conexão nos dois lados, áudio com bytes recebidos, vídeo com quadros decodificados, renegociação ao encerrar a tela, limpeza de elos |
+| Malha WebRTC e mídia | `powershell -File testes/rodar-malha.ps1` | 44 verificações no próprio motor Chromium: entrada no canal de voz, conexão nos dois lados, áudio com bytes recebidos, vídeo com quadros decodificados, renegociação ao encerrar a tela, limpeza de elos — e, desde a iteração 13, o SDP do Opus, o tráfego de áudio medido nos dois extremos de qualidade, o perfil e o codec da tela efetivamente negociado, o som que acompanha a transmissão, e a porta de ruído renderizada em `OfflineAudioContext` |
+| Painel de ajustes | `powershell -File testes/rodar-interface.ps1` | 22 verificações conduzindo a aplicação real dentro de um quadro: controles refletindo o estado, medidor recebendo nível da porta de ruído, dispositivos enumerados com nome, abas, persistência das escolhas — e os erros de execução da própria aplicação, recolhidos |
+| Convite por link | `powershell -File testes/convite.ps1` | 8 verificações na janela real: o esquema `call://` registrado, o link com o aplicativo aberto trocando de grupo sem abrir segunda instância, e o link com o aplicativo fechado abrindo o CALL e esperando a tela de entrada — os dois provados pelo canal em que a mensagem escrita depois caiu |
 
-Ambas passam integralmente na última execução.
+Todas passam integralmente na última execução.
 
-Além delas, dois roteiros dirigem a janela real e deixam capturas em
+Além delas, três roteiros dirigem a janela real e deixam capturas em
 `testes/capturas`: `testes/inspecionar.ps1` (uma instância, da tela de entrada
-até o canal de voz) e `testes/duas-instancias.ps1` (duas janelas, com mensagem
-de texto entregue de uma a outra). Eles clicam por coordenada, então quebram
+até o canal de voz), `testes/duas-instancias.ps1` (duas janelas, com mensagem
+de texto entregue de uma a outra) e `testes/ajustes.ps1` (o painel de ajustes
+dentro do WebView2, sob a CSP do Tauri e com os dispositivos de áudio reais da
+máquina). Eles clicam por coordenada, então quebram
 quando o layout muda de altura — e foi assim que o convite truncado e a coluna
 que descia de linha apareceram.

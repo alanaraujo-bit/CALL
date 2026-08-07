@@ -16,7 +16,7 @@
 
     <script type="module">
       import { Sinal } from "../src/sinal.js";
-      import { Malha } from "../src/rtc.js";
+      import { Malha, acharPerfilDeTela, ajustarOpus } from "../src/rtc.js";
 
       const entregar = (dados, rota = "/resultado") =>
         fetch(`http://127.0.0.1:8123${rota}`, {
@@ -127,7 +127,8 @@
             contagem.saida.push(dados.descricao ? `>${dados.descricao.type}` : ">cand");
             sinal.enviar({ tipo: "sinal", para, dados });
           },
-          aoTrilha: (id, trilha) => registro.push({ apelido, evento: "trilha", tipo: trilha.kind, id }),
+          aoTrilha: (id, trilha, fluxo) =>
+            registro.push({ apelido, evento: "trilha", tipo: trilha.kind, id, fluxo: fluxo?.id }),
           aoFimDeTrilha: (id, trilha) => registro.push({ apelido, evento: "fim", tipo: trilha.kind, id }),
           aoEstado: (id, estado) => registro.push({ apelido, evento: "estado", estado, id }),
         });
@@ -249,10 +250,60 @@
         };
         conferir(await aguardar(fluindo), "áudio realmente trafega (bytes recebidos nos dois lados)");
 
+        titulo("Qualidade do áudio");
+
+        // O que sai na descrição local é o que o outro lado lê para decidir o
+        // que mandar para cá. Sem conferir o SDP, "ajustamos o Opus" é fé.
+        const sdpAna = [...ana.malha.conexoes.values()][0].localDescription?.sdp ?? "";
+        conferir(/a=fmtp:\d+ .*useinbandfec=1/.test(sdpAna), "o SDP pede correção de erro em banda (FEC)");
+        conferir(/a=fmtp:\d+ .*maxaveragebitrate=128000/.test(sdpAna), "o SDP declara o teto de recepção do Opus");
+        conferir(/a=fmtp:\d+ .*usedtx=0/.test(sdpAna), "o corte no silêncio (DTX) sai desligado por padrão");
+        conferir(/a=fmtp:\d+ .*stereo=0/.test(sdpAna), "o SDP declara voz mono explicitamente");
+
+        const remetenteDeAudio = (p) =>
+          [...p.malha.conexoes.values()][0].getSenders().find((r) => r.track?.kind === "audio");
+
+        await ana.malha.definirAudio({ bitrate: 96000 });
+        conferir(
+          remetenteDeAudio(ana)?.getParameters().encodings?.[0]?.maxBitrate === 96000,
+          "o teto de banda do áudio chega ao remetente"
+        );
+
+        /** Taxa real de envio de áudio, medida na janela pedida. */
+        const kbpsDeAudio = async (p, ms) => {
+          const pc = [...p.malha.conexoes.values()][0];
+          const ler = async () => {
+            for (const [, item] of await pc.getStats()) {
+              if (item.type === "outbound-rtp" && item.kind === "audio") return item.bytesSent ?? 0;
+            }
+            return 0;
+          };
+          const inicio = await ler();
+          const t0 = performance.now();
+          await esperar(ms);
+          return (((await ler()) - inicio) * 8) / (performance.now() - t0);
+        };
+
+        // A prova que importa não é o número no objeto de parâmetros, é o
+        // tráfego. Medir os dois extremos no mesmo sinal remove qualquer dúvida
+        // sobre o ajuste ter sido aceito e ignorado.
+        await ana.malha.definirAudio({ bitrate: 32000 });
+        const kbpsBaixo = await kbpsDeAudio(ana, 3000);
+        await ana.malha.definirAudio({ bitrate: 128000 });
+        const kbpsAlto = await kbpsDeAudio(ana, 3000);
+        conferir(
+          kbpsAlto > kbpsBaixo * 1.8,
+          `mudar a qualidade muda o tráfego de verdade (${kbpsBaixo.toFixed(0)} → ${kbpsAlto.toFixed(0)} kbps)`
+        );
+        await ana.malha.definirAudio({ bitrate: 64000 });
+
         titulo("Transmissão de tela");
 
+        // A tela vai com som, como uma partilha de tela inteira no Windows.
         const tela = videoSintetico();
-        ana.malha.publicarTela(tela.getVideoTracks()[0], tela);
+        const somDaTela = (await audioSintetico()).getAudioTracks()[0];
+        tela.addTrack(somDaTela);
+        ana.malha.publicarTela(tela.getVideoTracks()[0], tela, somDaTela);
 
         const recebeuVideo = await aguardar(async () =>
           registro.some((r) => r.evento === "trilha" && r.tipo === "video" && r.apelido === "Bruno")
@@ -271,6 +322,94 @@
         conferir(
           !registro.some((r) => r.evento === "trilha" && r.tipo === "video" && r.apelido === "Ana"),
           "Ana não recebe de volta a própria transmissão"
+        );
+
+        titulo("Perfil da transmissão de tela");
+
+        const remetenteDeTela = () =>
+          [...ana.malha.conexoes.values()][0].getSenders().find((r) => r.track?.kind === "video");
+
+        const equilibrado = acharPerfilDeTela("equilibrado");
+        const codificacaoDaTela = () => remetenteDeTela()?.getParameters().encodings?.[0] ?? {};
+        conferir(
+          codificacaoDaTela().maxBitrate === equilibrado.bits &&
+            codificacaoDaTela().maxFramerate === equilibrado.quadros,
+          `o perfil padrão chega ao codificador (${equilibrado.detalhe})`
+        );
+        conferir(
+          remetenteDeTela()?.getParameters().degradationPreference === equilibrado.degradacao,
+          "a política de degradação é declarada (nitidez antes de fluidez)"
+        );
+        conferir(
+          tela.getVideoTracks()[0].contentHint === equilibrado.dica,
+          "a dica de conteúdo acompanha o perfil"
+        );
+
+        const nitido = acharPerfilDeTela("nitido");
+        await ana.malha.definirPerfilTela(nitido);
+        conferir(
+          codificacaoDaTela().maxBitrate === nitido.bits &&
+            codificacaoDaTela().maxFramerate === nitido.quadros,
+          `trocar de perfil no meio da transmissão vale na hora (${nitido.detalhe})`
+        );
+        conferir(
+          tela.getVideoTracks()[0].contentHint === nitido.dica &&
+            remetenteDeTela()?.getParameters().degradationPreference === nitido.degradacao,
+          "trocar de perfil também troca o que o codificador sacrifica"
+        );
+
+        // Qual codec foi realmente negociado. A preferência não é imposição —
+        // se o motor não tiver o codec pedido, isto registra o que ele usou em
+        // vez de reprovar por uma limitação do ambiente.
+        const codecEmUso = async (pc) => {
+          const relatorio = await pc.getStats();
+          for (const [, item] of relatorio) {
+            if (item.type === "outbound-rtp" && item.kind === "video" && item.codecId) {
+              return relatorio.get(item.codecId)?.mimeType ?? "?";
+            }
+          }
+          return "?";
+        };
+        const codec = await codecEmUso([...ana.malha.conexoes.values()][0]);
+        conferir(codec !== "?", `codec de vídeo negociado: ${codec}`);
+
+        await ana.malha.definirPerfilTela(equilibrado);
+
+        titulo("Som que acompanha a transmissão");
+
+        // A aplicação separa voz de som de tela pelo fluxo: o primeiro fluxo de
+        // áudio de alguém é o microfone, e o que vier em outro é a transmissão.
+        // Se as duas trilhas chegassem no mesmo fluxo, essa regra ruiria — e a
+        // trilha sonora de um jogo passaria pelo medidor de fala.
+        const vozesEsons = () =>
+          registro.filter(
+            (r) => r.apelido === "Bruno" && r.evento === "trilha" && r.tipo === "audio"
+          );
+        const chegaramAsDuas = await aguardar(async () => vozesEsons().length >= 2);
+        const audiosDoBruno = vozesEsons();
+        conferir(chegaramAsDuas, "Bruno recebe a voz e o som da tela como trilhas separadas");
+        if (chegaramAsDuas) {
+          conferir(
+            audiosDoBruno[0].fluxo !== audiosDoBruno[1].fluxo,
+            "o som da tela chega num fluxo diferente do da voz"
+          );
+          conferir(
+            audiosDoBruno[1].fluxo ===
+              registro.find((r) => r.apelido === "Bruno" && r.tipo === "video")?.fluxo,
+            "o som da tela chega no mesmo fluxo do vídeo da tela"
+          );
+        }
+
+        const remetenteDoSom = [...ana.malha.conexoes.values()][0]
+          .getSenders()
+          .filter((r) => r.track?.kind === "audio");
+        conferir(
+          remetenteDoSom.some((r) => r.getParameters().encodings?.[0]?.maxBitrate === 128000),
+          "o som da tela sai no teto do codec, e não no bitrate de voz"
+        );
+        conferir(
+          somDaTela.contentHint === "music",
+          "o som da tela é marcado como música (nada de porta de ruído nele)"
         );
 
         titulo("Renegociação ao encerrar a transmissão");
@@ -293,6 +432,117 @@
 
         ana.sinal.desconectar();
         ana.malha.fecharTudo();
+
+        titulo("Porta de ruído");
+
+        /**
+         * A porta é medida fora do tempo real, num `OfflineAudioContext`. É a
+         * única forma de julgá-la por números em vez de por opinião: o mesmo
+         * sinal, sempre, e o resultado inteiro disponível para medir.
+         *
+         * O sinal tem três trechos de 48 kHz:
+         *   0–2,0 s  ruído de sala a −58 dBFS  (a porta aprende o piso)
+         *   2,0–3,0 s fala a −20 dBFS sobre o mesmo ruído
+         *   3,0–4,0 s ruído de sala de novo
+         */
+        async function renderizarPorta({ ligada }) {
+          const taxa = 48000;
+          const ctx = new OfflineAudioContext(1, taxa * 4, taxa);
+          await ctx.audioWorklet.addModule("../src/porta-de-ruido.js");
+
+          const buffer = ctx.createBuffer(1, taxa * 4, taxa);
+          const dados = buffer.getChannelData(0);
+          const ruido = 10 ** (-58 / 20);
+          const voz = 10 ** (-20 / 20);
+          for (let i = 0; i < dados.length; i++) {
+            const t = i / taxa;
+            let amostra = (Math.random() * 2 - 1) * ruido;
+            if (t >= 2 && t < 3) {
+              // Fala aproximada: fundamental grave com dois harmônicos e uma
+              // modulação silábica. Um seno puro não exercita nem o detector
+              // nem o codificador de forma parecida com voz.
+              const env = 0.6 + 0.4 * Math.sin(2 * Math.PI * 4 * (t - 2));
+              amostra +=
+                voz *
+                env *
+                (Math.sin(2 * Math.PI * 130 * t) * 0.6 +
+                  Math.sin(2 * Math.PI * 390 * t) * 0.3 +
+                  Math.sin(2 * Math.PI * 910 * t) * 0.1);
+            }
+            dados[i] = amostra;
+          }
+
+          const fonte = ctx.createBufferSource();
+          fonte.buffer = buffer;
+          const porta = new AudioWorkletNode(ctx, "porta-de-ruido", {
+            outputChannelCount: [1],
+            channelCount: 1,
+            channelCountMode: "explicit",
+          });
+          porta.parameters.get("ativa").value = ligada ? 1 : 0;
+          fonte.connect(porta);
+          porta.connect(ctx.destination);
+          fonte.start();
+
+          const saida = (await ctx.startRendering()).getChannelData(0);
+          const rms = (de, ate) => {
+            let soma = 0;
+            const i0 = Math.round(de * taxa);
+            const i1 = Math.round(ate * taxa);
+            for (let i = i0; i < i1; i++) soma += saida[i] * saida[i];
+            return 20 * Math.log10(Math.sqrt(soma / (i1 - i0)) + 1e-12);
+          };
+          const rmsEntrada = (de, ate) => {
+            let soma = 0;
+            const i0 = Math.round(de * taxa);
+            const i1 = Math.round(ate * taxa);
+            for (let i = i0; i < i1; i++) soma += dados[i] * dados[i];
+            return 20 * Math.log10(Math.sqrt(soma / (i1 - i0)) + 1e-12);
+          };
+          return { rms, rmsEntrada };
+        }
+
+        const ligada = await renderizarPorta({ ligada: true });
+
+        // Silêncio depois de a porta ter tido tempo de medir a sala.
+        const corteSilencio = ligada.rmsEntrada(1.5, 2.0) - ligada.rms(1.5, 2.0);
+        conferir(corteSilencio > 15, `o ruído de sala é atenuado (${corteSilencio.toFixed(1)} dB)`);
+
+        // Miolo da fala: aqui a porta não pode aparecer de forma nenhuma.
+        const perdaNaFala = ligada.rmsEntrada(2.3, 2.9) - ligada.rms(2.3, 2.9);
+        conferir(
+          Math.abs(perdaNaFala) < 1,
+          `a fala passa intacta (${perdaNaFala >= 0 ? "−" : "+"}${Math.abs(perdaNaFala).toFixed(2)} dB)`
+        );
+
+        // O defeito clássico de porta de ruído: comer o ataque da palavra. Os
+        // primeiros 25 ms precisam já estar praticamente abertos.
+        const ataque = ligada.rmsEntrada(2.0, 2.025) - ligada.rms(2.0, 2.025);
+        conferir(ataque < 3, `o início da fala não é comido (${ataque.toFixed(1)} dB nos primeiros 25 ms)`);
+
+        // E a cauda: fechar no instante em que a voz para produz um corte
+        // audível. A permanência tem de segurar a porta aberta por um tempo.
+        const caudaAberta = ligada.rmsEntrada(3.0, 3.1) - ligada.rms(3.0, 3.1);
+        conferir(caudaAberta < 6, `a porta não fecha em cima da última sílaba (${caudaAberta.toFixed(1)} dB)`);
+
+        const desligada = await renderizarPorta({ ligada: false });
+        const desvio = Math.abs(desligada.rmsEntrada(1.5, 2.0) - desligada.rms(1.5, 2.0));
+        conferir(desvio < 0.5, `desligada, a porta é transparente (${desvio.toFixed(2)} dB)`);
+
+        titulo("Ajuste do Opus fora da conexão");
+        const sdpCru = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1\r\n";
+        const ajustado = ajustarOpus(sdpCru, { bitrate: 96000, dtx: true });
+        conferir(ajustado.includes("maxaveragebitrate=96000"), "ajustarOpus escreve o teto pedido");
+        conferir(ajustado.includes("usedtx=1"), "ajustarOpus respeita o pedido de DTX");
+        conferir(
+          (ajustado.match(/a=fmtp:111/g) ?? []).length === 1,
+          "ajustarOpus substitui a linha fmtp em vez de duplicá-la"
+        );
+        conferir(
+          ajustarOpus("v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n", {}) ===
+            "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n",
+          "ajustarOpus deixa intacto um SDP sem Opus"
+        );
 
         titulo("APIs de mídia disponíveis no motor");
         conferir(

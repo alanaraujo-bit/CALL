@@ -10,26 +10,191 @@ const CONFIGURACAO = {
   rtcpMuxPolicy: "require",
 };
 
-/** Teto de banda e de quadros da tela. Sem isto o WebRTC sobe o bitrate até
- *  onde a rede aguentar — e é a CPU de quem transmite que paga a conta. */
-const TETO_BITS = 1_200_000;
-const TETO_QUADROS = 15;
+/**
+ * Perfis de transmissão de tela.
+ *
+ * O valor anterior era um só: 1,2 Mbps e 15 quadros, escolhido para proteger a
+ * CPU de quem transmite. Ele é razoável para mostrar um editor de texto e
+ * inaceitável para qualquer outra coisa — um jogo a 15 quadros com 1,2 Mbps
+ * chega do outro lado como uma sopa de blocos.
+ *
+ * O `codec` não é enfeite, é a diferença entre leve e pesado:
+ *
+ * - **VP9** custa mais CPU por quadro e rende muito mais em imagem parada com
+ *   texto: nas taxas baixas ele preserva bordas que o VP8 borra. Nos perfis de
+ *   até 30 quadros sobra CPU para pagar por isso.
+ * - **H.264** tem codificador em hardware em praticamente toda GPU dos últimos
+ *   dez anos. Nos perfis de 60 quadros é ele que mantém a promessa de ser leve:
+ *   o trabalho sai do processador e vai para a placa de vídeo.
+ *
+ * `dica` vira `contentHint` na trilha, e decide o que o codificador sacrifica
+ * quando a banda aperta: `detail` abre mão de quadros para manter a nitidez,
+ * `motion` faz o contrário.
+ */
+export const PERFIS_TELA = [
+  {
+    id: "leve",
+    nome: "Leve",
+    detalhe: "720p · 30 fps · 1,5 Mbps",
+    resumo: "Para redes modestas e máquinas antigas",
+    largura: 1280, altura: 720, quadros: 30, bits: 1_500_000,
+    dica: "detail", codec: "VP9", degradacao: "maintain-resolution",
+  },
+  {
+    id: "equilibrado",
+    nome: "Equilibrado",
+    detalhe: "1080p · 30 fps · 3 Mbps",
+    resumo: "Texto legível e movimento aceitável",
+    largura: 1920, altura: 1080, quadros: 30, bits: 3_000_000,
+    dica: "detail", codec: "VP9", degradacao: "maintain-resolution",
+  },
+  {
+    id: "nitido",
+    nome: "Nítido",
+    detalhe: "1080p · 60 fps · 6 Mbps",
+    resumo: "Movimento fluido — jogos e vídeo",
+    largura: 1920, altura: 1080, quadros: 60, bits: 6_000_000,
+    dica: "motion", codec: "H264", degradacao: "maintain-framerate",
+  },
+  {
+    id: "maximo",
+    nome: "Máximo",
+    detalhe: "1440p · 60 fps · 10 Mbps",
+    resumo: "Exige rede boa e placa de vídeo com codificador",
+    largura: 2560, altura: 1440, quadros: 60, bits: 10_000_000,
+    dica: "motion", degradacao: "maintain-framerate",
+    codec: "H264",
+  },
+];
 
-async function limitarTela(remetente) {
+export const PERFIL_TELA_PADRAO = "equilibrado";
+
+export function acharPerfilDeTela(id) {
+  return PERFIS_TELA.find((p) => p.id === id) ?? PERFIS_TELA.find((p) => p.id === PERFIL_TELA_PADRAO);
+}
+
+/** Aplica o teto de banda, de quadros e a política de degradação ao remetente
+ *  da tela. Sem teto o WebRTC sobe o bitrate até onde a rede aguentar — e é a
+ *  CPU de quem transmite que paga a conta da codificação. */
+async function limitarTela(remetente, perfil) {
   if (!remetente) return;
   try {
     const parametros = remetente.getParameters();
-    parametros.encodings = parametros.encodings?.length
-      ? parametros.encodings
-      : [{}];
+    parametros.encodings = parametros.encodings?.length ? parametros.encodings : [{}];
     for (const codificacao of parametros.encodings) {
-      codificacao.maxBitrate = TETO_BITS;
-      codificacao.maxFramerate = TETO_QUADROS;
+      codificacao.maxBitrate = perfil.bits;
+      codificacao.maxFramerate = perfil.quadros;
     }
+    parametros.degradationPreference = perfil.degradacao;
     await remetente.setParameters(parametros);
   } catch (erro) {
     console.warn("[rtc] não foi possível limitar a tela", erro);
   }
+}
+
+/** Teto de banda do áudio. O Opus do Chromium fica em torno de 32 kbps sem
+ *  isto; o `maxBitrate` do remetente é o que o faz subir de verdade. */
+async function limitarAudio(remetente, bits) {
+  if (!remetente) return;
+  try {
+    const parametros = remetente.getParameters();
+    parametros.encodings = parametros.encodings?.length ? parametros.encodings : [{}];
+    for (const codificacao of parametros.encodings) codificacao.maxBitrate = bits;
+    await remetente.setParameters(parametros);
+  } catch (erro) {
+    console.warn("[rtc] não foi possível ajustar o áudio", erro);
+  }
+}
+
+/**
+ * Coloca o codec preferido na frente da lista do transceptor de vídeo.
+ *
+ * Preferir não é impor: se o outro lado não tiver o codec, a negociação escolhe
+ * o primeiro em comum, como sempre. Por isso a lista completa é mantida atrás
+ * do preferido, em vez de filtrada.
+ */
+function preferirCodec(transceptor, nome) {
+  if (!transceptor?.setCodecPreferences || !RTCRtpSender.getCapabilities) return;
+  try {
+    const { codecs } = RTCRtpSender.getCapabilities("video") ?? {};
+    if (!codecs?.length) return;
+
+    const alvo = nome.toLowerCase();
+    const preferidos = codecs.filter((c) => c.mimeType.toLowerCase() === `video/${alvo}`);
+    if (preferidos.length === 0) return;
+
+    const resto = codecs.filter((c) => !preferidos.includes(c));
+    transceptor.setCodecPreferences([...preferidos, ...resto]);
+  } catch (erro) {
+    console.warn("[rtc] preferência de codec recusada", erro);
+  }
+}
+
+/* ═══ Opus ══════════════════════════════════════════════════════ */
+
+/**
+ * Reescreve a linha `fmtp` do Opus na descrição local.
+ *
+ * A negociação padrão do Chromium não declara nada, e o resultado é voz mono em
+ * torno de 32 kbps sem correção de erro — audível, e bem longe do que o codec
+ * consegue. Os parâmetros abaixo são declarações do *receptor*: eles dizem ao
+ * outro lado o que mandar para cá. Como os dois lados rodam este mesmo código,
+ * os dois passam a receber o que pediram.
+ *
+ * - `maxaveragebitrate` é o teto que aceitamos receber.
+ * - `useinbandfec=1` embute na banda uma cópia degradada do quadro anterior. O
+ *   custo é pequeno e é o que faz uma perda de 5% de pacotes soar como nada em
+ *   vez de soar como um talho.
+ * - `usedtx` corta o envio no silêncio. Economiza banda e, na volta da fala,
+ *   entrega um degrau de ruído de conforto sintético. Fica desligado por
+ *   padrão; a opção existe para quem precisa da banda.
+ * - `stereo=0` é explícito de propósito: voz é mono, e dois canais só
+ *   transportariam duas cópias do mesmo microfone.
+ */
+/**
+ * Teto declarado na `fmtp`, e não a qualidade escolhida.
+ *
+ * A `fmtp` diz ao outro lado o que *nós* aceitamos receber; quem decide o que
+ * sai daqui é o `maxBitrate` do nosso remetente. Se a escolha do usuário fosse
+ * parar na `fmtp`, quem escolhesse "econômico" limitaria a voz de todos os
+ * outros a 32 kbps — cada um controlaria a qualidade alheia, não a própria.
+ * Declaramos sempre o teto e deixamos cada máquina governar o próprio envio.
+ */
+const TETO_RECEPCAO_OPUS = 128000;
+
+/** O som que acompanha a tela é música, efeito e trilha — não voz. Ele não
+ *  passa por porta de ruído nem por cancelamento de eco, e recebe o teto do
+ *  codec, porque 64 kbps de voz aplicados a uma trilha sonora soam como rádio
+ *  AM. */
+const BITRATE_AUDIO_TELA = 128000;
+
+export function ajustarOpus(sdp, { bitrate = TETO_RECEPCAO_OPUS, dtx = false } = {}) {
+  const parametros = [
+    "minptime=10",
+    "useinbandfec=1",
+    `usedtx=${dtx ? 1 : 0}`,
+    "stereo=0",
+    "sprop-stereo=0",
+    `maxaveragebitrate=${bitrate}`,
+    "maxplaybackrate=48000",
+    "sprop-maxcapturerate=48000",
+  ].join(";");
+
+  // Todas as cargas Opus, e não a primeira: quem compartilha a tela com som
+  // tem duas seções de áudio na descrição, e ajustar só uma deixaria o som do
+  // sistema com a negociação padrão — justamente o que se quis corrigir.
+  let saida = sdp;
+  for (const [, carga] of sdp.matchAll(/a=rtpmap:(\d+) opus\/48000\/2/gi)) {
+    const fmtp = new RegExp(`a=fmtp:${carga} .*`);
+    if (fmtp.test(saida)) {
+      saida = saida.replace(fmtp, `a=fmtp:${carga} ${parametros}`);
+    } else {
+      // Sem linha `fmtp`, ela entra logo depois do `rtpmap` correspondente.
+      const linha = new RegExp(`(a=rtpmap:${carga} opus/48000/2)`);
+      saida = saida.replace(linha, `$1\r\na=fmtp:${carga} ${parametros}`);
+    }
+  }
+  return saida;
 }
 
 class Elo {
@@ -42,7 +207,11 @@ class Elo {
     this.aplicandoDescricao = false;
     /** Este lado combinou de só responder: a primeira oferta vem do outro. */
     this.esperandoOferta = esperandoOferta;
+    this.remetenteAudio = null;
     this.remetenteTela = null;
+    this.remetenteAudioTela = null;
+    /** Guardado só para a preferência de codec, que age no transceptor. */
+    this.transceptorTela = null;
 
     const pc = new RTCPeerConnection(CONFIGURACAO);
     this.pc = pc;
@@ -80,10 +249,27 @@ class Elo {
     };
   }
 
+  /**
+   * Gera e aplica a descrição local, com a `fmtp` do Opus reescrita no caminho.
+   *
+   * O `setLocalDescription()` sem argumento — a forma recomendada, que escolhe
+   * sozinha entre oferta e resposta — não deixa espaço para editar o SDP. Aqui
+   * a escolha é feita à mão pelo estado da sinalização, que é exatamente o
+   * critério que ele usaria.
+   */
+  async descreverLocal() {
+    const pc = this.pc;
+    const respondendo =
+      pc.signalingState === "have-remote-offer" || pc.signalingState === "have-local-pranswer";
+    const descricao = respondendo ? await pc.createAnswer() : await pc.createOffer();
+    descricao.sdp = ajustarOpus(descricao.sdp, this.malha.opcoesDeAudio);
+    await pc.setLocalDescription(descricao);
+  }
+
   async ofertar() {
     try {
       this.fazendoOferta = true;
-      await this.pc.setLocalDescription();
+      await this.descreverLocal();
       this.malha.enviarSinal(this.id, { descricao: this.pc.localDescription });
     } catch (erro) {
       console.error("[rtc] falha ao ofertar", erro);
@@ -108,7 +294,7 @@ class Elo {
           if (colisao) await pc.setLocalDescription({ type: "rollback" });
           await pc.setRemoteDescription(descricao);
           if (descricao.type === "offer") {
-            await pc.setLocalDescription();
+            await this.descreverLocal();
             this.malha.enviarSinal(this.id, { descricao: pc.localDescription });
           }
         } finally {
@@ -162,6 +348,10 @@ export class Malha {
   #fluxoAudio = null;
   #trilhaTela = null;
   #fluxoTela = null;
+  #trilhaAudioTela = null;
+  #bitrateAudio = 64000;
+  #dtx = false;
+  #perfilTela = acharPerfilDeTela(PERFIL_TELA_PADRAO);
 
   constructor({ enviarSinal, aoTrilha, aoFimDeTrilha, aoEstado, meuId }) {
     this.enviarSinal = enviarSinal;
@@ -169,6 +359,44 @@ export class Malha {
     this.aoFimDeTrilha = aoFimDeTrilha;
     this.aoEstado = aoEstado ?? (() => {});
     this.#meuId = meuId ?? null;
+  }
+
+  /** Lido pelo `Elo` na hora de montar a descrição local. */
+  get opcoesDeAudio() {
+    return { bitrate: TETO_RECEPCAO_OPUS, dtx: this.#dtx };
+  }
+
+  get perfilTela() {
+    return this.#perfilTela;
+  }
+
+  /**
+   * Qualidade do áudio que sai desta máquina. O bitrate vale na hora, sem
+   * renegociar; o `dtx` é declaração de SDP e só chega ao outro lado na
+   * próxima negociação — o que é aceitável para uma opção que quase ninguém
+   * muda no meio de uma conversa.
+   */
+  async definirAudio({ bitrate, dtx }) {
+    if (bitrate !== undefined) this.#bitrateAudio = bitrate;
+    if (dtx !== undefined) this.#dtx = dtx;
+    await Promise.all(
+      [...this.#elos.values()].map((elo) => limitarAudio(elo.remetenteAudio, this.#bitrateAudio))
+    );
+  }
+
+  /**
+   * Troca o perfil da tela. As dimensões e os quadros vivem na trilha de
+   * captura e são aplicados por quem a possui; aqui trata-se do que depende da
+   * conexão — teto de banda, política de degradação e codec.
+   */
+  async definirPerfilTela(perfil) {
+    this.#perfilTela = perfil;
+    if (this.#trilhaTela) this.#trilhaTela.contentHint = perfil.dica;
+    for (const elo of this.#elos.values()) {
+      if (!elo.remetenteTela) continue;
+      preferirCodec(elo.transceptorTela, perfil.codec);
+      await limitarTela(elo.remetenteTela, perfil);
+    }
   }
 
   /** O servidor só diz quem eu sou depois que a malha já existe. */
@@ -189,8 +417,14 @@ export class Malha {
     this.#trilhaAudio = trilha;
     this.#fluxoAudio = fluxo;
     for (const elo of this.#elos.values()) {
-      const jaTem = elo.pc.getSenders().some((r) => r.track?.kind === "audio");
-      if (!jaTem) elo.pc.addTrack(trilha, fluxo);
+      if (!elo.remetenteAudio) {
+        elo.remetenteAudio = elo.pc.addTrack(trilha, fluxo);
+        limitarAudio(elo.remetenteAudio, this.#bitrateAudio);
+      } else if (elo.remetenteAudio.track !== trilha) {
+        // Trocar a trilha no remetente não muda o SDP: o microfone pode ser
+        // trocado no meio da conversa sem uma renegociação por participante.
+        elo.remetenteAudio.replaceTrack(trilha).catch(() => {});
+      }
     }
   }
 
@@ -212,12 +446,33 @@ export class Malha {
     const elo = new Elo(id, polido, this, !iniciar);
     this.#elos.set(id, elo);
 
-    if (this.#trilhaAudio) elo.pc.addTrack(this.#trilhaAudio, this.#fluxoAudio);
-    if (this.#trilhaTela) {
-      elo.remetenteTela = elo.pc.addTrack(this.#trilhaTela, this.#fluxoTela);
-      limitarTela(elo.remetenteTela);
+    if (this.#trilhaAudio) {
+      elo.remetenteAudio = elo.pc.addTrack(this.#trilhaAudio, this.#fluxoAudio);
+      limitarAudio(elo.remetenteAudio, this.#bitrateAudio);
     }
+    if (this.#trilhaTela) this.#anexarTela(elo);
     return elo;
+  }
+
+  /** A preferência de codec precisa estar posta antes de a oferta ser criada.
+   *  `addTrack` só agenda a renegociação, então o que vem logo a seguir, de
+   *  forma síncrona, ainda chega a tempo. */
+  #anexarTela(elo) {
+    elo.remetenteTela = elo.pc.addTrack(this.#trilhaTela, this.#fluxoTela);
+    elo.transceptorTela = elo.pc
+      .getTransceivers()
+      .find((t) => t.sender === elo.remetenteTela);
+    preferirCodec(elo.transceptorTela, this.#perfilTela.codec);
+    limitarTela(elo.remetenteTela, this.#perfilTela);
+
+    // O som do sistema vai numa trilha própria, no mesmo fluxo do vídeo. É o
+    // que permite ao outro lado distingui-lo da voz — e, sobretudo, não passá-lo
+    // pelos filtros feitos para voz. Um cancelador de eco e uma porta de ruído
+    // destroem música e efeitos de jogo.
+    if (this.#trilhaAudioTela) {
+      elo.remetenteAudioTela = elo.pc.addTrack(this.#trilhaAudioTela, this.#fluxoTela);
+      limitarAudio(elo.remetenteAudioTela, BITRATE_AUDIO_TELA);
+    }
   }
 
   receberSinal(id, dados) {
@@ -238,31 +493,37 @@ export class Malha {
     this.#fluxoAudio = null;
     this.#trilhaTela = null;
     this.#fluxoTela = null;
+    this.#trilhaAudioTela = null;
   }
 
-  publicarTela(trilha, fluxo) {
+  publicarTela(trilha, fluxo, trilhaAudio = null) {
     this.#trilhaTela = trilha;
     this.#fluxoTela = fluxo;
+    this.#trilhaAudioTela = trilhaAudio;
+    trilha.contentHint = this.#perfilTela.dica;
+    // "music" impede que o cancelamento de eco e a supressão de ruído do motor
+    // ajam sobre uma trilha que não é voz.
+    if (trilhaAudio) trilhaAudio.contentHint = "music";
     for (const elo of this.#elos.values()) {
-      if (!elo.remetenteTela) {
-        elo.remetenteTela = elo.pc.addTrack(trilha, fluxo);
-        limitarTela(elo.remetenteTela);
-      }
+      if (!elo.remetenteTela) this.#anexarTela(elo);
     }
   }
 
   retirarTela() {
     for (const elo of this.#elos.values()) {
-      if (elo.remetenteTela) {
+      for (const campo of ["remetenteTela", "remetenteAudioTela"]) {
+        if (!elo[campo]) continue;
         try {
-          elo.pc.removeTrack(elo.remetenteTela);
+          elo.pc.removeTrack(elo[campo]);
         } catch {
           /* conexão já encerrada */
         }
-        elo.remetenteTela = null;
+        elo[campo] = null;
       }
+      elo.transceptorTela = null;
     }
     this.#trilhaTela = null;
     this.#fluxoTela = null;
+    this.#trilhaAudioTela = null;
   }
 }

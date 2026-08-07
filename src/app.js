@@ -1,5 +1,6 @@
 import { Sinal } from "./sinal.js";
-import { Malha } from "./rtc.js";
+import { Malha, PERFIS_TELA, PERFIL_TELA_PADRAO, acharPerfilDeTela } from "./rtc.js";
+import { MotorDeAudio, AUDIO_PADRAO, BITRATES_AUDIO, listarDispositivos } from "./audio.js";
 
 /* ═══ Atalhos ═══════════════════════════════════════════════════ */
 
@@ -18,6 +19,9 @@ const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
  *  gravado, e sem a troca continuaria preso a um servidor local que na maioria
  *  das máquinas nem está de pé. */
 const SERVIDOR_ANTIGO = "ws://127.0.0.1:8787";
+
+/** Página do projeto, que hospeda a página de convite. */
+const SITE = "https://alanaraujo-bit.github.io/CALL";
 
 const HORA = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
 const DIA = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
@@ -52,14 +56,24 @@ const estado = {
   transmitindo: false,
   hospedando: false,
   ocupado: false,
+
+  /** Preferências de áudio; a forma delas vive em `audio.js`. */
+  audio: { ...AUDIO_PADRAO },
+  /** Perfil de qualidade da transmissão de tela. */
+  perfilTela: PERFIL_TELA_PADRAO,
+  /** Compartilhar o som do sistema junto com a tela. */
+  audioDaTela: true,
+  /** Volume por pessoa, guardado pelo identificador estável e não pelo `id`
+   *  da sessão — quem sobe o volume de alguém quer isso amanhã também. */
+  volumes: new Map(), // usuario -> 0 a 2
 };
 
-const audiosRemotos = new Map(); // id -> HTMLAudioElement
+const audiosRemotos = new Map(); // id -> HTMLAudioElement de sustentação
 const telas = new Map(); // id -> HTMLElement do palco
 const linhas = new Map(); // id -> [HTMLElement] que recebem a marca de fala
-const medidores = new Map(); // id -> { fonte, analisador, dados, ateQuando, falando }
+const medidores = new Map(); // id -> { no, analisador, dados, ateQuando, falando }
 
-let contexto = null; // AudioContext, criado só durante a voz
+const motor = new MotorDeAudio();
 let cronometroVoz = null;
 
 const sinal = new Sinal();
@@ -68,6 +82,9 @@ const malha = new Malha({
   aoTrilha: receberTrilha,
   aoFimDeTrilha: (id, trilha) => {
     if (trilha.kind === "video") removerTela(id);
+    // Quem parou de transmitir levou junto o som da transmissão; a voz
+    // continua, e o nó dela não pode ser tocado aqui.
+    else motor.desligarSaida(`tela:${id}`);
   },
   aoEstado: aoEstadoDaConexao,
 });
@@ -88,6 +105,15 @@ function carregarPreferencias() {
     estado.atalhos = Array.isArray(bruto.atalhos)
       ? bruto.atalhos.filter((a) => a && typeof a.codigo === "string")
       : [];
+
+    // Só as chaves conhecidas entram: uma preferência gravada por uma versão
+    // futura, ou adulterada à mão, não deve virar constraint de captura.
+    for (const chave of Object.keys(AUDIO_PADRAO)) {
+      if (bruto.audio && chave in bruto.audio) estado.audio[chave] = bruto.audio[chave];
+    }
+    if (PERFIS_TELA.some((p) => p.id === bruto.perfilTela)) estado.perfilTela = bruto.perfilTela;
+    if (typeof bruto.audioDaTela === "boolean") estado.audioDaTela = bruto.audioDaTela;
+    estado.volumes = new Map(Array.isArray(bruto.volumes) ? bruto.volumes : []);
   } catch {
     /* preferências ilegíveis: segue com os padrões */
   }
@@ -108,6 +134,10 @@ function salvarPreferencias() {
       servidor: estado.servidor,
       usuario: estado.usuario,
       atalhos: estado.atalhos,
+      audio: estado.audio,
+      perfilTela: estado.perfilTela,
+      audioDaTela: estado.audioDaTela,
+      volumes: [...estado.volumes],
     })
   );
 }
@@ -188,6 +218,24 @@ function perguntar({ titulo, texto = "", campos = [], confirmar = "Confirmar", p
         });
         entrada.valor = () =>
           [...entrada.children].find((b) => b.dataset.ativa === "sim")?.dataset.valor;
+      } else if (campo.deslizante) {
+        // Um deslizante que só valesse ao confirmar seria inútil para volume:
+        // é preciso ouvir o efeito enquanto se arrasta. Ele aplica ao vivo, e
+        // o cancelar do diálogo é que desfaz.
+        entrada = document.createElement("input");
+        entrada.type = "range";
+        entrada.className = "deslizante";
+        Object.assign(entrada, campo.deslizante);
+        entrada.value = String(campo.valor);
+        const mostrar = () => {
+          nome.textContent = `${campo.rotulo} — ${campo.formatar(Number(entrada.value))}`;
+        };
+        entrada.addEventListener("input", () => {
+          mostrar();
+          campo.aoMudar?.(Number(entrada.value));
+        });
+        mostrar();
+        entrada.valor = () => Number(entrada.value);
       } else {
         entrada = document.createElement("input");
         entrada.className = "campo__entrada";
@@ -353,6 +401,11 @@ function prepararAplicacao() {
   $("botao-transmitir").addEventListener("click", alternarTransmissao);
   $("botao-sair-voz").addEventListener("click", () => sairDaVoz(true));
 
+  prepararAjustes();
+  document.addEventListener("keydown", (evento) => {
+    if (evento.key === "Escape" && !$("ajustes").classList.contains("oculto")) fecharAjustes();
+  });
+
   prepararRedator();
 
   sinal.addEventListener("entrou", (e) => aoEntrar(e.detail.membro));
@@ -374,6 +427,50 @@ function prepararAplicacao() {
 
   desenharAtalhos();
   redesenhar();
+
+  aplicacaoPronta = true;
+  aproveitarConvite();
+}
+
+/* ═══ Convite por link ══════════════════════════════════════════ */
+
+/** Código trazido por `call://` que ainda não pôde ser usado. */
+let convitePendente = null;
+let aplicacaoPronta = false;
+
+/**
+ * O Rust guarda o convite e avisa que ele existe; o código vem por este
+ * comando, que também o esquece. Um caminho só: se o aviso e a leitura da
+ * partida se cruzarem, o segundo encontra a vaga vazia em vez de entrar no
+ * grupo duas vezes.
+ */
+async function receberConvite() {
+  try {
+    const codigo = await invocar("convite_pendente");
+    if (codigo) convitePendente = codigo;
+  } catch {
+    return; // fora do aplicativo — não há protocolo a atender
+  }
+  aproveitarConvite();
+}
+
+/**
+ * O link pode chegar com o aplicativo ainda na tela de entrada, sem apelido
+ * escolhido e sem servidor confirmado. Nesse caso o convite espera: entrar em
+ * um grupo antes disso apareceria para os outros como alguém sem nome.
+ */
+function aproveitarConvite() {
+  if (!convitePendente || !aplicacaoPronta) return;
+
+  const codigo = convitePendente;
+  convitePendente = null;
+
+  if (codigo === estado.grupo?.codigo) {
+    avisar("Você já está neste grupo.");
+    return;
+  }
+  avisar("Entrando pelo convite…");
+  conectar({ tipo: "entrar", codigo });
 }
 
 function iniciais(nome) {
@@ -539,23 +636,57 @@ function desenharCabecalhoDoGrupo() {
   $("botao-menu-grupo").disabled = !grupo;
   $("botao-convite").hidden = !grupo;
   $("codigo-convite").textContent = grupo?.codigo ?? "—";
-  $("acao-convite").textContent = "copiar";
+  $("acao-convite").textContent = "copiar link";
 }
 
-async function copiarConvite() {
-  if (!estado.grupo) return;
+/**
+ * O link do convite aponta para a página do projeto, não direto para
+ * `call://`: quem recebe pode não ter o CALL instalado, e um esquema que
+ * ninguém registrou não abre nada nem explica por quê. A página abre o
+ * aplicativo com um clique para quem tem, e oferece o instalador para quem
+ * não tem.
+ */
+function linkDoConvite() {
+  const grupo = estado.grupo;
+  if (!grupo) return null;
+
+  const endereco = new URL(`${SITE}/entrar/`);
+  endereco.searchParams.set("c", grupo.codigo);
+  if (grupo.nome) endereco.searchParams.set("g", grupo.nome);
+  if (estado.apelido) endereco.searchParams.set("a", estado.apelido);
+  return endereco.toString();
+}
+
+async function copiar(texto) {
   try {
-    await navigator.clipboard.writeText(estado.grupo.codigo);
-    $("acao-convite").textContent = "copiado";
-    setTimeout(() => ($("acao-convite").textContent = "copiar"), 1600);
+    await navigator.clipboard.writeText(texto);
+    return true;
   } catch {
     avisar("Não foi possível copiar. Selecione o código à mão.", "erro");
+    return false;
   }
+}
+
+/** Clique no cartão do convite: o link, que é o que se manda para alguém. */
+async function copiarConvite() {
+  const link = linkDoConvite();
+  if (!link) return;
+  if (!(await copiar(link))) return;
+
+  $("acao-convite").textContent = "link copiado";
+  setTimeout(() => ($("acao-convite").textContent = "copiar link"), 1600);
+}
+
+/** O código continua tendo dono: quem vai ditar por voz ou digitar à mão. */
+async function copiarCodigo() {
+  if (!estado.grupo) return;
+  if (await copiar(estado.grupo.codigo)) avisar("Código copiado.", "bom");
 }
 
 function menuDoGrupo(ancora) {
   const itens = [
-    { rotulo: "Copiar convite", acao: copiarConvite },
+    { rotulo: "Copiar link do convite", acao: copiarConvite },
+    { rotulo: "Copiar código do convite", acao: copiarCodigo },
     { rotulo: "Sair do grupo", acao: () => desligar() },
     "-",
     {
@@ -948,10 +1079,59 @@ function desenharParticipantes() {
     if (membro.transmitindo) sinais.innerHTML += SVG_TRANSMITINDO;
     if (membro.mudo) sinais.innerHTML += SVG_MUDO;
 
+    // O volume de cada pessoa fica no botão direito, e não numa engrenagem por
+    // linha: é ajuste raro, e um controle permanente por participante encheria
+    // uma coluna de 212 px de coisa que quase nunca se usa.
+    if (membro.id !== estado.meuId) {
+      linha.addEventListener("contextmenu", (evento) => {
+        evento.preventDefault();
+        abrirMenu(linha, [{ rotulo: "Ajustar volume…", acao: () => ajustarVolumeDe(membro) }]);
+      });
+    }
+
     linha.append(avatar, nome, sinais);
     lista.append(linha);
     registrarLinha(membro.id, linha);
   }
+}
+
+/**
+ * Volume individual. Vale para a voz e para o som que a pessoa transmite, e é
+ * guardado pelo identificador estável — quem abaixou alguém hoje quer isso
+ * amanhã, mesmo com outro `id` de sessão.
+ */
+async function ajustarVolumeDe(membro) {
+  const anterior = estado.volumes.get(membro.usuario) ?? 1;
+  const aplicar = (valor) => {
+    motor.definirVolumeDe(membro.id, valor);
+    motor.definirVolumeDe(`tela:${membro.id}`, valor);
+  };
+
+  const resposta = await perguntar({
+    titulo: `Volume de ${membro.apelido}`,
+    campos: [
+      {
+        rotulo: "Volume",
+        deslizante: { min: 0, max: 200, step: 5 },
+        valor: Math.round(anterior * 100),
+        formatar: (v) => `${v}%`,
+        aoMudar: (v) => aplicar(v / 100),
+        obrigatorio: false,
+      },
+    ],
+    confirmar: "Guardar",
+  });
+
+  if (!resposta) {
+    aplicar(anterior);
+    return;
+  }
+
+  const escolhido = resposta[0] / 100;
+  aplicar(escolhido);
+  if (escolhido === 1) estado.volumes.delete(membro.usuario);
+  else estado.volumes.set(membro.usuario, escolhido);
+  salvarPreferencias();
 }
 
 function atualizarConexao(ligado) {
@@ -1189,7 +1369,7 @@ function aoEntrarNaVoz({ canal, pares }) {
 
   const [trilha] = estado.fluxoMicrofone.getAudioTracks();
   malha.definirAudioLocal(trilha, estado.fluxoMicrofone);
-  observarVoz(estado.meuId, estado.fluxoMicrofone);
+  observarVoz(estado.meuId, motor.noLocal);
 
   // Quem já estava na sala: eu ofereço a conexão. Quem chegar depois oferece
   // para mim — assim nunca há dois lados ofertando ao mesmo tempo.
@@ -1221,6 +1401,9 @@ function derrubarPar(id) {
   malha.fechar(id);
   removerTela(id);
   esquecerVoz(id);
+  motor.desligarSaida(id);
+  motor.desligarSaida(`tela:${id}`);
+  fluxosDeVoz.delete(id);
 
   const audio = audiosRemotos.get(id);
   if (audio) {
@@ -1263,28 +1446,27 @@ function desmontarMalha(soltarMicrofone = true) {
 
   if (!soltarMicrofone) return;
 
-  estado.fluxoMicrofone?.getTracks().forEach((t) => t.stop());
+  motor.soltarMicrofone();
   estado.fluxoMicrofone = null;
   estado.mudo = false;
 
-  contexto?.close().catch(() => {});
-  contexto = null;
+  // O contexto só é fechado se o painel de ajustes não estiver medindo: fechá-lo
+  // no meio de um teste de microfone mataria o medidor que a pessoa está olhando.
+  if (!$("ajustes")?.classList.contains("oculto")) return;
+  motor.encerrar().catch(() => {});
 }
 
 async function pedirMicrofone() {
   if (estado.fluxoMicrofone) return estado.fluxoMicrofone;
   try {
-    const fluxo = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
-    });
-    estado.fluxoMicrofone = fluxo;
-    return fluxo;
-  } catch {
+    await motor.aplicar(estado.audio);
+    // O que segue para os pares é a saída tratada, não a do dispositivo: a
+    // passa-alta e a porta de ruído já agiram quando o WebRTC recebe a trilha.
+    estado.fluxoMicrofone = await motor.abrirMicrofone();
+    await malha.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga });
+    return estado.fluxoMicrofone;
+  } catch (erro) {
+    console.error("[audio] captura falhou", erro);
     throw new Error("Não foi possível acessar o microfone. Verifique as permissões.");
   }
 }
@@ -1339,11 +1521,19 @@ async function alternarTransmissao() {
   }
   if (!estado.canalVoz) return;
 
+  const perfil = acharPerfilDeTela(estado.perfilTela);
   let fluxo;
   try {
     fluxo = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 15, max: 30 } },
-      audio: false,
+      // `ideal`, e não `exact`: uma janela de 800×600 não deve ser recusada
+      // por não alcançar 1080p, e uma tela 4K deve descer até o perfil em vez
+      // de mandar 4K para a rede. O `max` é que faz o trabalho.
+      video: {
+        width: { max: perfil.largura },
+        height: { max: perfil.altura },
+        frameRate: { ideal: perfil.quadros, max: perfil.quadros },
+      },
+      audio: estado.audioDaTela,
     });
   } catch (erro) {
     if (erro?.name !== "NotAllowedError") {
@@ -1365,12 +1555,16 @@ async function alternarTransmissao() {
   const [trilha] = fluxo.getVideoTracks();
   // Quem encerra pelo botão do próprio Windows não passa pelo nosso botão.
   trilha.addEventListener("ended", pararTransmissao);
-  // O que se compartilha aqui é texto e interface: nitidez importa mais que
-  // fluidez. "detail" faz o codificador sacrificar quadros para manter a
-  // legibilidade, o oposto do padrão de vídeo em movimento.
-  trilha.contentHint = "detail";
 
-  malha.publicarTela(trilha, fluxo);
+  // O seletor nativo do Windows nem sempre oferece o som — compartilhar uma
+  // janela só entrega vídeo. Avisar é melhor do que a pessoa descobrir pelo
+  // silêncio do outro lado.
+  if (estado.audioDaTela && fluxo.getAudioTracks().length === 0) {
+    avisar("Esta captura não inclui som. Compartilhe a tela inteira para levar o áudio.", "neutro");
+  }
+
+  await malha.definirPerfilTela(perfil);
+  malha.publicarTela(trilha, fluxo, fluxo.getAudioTracks()[0] ?? null);
   mostrarTela(estado.meuId, fluxo, `${estado.apelido} (você)`);
 
   const eu = estado.membros.get(estado.meuId);
@@ -1446,19 +1640,51 @@ function atualizarPalco() {
 
 /* ═══ Mídia recebida ════════════════════════════════════════════ */
 
+/**
+ * Qual fluxo carrega a voz de cada par.
+ *
+ * Uma pessoa transmitindo a tela com som manda duas trilhas de áudio, e tratar
+ * as duas igual passaria a trilha sonora de um jogo pelo medidor de fala e pelo
+ * volume de voz. O primeiro fluxo de áudio que chega de alguém é sempre o do
+ * microfone — a voz entra na malha ao entrar no canal, muito antes de qualquer
+ * transmissão —, então o que vier em outro fluxo é som de tela.
+ */
+const fluxosDeVoz = new Map(); // id do par -> id do MediaStream da voz
+
 function receberTrilha(id, trilha, fluxo) {
   if (trilha.kind === "audio") {
+    if (!fluxosDeVoz.has(id)) fluxosDeVoz.set(id, fluxo.id);
+
+    if (fluxosDeVoz.get(id) !== fluxo.id) {
+      // Som da transmissão: entra no grafo sem medidor de fala e sem os
+      // filtros de voz, no volume que a pessoa tem para quem transmite.
+      const membro = estado.membros.get(id);
+      motor
+        .ligarSaida(`tela:${id}`, fluxo)
+        .then((ganho) => {
+          if (ganho) ganho.gain.value = estado.volumes.get(membro?.usuario) ?? 1;
+        })
+        .catch(() => {});
+      return;
+    }
+
+    // O `<audio>` continua aqui, mudo. Ele não reproduz nada — quem reproduz é
+    // o grafo, que é o único jeito de haver volume por pessoa e escolha de
+    // dispositivo de saída. Ele existe porque um fluxo remoto que não está
+    // preso a nenhum elemento de mídia é tratado pelo Chromium como sem
+    // consumidor, e a decodificação pode não ser mantida.
     let audio = audiosRemotos.get(id);
     if (!audio) {
       audio = document.createElement("audio");
       audio.autoplay = true;
+      audio.muted = true;
       audio.style.display = "none";
       document.body.append(audio);
       audiosRemotos.set(id, audio);
     }
     audio.srcObject = fluxo;
     audio.play().catch(() => {});
-    observarVoz(id, fluxo);
+    ligarAudioRemoto(id, fluxo);
     return;
   }
 
@@ -1479,23 +1705,38 @@ const LIMIAR_SAIDA = 0.012;
 /** Quanto a marca permanece acesa depois do último trecho acima do limiar. */
 const PERMANENCIA = 420;
 
-function observarVoz(id, fluxo) {
-  if (fluxo.getAudioTracks().length === 0) return;
+/** Liga a voz de alguém ao grafo e passa a medir a fala do mesmo ponto. */
+async function ligarAudioRemoto(id, fluxo) {
+  // Uma renegociação reentrega a mesma trilha. Sem soltar o que veio antes,
+  // cada rodada deixaria para trás um nó vivo no grafo.
+  esquecerVoz(id);
+  motor.desligarSaida(id);
 
-  // Uma renegociação reentrega a mesma trilha. Sem soltar o medidor anterior,
-  // cada rodada deixaria para trás um nó vivo no grafo do AudioContext.
+  const ganho = await motor.ligarSaida(id, fluxo);
+  if (!ganho) return;
+
+  const membro = estado.membros.get(id);
+  ganho.gain.value = estado.volumes.get(membro?.usuario) ?? 1;
+  await observarVoz(id, ganho);
+}
+
+/**
+ * Passa a acompanhar a fala em um ponto do grafo. É de propósito que o nó
+ * medido seja o da saída tratada, e não o da captura: a marca de "falando"
+ * precisa dizer o que os outros ouvem. Se a porta de ruído cortou, ninguém
+ * ouviu, e a marca não deve acender.
+ */
+async function observarVoz(id, no) {
+  if (!no) return;
   esquecerVoz(id);
 
-  contexto ??= new AudioContext();
-  contexto.resume().catch(() => {});
-
+  const contexto = await motor.contexto();
   const analisador = contexto.createAnalyser();
   analisador.fftSize = 512;
-  const fonte = contexto.createMediaStreamSource(fluxo);
-  fonte.connect(analisador);
+  no.connect(analisador);
 
   medidores.set(id, {
-    fonte,
+    no,
     analisador,
     dados: new Uint8Array(analisador.fftSize),
     ateQuando: 0,
@@ -1509,7 +1750,13 @@ function observarVoz(id, fluxo) {
 function esquecerVoz(id) {
   const medidor = medidores.get(id);
   if (!medidor) return;
-  medidor.fonte.disconnect();
+  // Desfaz só esta ligação: o nó medido também alimenta a chamada, e um
+  // `disconnect()` sem argumento derrubaria o áudio junto com o medidor.
+  try {
+    medidor.no.disconnect(medidor.analisador);
+  } catch {
+    /* o nó já podia ter sido descartado */
+  }
   medidor.analisador.disconnect();
   medidores.delete(id);
 
@@ -1551,6 +1798,290 @@ function marcarFala(id, falando) {
   for (const linha of linhas.get(id) ?? []) {
     linha.dataset.falando = falando ? "sim" : "nao";
   }
+}
+
+/* ═══ Ajustes de voz e vídeo ════════════════════════════════════ */
+
+/** Faixa mostrada no medidor. Abaixo de −70 dB não há o que ver, e acima de 0
+ *  não há o que medir. */
+const MEDIDOR_MIN = -70;
+const posicaoNoMedidor = (db) =>
+  Math.min(100, Math.max(0, ((db - MEDIDOR_MIN) / -MEDIDOR_MIN) * 100));
+
+let ajustesPreparados = false;
+
+function prepararAjustes() {
+  if (ajustesPreparados) return;
+  ajustesPreparados = true;
+
+  $("botao-ajustes").addEventListener("click", abrirAjustes);
+  $("ajustes-fechar").addEventListener("click", fecharAjustes);
+  $("ajustes").addEventListener("click", (evento) => {
+    if (evento.target === $("ajustes")) fecharAjustes();
+  });
+
+  for (const aba of document.querySelectorAll(".aba")) {
+    aba.addEventListener("click", () => trocarAba(aba.dataset.aba));
+  }
+
+  // Um deslizante emite `input` a cada pixel arrastado. Aplicar no motor é
+  // barato (é só o valor de um parâmetro), mas gravar em disco a cada pixel
+  // não é — a gravação sai da mão de quem arrasta e vai para o `change`.
+  const deslizante = (id, ler, aoVivo) => {
+    const campo = $(id);
+    campo.addEventListener("input", () => aoVivo(ler(campo)));
+    campo.addEventListener("change", () => aplicarAudio({}, true));
+  };
+
+  deslizante("ajuste-ganho", (c) => Number(c.value) / 100, (v) => {
+    $("valor-ganho").textContent = `${Math.round(v * 100)}%`;
+    aplicarAudio({ ganhoEntrada: v });
+  });
+  deslizante("ajuste-volume", (c) => Number(c.value) / 100, (v) => {
+    $("valor-volume").textContent = `${Math.round(v * 100)}%`;
+    aplicarAudio({ volumeGeral: v });
+  });
+  deslizante("ajuste-limiar", (c) => Number(c.value), (v) => {
+    $("valor-limiar").textContent = `${String(v).replace("-", "−")} dB`;
+    aplicarAudio({ limiar: v });
+  });
+
+  const chave = (id, campo) =>
+    $(id).addEventListener("change", (e) => aplicarAudio({ [campo]: e.target.checked }, true));
+
+  chave("ajuste-porta", "porta");
+  chave("ajuste-eco", "cancelarEco");
+  chave("ajuste-supressao", "suprimirRuido");
+  chave("ajuste-agc", "ganhoAutomatico");
+  chave("ajuste-continuo", "bandaLarga");
+
+  $("ajuste-porta").addEventListener("change", (e) => {
+    $("bloco-limiar").hidden = !e.target.checked;
+  });
+
+  for (const [id, campo] of [["ajuste-entrada", "entrada"], ["ajuste-saida", "saida"]]) {
+    $(id).addEventListener("change", (e) => aplicarAudio({ [campo]: e.target.value }, true));
+  }
+
+  $("ajuste-som-da-tela").addEventListener("change", (e) => {
+    estado.audioDaTela = e.target.checked;
+    salvarPreferencias();
+  });
+
+  montarBitrates();
+  montarPerfis();
+
+  // Trocar de fone no meio da conversa não deve exigir reabrir o painel.
+  navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+    if (!$("ajustes").classList.contains("oculto")) desenharDispositivos();
+  });
+}
+
+function montarBitrates() {
+  const area = $("ajuste-bitrate");
+  area.textContent = "";
+  for (const opcao of BITRATES_AUDIO) {
+    const botao = document.createElement("button");
+    botao.type = "button";
+    botao.className = "opcao";
+    botao.title = opcao.detalhe;
+    botao.innerHTML = `<span class="opcao__nome"></span><span class="opcao__detalhe"></span>`;
+    botao.querySelector(".opcao__nome").textContent = opcao.nome;
+    botao.querySelector(".opcao__detalhe").textContent = `${opcao.valor / 1000}k`;
+    botao.addEventListener("click", () => {
+      aplicarAudio({ bitrate: opcao.valor }, true);
+      refletirAjustes();
+    });
+    area.append(botao);
+  }
+}
+
+function montarPerfis() {
+  const area = $("ajuste-perfil");
+  area.textContent = "";
+  for (const perfil of PERFIS_TELA) {
+    const botao = document.createElement("button");
+    botao.type = "button";
+    botao.className = "perfil-tela";
+    botao.dataset.perfil = perfil.id;
+
+    const texto = document.createElement("span");
+    texto.className = "perfil-tela__texto";
+    const nome = document.createElement("span");
+    nome.className = "perfil-tela__nome";
+    nome.textContent = perfil.nome;
+    const resumo = document.createElement("span");
+    resumo.className = "perfil-tela__resumo";
+    resumo.textContent = perfil.resumo;
+    texto.append(nome, resumo);
+
+    const detalhe = document.createElement("span");
+    detalhe.className = "perfil-tela__detalhe";
+    detalhe.textContent = perfil.detalhe;
+
+    botao.append(texto, detalhe);
+    botao.addEventListener("click", async () => {
+      estado.perfilTela = perfil.id;
+      salvarPreferencias();
+      refletirAjustes();
+      // Já transmitindo: o teto e a política valem na hora. As dimensões e os
+      // quadros vivem na captura, e trocá-los exigiria pedir a tela de novo —
+      // o que faria o Windows perguntar tudo outra vez no meio da conversa.
+      if (estado.transmitindo) await malha.definirPerfilTela(perfil);
+    });
+    area.append(botao);
+  }
+}
+
+/**
+ * Aplica preferências ao motor e, quando pedido, grava.
+ *
+ * A reabertura do microfone é decidida pelo motor: só o que o `getUserMedia`
+ * governa — dispositivo, eco, supressão, ganho automático — obriga a recapturar.
+ * Voltar da recaptura exige reentregar a trilha, porque é um destino novo.
+ */
+async function aplicarAudio(mudancas, gravar = false) {
+  Object.assign(estado.audio, mudancas);
+  if (gravar) salvarPreferencias();
+
+  try {
+    const recapturou = await motor.aplicar(estado.audio);
+    if (recapturou && estado.canalVoz) {
+      estado.fluxoMicrofone = motor.fluxo;
+      const [trilha] = estado.fluxoMicrofone.getAudioTracks();
+      trilha.enabled = !estado.mudo;
+      malha.definirAudioLocal(trilha, estado.fluxoMicrofone);
+      await observarVoz(estado.meuId, motor.noLocal);
+    }
+    if ("bitrate" in mudancas || "bandaLarga" in mudancas) {
+      await malha.definirAudio({
+        bitrate: estado.audio.bitrate,
+        dtx: !estado.audio.bandaLarga,
+      });
+    }
+  } catch (erro) {
+    console.error("[audio] ajuste recusado", erro);
+    avisar("Não foi possível aplicar o ajuste de áudio.", "erro");
+  }
+}
+
+async function abrirAjustes() {
+  prepararAjustes();
+  $("ajustes").classList.remove("oculto");
+  trocarAba("voz");
+  refletirAjustes();
+
+  // O microfone é aberto para o teste mesmo fora de um canal de voz: ajustar a
+  // porta de ruído sem ouvir o próprio nível seria adivinhação.
+  try {
+    if (!estado.fluxoMicrofone) await motor.abrirMicrofone();
+    await observarNivel();
+  } catch {
+    $("medidor-estado").textContent = "microfone indisponível";
+  }
+
+  // Os rótulos dos dispositivos só existem depois de uma permissão concedida —
+  // por isso a lista é montada depois de abrir o microfone, e não antes.
+  await desenharDispositivos();
+}
+
+function fecharAjustes() {
+  $("ajustes").classList.add("oculto");
+  motor.medir(null);
+
+  // Fora de um canal de voz, o microfone aberto era só para o teste.
+  if (!estado.canalVoz) {
+    motor.soltarMicrofone();
+    estado.fluxoMicrofone = null;
+    motor.encerrar().catch(() => {});
+  }
+}
+
+function trocarAba(nome) {
+  for (const aba of document.querySelectorAll(".aba")) {
+    aba.setAttribute("aria-selected", aba.dataset.aba === nome ? "true" : "false");
+  }
+  for (const painel of document.querySelectorAll(".ajustes__painel")) {
+    painel.hidden = painel.dataset.painel !== nome;
+  }
+}
+
+/** Põe na tela o que está no estado. Um só caminho: qualquer mudança passa a
+ *  gravar e a chamar isto, em vez de cada controle cuidar do próprio rótulo. */
+function refletirAjustes() {
+  const a = estado.audio;
+
+  $("ajuste-ganho").value = String(Math.round(a.ganhoEntrada * 100));
+  $("valor-ganho").textContent = `${Math.round(a.ganhoEntrada * 100)}%`;
+  $("ajuste-volume").value = String(Math.round(a.volumeGeral * 100));
+  $("valor-volume").textContent = `${Math.round(a.volumeGeral * 100)}%`;
+  $("ajuste-limiar").value = String(a.limiar);
+  $("valor-limiar").textContent = `${String(a.limiar).replace("-", "−")} dB`;
+
+  $("ajuste-porta").checked = a.porta;
+  $("bloco-limiar").hidden = !a.porta;
+  $("ajuste-eco").checked = a.cancelarEco;
+  $("ajuste-supressao").checked = a.suprimirRuido;
+  $("ajuste-agc").checked = a.ganhoAutomatico;
+  $("ajuste-continuo").checked = a.bandaLarga;
+  $("ajuste-som-da-tela").checked = estado.audioDaTela;
+
+  for (const [i, botao] of [...$("ajuste-bitrate").children].entries()) {
+    botao.setAttribute("aria-pressed", BITRATES_AUDIO[i].valor === a.bitrate ? "true" : "false");
+  }
+  for (const botao of $("ajuste-perfil").children) {
+    botao.setAttribute(
+      "aria-pressed",
+      botao.dataset.perfil === estado.perfilTela ? "true" : "false"
+    );
+  }
+
+  $("medidor-limiar").style.left = `${posicaoNoMedidor(a.limiar)}%`;
+}
+
+/** Liga o medidor ao vivo. Os números vêm da própria porta, na thread de
+ *  áudio — medir de novo aqui seria medir outra coisa. */
+async function observarNivel() {
+  const medidor = $("medidor");
+  const barra = $("medidor-nivel");
+  const piso = $("medidor-piso");
+  const marca = $("medidor-limiar");
+
+  motor.medir((dados) => {
+    barra.style.width = `${posicaoNoMedidor(dados.nivel)}%`;
+    piso.style.width = `${posicaoNoMedidor(dados.piso)}%`;
+    // O limiar mostrado é o que a porta usa de fato: o pedido pelo deslizante
+    // ou o piso medido mais a margem, o que for maior.
+    marca.style.left = `${posicaoNoMedidor(dados.abertura)}%`;
+    medidor.dataset.aberta = dados.aberta ? "sim" : "nao";
+    $("medidor-estado").textContent = dados.aberta ? "passando" : "em silêncio";
+  });
+}
+
+async function desenharDispositivos() {
+  const { entradas, saidas } = await listarDispositivos();
+
+  const encher = (campo, lista, escolhido, padrao) => {
+    campo.textContent = "";
+    const automatico = document.createElement("option");
+    automatico.value = "";
+    automatico.textContent = padrao;
+    campo.append(automatico);
+    for (const item of lista) {
+      const opcao = document.createElement("option");
+      opcao.value = item.id;
+      opcao.textContent = item.nome;
+      campo.append(opcao);
+    }
+    // O motor pode ter caído para o padrão se o dispositivo salvo sumiu; ler
+    // dele, e não do estado, é o que mantém a tela honesta.
+    campo.value = lista.some((i) => i.id === escolhido) ? escolhido : "";
+  };
+
+  const atual = motor.config;
+  estado.audio.entrada = atual.entrada;
+  encher($("ajuste-entrada"), entradas, atual.entrada, "Padrão do sistema");
+  encher($("ajuste-saida"), saidas, atual.saida, "Padrão do sistema");
 }
 
 /* ═══ Atualização automática ════════════════════════════════════ */
@@ -1631,6 +2162,12 @@ window.addEventListener("beforeunload", () => {
 
 carregarPreferencias();
 prepararEntrada();
+
+// Um link clicado com o CALL já aberto chega por evento; um link que abriu o
+// CALL já está guardado antes desta linha rodar. Os dois entram pela mesma
+// porta.
+window.__TAURI__?.event?.listen("convite", receberConvite);
+receberConvite();
 
 procurarAtualizacao();
 setInterval(procurarAtualizacao, INTERVALO_ATUALIZACAO);

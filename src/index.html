@@ -121,6 +121,12 @@
               <span class="perfil__nome" id="rotulo-usuario">—</span>
               <span class="perfil__estado" id="rotulo-conexao">Desconectado</span>
             </div>
+            <button class="icone" type="button" id="botao-ajustes" title="Ajustes de voz e vídeo" aria-label="Ajustes de voz e vídeo">
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <circle cx="10" cy="10" r="2.6" />
+                <path d="M10 2.2v1.9M10 15.9v1.9M17.8 10h-1.9M4.1 10H2.2M15.5 4.5l-1.3 1.3M5.8 14.2l-1.3 1.3M15.5 15.5l-1.3-1.3M5.8 5.8L4.5 4.5" />
+              </svg>
+            </button>
           </div>
         </footer>
       </aside>
@@ -239,6 +245,166 @@
             <button class="botao botao--primario" type="submit" id="dialogo-confirmar">Confirmar</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- ══ Ajustes de voz e vídeo ═══════════════════════════════════ -->
+    <div class="cortina oculto" id="ajustes">
+      <div class="ajustes" role="dialog" aria-modal="true" aria-labelledby="ajustes-titulo">
+        <header class="ajustes__topo">
+          <h3 class="ajustes__titulo" id="ajustes-titulo">Ajustes</h3>
+          <button class="icone" type="button" id="ajustes-fechar" title="Fechar" aria-label="Fechar">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+          </button>
+        </header>
+
+        <nav class="ajustes__abas" role="tablist">
+          <button class="aba" type="button" role="tab" data-aba="voz" aria-selected="true">Voz</button>
+          <button class="aba" type="button" role="tab" data-aba="tela" aria-selected="false">Transmissão</button>
+        </nav>
+
+        <div class="ajustes__corpo">
+          <!-- ── Voz ─────────────────────────────────────────────── -->
+          <section class="ajustes__painel" data-painel="voz">
+            <div class="ajuste">
+              <label class="ajuste__rotulo" for="ajuste-entrada">Microfone</label>
+              <select class="campo__entrada" id="ajuste-entrada"></select>
+            </div>
+
+            <div class="ajuste">
+              <label class="ajuste__rotulo" for="ajuste-saida">Saída de som</label>
+              <select class="campo__entrada" id="ajuste-saida"></select>
+            </div>
+
+            <!-- O medidor é o que transforma "ajustar o ruído" em algo que se
+                 vê. A barra é o nível; o traço é onde a porta abre. -->
+            <div class="ajuste">
+              <div class="ajuste__cabecalho">
+                <span class="ajuste__rotulo">Teste do microfone</span>
+                <span class="ajuste__valor" id="medidor-estado">parado</span>
+              </div>
+              <div class="medidor" id="medidor">
+                <div class="medidor__nivel" id="medidor-nivel"></div>
+                <div class="medidor__piso" id="medidor-piso"></div>
+                <div class="medidor__limiar" id="medidor-limiar"></div>
+              </div>
+              <p class="ajuste__dica">
+                Fale normalmente. A barra fica clara quando a porta está aberta e
+                escura quando ela está cortando. O traço mostra onde ela abre.
+              </p>
+            </div>
+
+            <div class="ajuste">
+              <div class="ajuste__cabecalho">
+                <label class="ajuste__rotulo" for="ajuste-ganho">Volume do microfone</label>
+                <span class="ajuste__valor" id="valor-ganho">100%</span>
+              </div>
+              <input class="deslizante" type="range" id="ajuste-ganho" min="0" max="200" step="5" />
+            </div>
+
+            <div class="ajuste">
+              <div class="ajuste__cabecalho">
+                <label class="ajuste__rotulo" for="ajuste-volume">Volume geral</label>
+                <span class="ajuste__valor" id="valor-volume">100%</span>
+              </div>
+              <input class="deslizante" type="range" id="ajuste-volume" min="0" max="200" step="5" />
+            </div>
+
+            <hr class="ajustes__risco" />
+
+            <label class="chave">
+              <input type="checkbox" id="ajuste-porta" />
+              <span class="chave__marca" aria-hidden="true"></span>
+              <span class="chave__texto">
+                <strong>Porta de ruído</strong>
+                <span>Cala o ruído de fundo entre as falas, sem cortar a voz</span>
+              </span>
+            </label>
+
+            <div class="ajuste ajuste--recuado" id="bloco-limiar">
+              <div class="ajuste__cabecalho">
+                <label class="ajuste__rotulo" for="ajuste-limiar">Sensibilidade</label>
+                <span class="ajuste__valor" id="valor-limiar">−50 dB</span>
+              </div>
+              <input class="deslizante" type="range" id="ajuste-limiar" min="-80" max="-20" step="1" />
+              <p class="ajuste__dica">
+                Mais para a esquerda deixa passar sussurros; mais para a direita
+                exige voz firme. A porta nunca abre abaixo do ruído medido da sua
+                sala, então o padrão serve à maioria.
+              </p>
+            </div>
+
+            <label class="chave">
+              <input type="checkbox" id="ajuste-eco" />
+              <span class="chave__marca" aria-hidden="true"></span>
+              <span class="chave__texto">
+                <strong>Cancelamento de eco</strong>
+                <span>Impede que o som dos alto-falantes volte pelo microfone</span>
+              </span>
+            </label>
+
+            <label class="chave">
+              <input type="checkbox" id="ajuste-supressao" />
+              <span class="chave__marca" aria-hidden="true"></span>
+              <span class="chave__texto">
+                <strong>Supressão de ruído do sistema</strong>
+                <span>Tira o chiado constante — ventilador, ar-condicionado</span>
+              </span>
+            </label>
+
+            <label class="chave">
+              <input type="checkbox" id="ajuste-agc" />
+              <span class="chave__marca" aria-hidden="true"></span>
+              <span class="chave__texto">
+                <strong>Volume automático</strong>
+                <span>Nivela sua voz quando você se afasta do microfone</span>
+              </span>
+            </label>
+
+            <hr class="ajustes__risco" />
+
+            <div class="ajuste">
+              <span class="ajuste__rotulo">Qualidade da sua voz</span>
+              <div class="opcoes" id="ajuste-bitrate"></div>
+              <p class="ajuste__dica">
+                Vale para o que sai daqui. Cada pessoa escolhe a própria — a sua
+                escolha não limita a voz de ninguém.
+              </p>
+            </div>
+
+            <label class="chave">
+              <input type="checkbox" id="ajuste-continuo" />
+              <span class="chave__marca" aria-hidden="true"></span>
+              <span class="chave__texto">
+                <strong>Envio contínuo</strong>
+                <span>Não corta a transmissão no silêncio. Gasta um pouco mais de banda e evita o degrau na volta da fala</span>
+              </span>
+            </label>
+          </section>
+
+          <!-- ── Transmissão ─────────────────────────────────────── -->
+          <section class="ajustes__painel" data-painel="tela" hidden>
+            <div class="ajuste">
+              <span class="ajuste__rotulo">Qualidade da transmissão</span>
+              <div class="perfis" id="ajuste-perfil"></div>
+            </div>
+
+            <label class="chave">
+              <input type="checkbox" id="ajuste-som-da-tela" />
+              <span class="chave__marca" aria-hidden="true"></span>
+              <span class="chave__texto">
+                <strong>Compartilhar o som</strong>
+                <span>Envia o áudio do que está na tela, separado da sua voz e sem os filtros dela</span>
+              </span>
+            </label>
+
+            <p class="ajuste__dica ajuste__dica--solta">
+              O perfil vale a partir da próxima transmissão que você iniciar, e
+              trocá-lo durante uma transmissão vale na hora. Quem recebe não paga
+              por isso: quem codifica é quem transmite.
+            </p>
+          </section>
+        </div>
       </div>
     </div>
 
