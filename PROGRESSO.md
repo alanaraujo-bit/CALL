@@ -1293,7 +1293,7 @@ botão não existe — a interface então não o mostra. **Um botão que sempre 
 | Métrica | 0.7.0 | 0.8.0 |
 | --- | --- | --- |
 | `sinalizacao.exe` (sidecar, sem Google) | 505.344 B | **599.040 B** (+91,5 KB) |
-| Instalador NSIS | 1.940.405 B | **1.996.467 B** (+54,7 KB) |
+| Instalador NSIS | 1.940.405 B | **1.997.203 B** (+55,5 KB) |
 | `call.exe` em repouso | 32,2 MB WS / 7,8 MB privado | inalterado |
 
 As 91,5 KB do sidecar são Argon2id e Blake2 — o preço de guardar senha direito,
