@@ -87,7 +87,9 @@ $b = AbrirInstancia "bruno salles" 700 40
 Start-Sleep -Seconds 6
 
 Write-Output "Iniciando transmissao em A"
-[T]::Clique($a.MainWindowHandle, 418, 672)
+[T]::Clique($a.MainWindowHandle, 418, 672)   # Transmitir tela: abre o dialogo de qualidade
+Start-Sleep -Seconds 1
+[T]::Clique($a.MainWindowHandle, 664, 577)   # Compartilhar tela: confirma e chama o seletor nativo
 Start-Sleep -Seconds 8
 
 Capturar $a.MainWindowHandle "30-A-transmitindo"

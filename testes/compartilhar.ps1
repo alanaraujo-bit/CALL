@@ -45,7 +45,9 @@ function Capturar($h, $nome) {
 $apps = Get-Process call | Sort-Object StartTime
 $a = $apps[0]; $b = $apps[1]
 
-[C]::NaJanela($a.MainWindowHandle, 418, 672)   # Transmitir tela
+[C]::NaJanela($a.MainWindowHandle, 418, 672)   # Transmitir tela: abre o dialogo de qualidade
+Start-Sleep -Seconds 1
+[C]::NaJanela($a.MainWindowHandle, 664, 577)   # Compartilhar tela: confirma e chama o seletor nativo
 Start-Sleep -Seconds 3
 [C]::NaTela(715, 220)                          # miniatura do Paint
 Start-Sleep -Milliseconds 800

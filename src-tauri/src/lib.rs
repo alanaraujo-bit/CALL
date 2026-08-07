@@ -4,6 +4,9 @@ use tauri::{Emitter, Manager, RunEvent, State};
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
+mod tela;
+use tela::CapturaAtiva;
+
 /// Processo do servidor de sinalizacao, quando esta maquina esta hospedando.
 #[derive(Default)]
 struct Hospedagem(Mutex<Option<CommandChild>>);
@@ -234,6 +237,7 @@ pub fn run() {
 
             app.manage(Hospedagem::default());
             app.manage(Convite::default());
+            app.manage(CapturaAtiva::default());
 
             // O instalador registra o esquema no sistema; em desenvolvimento
             // nao passa instalador nenhum, e sem isto o `call://` nao existiria
@@ -265,7 +269,10 @@ pub fn run() {
             encerrar_hospedagem,
             convite_pendente,
             procurar_atualizacao,
-            instalar_atualizacao
+            instalar_atualizacao,
+            tela::listar_fontes_de_tela,
+            tela::iniciar_captura_de_tela,
+            tela::parar_captura_de_tela
         ])
         .build(tauri::generate_context!())
         .expect("Falha ao iniciar a aplicação.");
@@ -275,6 +282,7 @@ pub fn run() {
     app.run(|app, evento| {
         if let RunEvent::Exit = evento {
             app.state::<Hospedagem>().encerrar();
+            let _ = tela::parar_captura_de_tela(app.state::<CapturaAtiva>());
         }
     });
 }

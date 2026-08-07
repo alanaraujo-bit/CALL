@@ -408,6 +408,82 @@
       </div>
     </div>
 
+    <!-- ══ Transmitir tela ══════════════════════════════════════════ -->
+    <div class="cortina oculto" id="transmitir-dialogo">
+      <div class="transmitir" role="dialog" aria-modal="true" aria-labelledby="transmitir-titulo">
+        <header class="transmitir__topo">
+          <span class="transmitir__glifo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="13" rx="2" />
+              <path d="M9 21h6" />
+            </svg>
+          </span>
+          <div class="transmitir__cabecalho">
+            <h3 class="transmitir__titulo" id="transmitir-titulo">Qualidade da transmissão</h3>
+            <p class="transmitir__texto">Vale para a próxima vez que você compartilhar a tela.</p>
+          </div>
+          <button class="icone" type="button" id="transmitir-fechar" title="Fechar" aria-label="Fechar">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+          </button>
+        </header>
+
+        <div class="transmitir__corpo">
+          <div class="perfis-live" id="transmitir-perfis"></div>
+
+          <label class="chave chave--tela">
+            <input type="checkbox" id="transmitir-som" />
+            <span class="chave__marca" aria-hidden="true"></span>
+            <span class="chave__texto">
+              <strong>Compartilhar o som</strong>
+              <span>Envia o áudio do que está na tela junto com o vídeo</span>
+            </span>
+          </label>
+        </div>
+
+        <footer class="transmitir__rodape">
+          <button class="botao botao--primario" type="button" id="transmitir-confirmar">
+            Pronto
+          </button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ══ Seletor de fontes ═══════════════════════════════════════ -->
+    <div class="cortina oculto" id="seletor-dialogo">
+      <div class="seletor" role="dialog" aria-modal="true" aria-labelledby="seletor-titulo">
+        <header class="seletor__topo">
+          <h3 class="seletor__titulo" id="seletor-titulo">O que você quer compartilhar?</h3>
+          <div class="seletor__acoes">
+            <button class="icone" type="button" id="seletor-config" title="Qualidade da transmissão" aria-label="Qualidade da transmissão">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.5-2-3.4-2.4 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.3 2.6a7.6 7.6 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.5 7.5 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a7.6 7.6 0 0 0 1.7 1L11 21h4l.3-2.6a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.4z" />
+              </svg>
+            </button>
+            <button class="icone" type="button" id="seletor-fechar" title="Fechar" aria-label="Fechar">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="seletor__corpo">
+          <p class="seletor__estado" id="seletor-carregando">Procurando telas e janelas…</p>
+          <p class="seletor__estado oculto" id="seletor-vazio">
+            Nada disponível para compartilhar agora.
+          </p>
+          <div class="seletor__secoes oculto" id="seletor-secoes"></div>
+        </div>
+
+        <footer class="transmitir__rodape">
+          <button class="botao botao--sutil" type="button" id="seletor-cancelar">Cancelar</button>
+          <button class="botao botao--primario botao--viva" type="button" id="seletor-confirmar" disabled>
+            <span class="botao--viva__ponto" aria-hidden="true"></span>
+            Compartilhar
+          </button>
+        </footer>
+      </div>
+    </div>
+
     <!-- ══ Menu suspenso ════════════════════════════════════════════ -->
     <div class="menu oculto" id="menu" role="menu"></div>
 

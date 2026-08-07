@@ -1119,6 +1119,63 @@ svg {
   background: var(--vivo);
 }
 
+.transmissao__expandir {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-p);
+  background: rgba(14, 15, 17, 0.78);
+  backdrop-filter: blur(8px);
+  color: var(--texto-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transicao), color var(--transicao), background-color var(--transicao);
+}
+
+.transmissao:hover .transmissao__expandir,
+.transmissao__expandir:focus-visible,
+.transmissao__expandir[aria-pressed="true"] {
+  opacity: 1;
+}
+
+.transmissao__expandir:hover {
+  color: var(--texto);
+  background: rgba(14, 15, 17, 0.92);
+}
+
+.transmissao__expandir svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Maximizada: o quadro larga a grade e assume a janela toda, por cima de
+   tudo — inclusive do próprio `.palco`, que continua com 40vh por baixo. */
+.transmissao--cheia {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  border-radius: 0;
+  animation: surgir 160ms ease;
+}
+
+.transmissao--cheia video {
+  object-fit: contain;
+}
+
+.transmissao--cheia .transmissao__expandir {
+  opacity: 1;
+}
+
 @keyframes surgir {
   from {
     opacity: 0;
@@ -2116,6 +2173,316 @@ select.campo__entrada {
   font-size: 11px;
   color: var(--texto-2);
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Transmitir tela (diálogo de "ir ao vivo") ── */
+
+.transmitir {
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-g);
+  animation: surgir 180ms cubic-bezier(0.32, 0.72, 0.28, 1);
+  overflow: hidden;
+}
+
+.transmitir__topo {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 20px 0;
+}
+
+.transmitir__glifo {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--acento-suave);
+  color: var(--acento);
+}
+
+.transmitir__glifo svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transmitir__cabecalho {
+  flex: 1;
+  min-width: 0;
+}
+
+.transmitir__titulo {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.transmitir__texto {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--texto-3);
+  line-height: 1.4;
+}
+
+.transmitir__corpo {
+  padding: 16px 20px 4px;
+  overflow-y: auto;
+}
+
+.transmitir__rodape {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 20px 20px;
+}
+
+.chave--tela {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--borda);
+}
+
+/* Grade de qualidades: dois cartões por linha, cada um com um selo de nível
+   (as barrinhas) em vez de um número solto — a diferença de peso entre os
+   perfis fica visível antes mesmo de ler o texto. */
+.perfis-live {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.perfil-live {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 11px;
+  border: 1px solid var(--borda);
+  background: var(--superficie-2);
+  border-radius: var(--raio-m);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transicao), background-color var(--transicao);
+}
+
+.perfil-live:hover {
+  border-color: var(--borda-forte);
+}
+
+.perfil-live[aria-pressed="true"] {
+  border-color: var(--acento);
+  background: var(--acento-suave);
+}
+
+.perfil-live__icone {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.perfil-live__icone svg {
+  width: 100%;
+  height: 100%;
+}
+
+.perfil-live__icone rect {
+  fill: var(--texto-3);
+  opacity: 0.35;
+  transition: fill var(--transicao), opacity var(--transicao);
+}
+
+.perfil-live__icone rect.acesa {
+  fill: var(--acento);
+  opacity: 1;
+}
+
+.perfil-live__texto {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.perfil-live__nome {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.perfil-live__resumo {
+  font-size: 11px;
+  color: var(--texto-3);
+  line-height: 1.35;
+}
+
+.perfil-live__detalhe {
+  font-size: 10.5px;
+  color: var(--texto-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.perfil-live__marca {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1.5px solid var(--borda-forte);
+  background: var(--superficie-1);
+  transition: border-color var(--transicao), background-color var(--transicao),
+    box-shadow var(--transicao);
+}
+
+.perfil-live[aria-pressed="true"] .perfil-live__marca {
+  border-color: var(--acento);
+  background: var(--acento);
+  box-shadow: inset 0 0 0 3px var(--superficie-1);
+}
+
+/* Botão de confirmar com o ponto que lembra "ao vivo" — o mesmo vocabulário
+   visual do selo de transmissão ativa no botão do rodapé. */
+.botao--viva {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.botao--viva__ponto {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0.85;
+}
+
+/* ── Seletor de fontes (telas e janelas, com a cara do CALL) ── */
+
+.seletor {
+  width: 600px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-g);
+  animation: surgir 180ms cubic-bezier(0.32, 0.72, 0.28, 1);
+  overflow: hidden;
+}
+
+.seletor__topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 0;
+}
+
+.seletor__titulo {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.seletor__acoes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.seletor__corpo {
+  padding: 16px 20px 4px;
+  overflow-y: auto;
+  min-height: 120px;
+}
+
+.seletor__estado {
+  padding: 30px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--texto-3);
+}
+
+.seletor__secoes {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.seletor__legenda {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+
+.seletor__grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.fonte {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--borda);
+  background: var(--superficie-2);
+  border-radius: var(--raio-m);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transicao), background-color var(--transicao);
+}
+
+.fonte:hover {
+  border-color: var(--borda-forte);
+}
+
+.fonte[aria-pressed="true"] {
+  border-color: var(--acento);
+  background: var(--acento-suave);
+  box-shadow: 0 0 0 1px var(--acento);
+}
+
+.fonte__miniatura {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--raio-p);
+  overflow: hidden;
+}
+
+.fonte__miniatura img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.fonte__nome {
+  padding: 0 2px;
+  font-size: 11.5px;
+  color: var(--texto-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fonte[aria-pressed="true"] .fonte__nome {
+  color: var(--texto);
 }
 
 /* No fim da folha de propósito: estas regras precisam vencer o `display` que

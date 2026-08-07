@@ -398,12 +398,26 @@ function prepararAplicacao() {
   $("botao-convite").addEventListener("click", copiarConvite);
 
   $("botao-microfone").addEventListener("click", alternarMicrofone);
-  $("botao-transmitir").addEventListener("click", alternarTransmissao);
+  $("botao-transmitir").addEventListener("click", () => {
+    if (estado.transmitindo) pararTransmissao();
+    else abrirSeletorDeFontes();
+  });
   $("botao-sair-voz").addEventListener("click", () => sairDaVoz(true));
 
   prepararAjustes();
+  prepararTransmitirDialogo();
+  prepararSeletorDeFontes();
   document.addEventListener("keydown", (evento) => {
-    if (evento.key === "Escape" && !$("ajustes").classList.contains("oculto")) fecharAjustes();
+    if (evento.key !== "Escape") return;
+    if (!$("transmitir-dialogo").classList.contains("oculto")) {
+      fecharTransmitirDialogo();
+    } else if (!$("ajustes").classList.contains("oculto")) {
+      fecharAjustes();
+    } else if (!$("seletor-dialogo").classList.contains("oculto")) {
+      fecharSeletorDeFontes();
+    } else if (telaMaximizada) {
+      alternarMaximizarTela(telaMaximizada);
+    }
   });
 
   prepararRedator();
@@ -1514,57 +1528,294 @@ function atualizarBotaoMicrofone() {
 
 /* ═══ Transmissão de tela ═══════════════════════════════════════ */
 
-async function alternarTransmissao() {
-  if (estado.transmitindo) {
-    pararTransmissao();
+let transmitirDialogoPreparado = false;
+/** Verdadeiro quando o diálogo de qualidade foi aberto por cima do seletor de
+ *  fontes (pela engrenagem) — fechar um devolve o outro, em vez de fechar
+ *  tudo. */
+let transmitirVindoDoSeletor = false;
+
+/** A qualidade não pergunta mais nada toda vez que alguém clica em
+ *  transmitir: isso morava aqui antes, e virou uma tela a mais no meio do
+ *  caminho toda vez. Agora é só configuração — abre pela engrenagem do
+ *  seletor, o que for escolhido vale a partir da próxima transmissão, e o
+ *  botão de transmitir vai direto ao seletor de fontes. */
+function prepararTransmitirDialogo() {
+  if (transmitirDialogoPreparado) return;
+  transmitirDialogoPreparado = true;
+
+  montarPerfisLive();
+
+  $("transmitir-fechar").addEventListener("click", fecharTransmitirDialogo);
+  $("transmitir-confirmar").addEventListener("click", fecharTransmitirDialogo);
+  $("transmitir-dialogo").addEventListener("click", (evento) => {
+    if (evento.target === $("transmitir-dialogo")) fecharTransmitirDialogo();
+  });
+
+  $("transmitir-som").addEventListener("change", (e) => {
+    estado.audioDaTela = e.target.checked;
+    salvarPreferencias();
+  });
+}
+
+/** `vindoDoSeletor`: quando true, o seletor de fontes fica em pausa (oculto,
+ *  não fechado) enquanto a qualidade está aberta, e volta sozinho ao fechar. */
+function abrirTransmitirDialogo(vindoDoSeletor = false) {
+  if (!estado.canalVoz) return;
+  transmitirVindoDoSeletor = vindoDoSeletor;
+  if (vindoDoSeletor) $("seletor-dialogo").classList.add("oculto");
+  refletirTransmitirDialogo();
+  $("transmitir-dialogo").classList.remove("oculto");
+}
+
+function fecharTransmitirDialogo() {
+  $("transmitir-dialogo").classList.add("oculto");
+  if (transmitirVindoDoSeletor) {
+    transmitirVindoDoSeletor = false;
+    $("seletor-dialogo").classList.remove("oculto");
+  }
+}
+
+/** As mesmas barrinhas de sinal, uma a mais acesa por perfil — o índice na
+ *  lista já é a ordem de peso, do mais leve ao mais pesado. */
+function iconeDeQualidade(indice) {
+  let barras = "";
+  for (let i = 0; i < PERFIS_TELA.length; i++) {
+    const altura = 5 + i * 4;
+    barras += `<rect x="${2 + i * 6}" y="${20 - altura}" width="4" height="${altura}" rx="1.2" class="${i <= indice ? "acesa" : ""}"/>`;
+  }
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${barras}</svg>`;
+}
+
+function montarPerfisLive() {
+  const area = $("transmitir-perfis");
+  area.textContent = "";
+  PERFIS_TELA.forEach((perfil, indice) => {
+    const botao = document.createElement("button");
+    botao.type = "button";
+    botao.className = "perfil-live";
+    botao.dataset.perfil = perfil.id;
+    botao.innerHTML = `
+      <span class="perfil-live__icone">${iconeDeQualidade(indice)}</span>
+      <span class="perfil-live__texto">
+        <span class="perfil-live__nome"></span>
+        <span class="perfil-live__resumo"></span>
+      </span>
+      <span class="perfil-live__detalhe"></span>
+      <span class="perfil-live__marca" aria-hidden="true"></span>
+    `;
+    botao.querySelector(".perfil-live__nome").textContent = perfil.nome;
+    botao.querySelector(".perfil-live__resumo").textContent = perfil.resumo;
+    botao.querySelector(".perfil-live__detalhe").textContent = perfil.detalhe;
+
+    botao.addEventListener("click", async () => {
+      estado.perfilTela = perfil.id;
+      salvarPreferencias();
+      refletirTransmitirDialogo();
+      refletirAjustes();
+      // Já transmitindo: o teto e a política valem na hora, sem reabrir a
+      // captura — ver a explicação em `montarPerfis`.
+      if (estado.transmitindo) await malha.definirPerfilTela(perfil);
+    });
+    area.append(botao);
+  });
+}
+
+function refletirTransmitirDialogo() {
+  for (const botao of $("transmitir-perfis").children) {
+    botao.setAttribute("aria-pressed", botao.dataset.perfil === estado.perfilTela ? "true" : "false");
+  }
+  $("transmitir-som").checked = estado.audioDaTela;
+}
+
+/* ── Seletor de fontes (telas e janelas, capturadas pelo próprio CALL) ── */
+
+let seletorDeFontesPreparado = false;
+let fonteEscolhida = null;
+
+function prepararSeletorDeFontes() {
+  if (seletorDeFontesPreparado) return;
+  seletorDeFontesPreparado = true;
+
+  $("seletor-fechar").addEventListener("click", fecharSeletorDeFontes);
+  $("seletor-cancelar").addEventListener("click", fecharSeletorDeFontes);
+  $("seletor-config").addEventListener("click", () => {
+    prepararTransmitirDialogo();
+    abrirTransmitirDialogo(true);
+  });
+  $("seletor-dialogo").addEventListener("click", (evento) => {
+    if (evento.target === $("seletor-dialogo")) fecharSeletorDeFontes();
+  });
+  $("seletor-confirmar").addEventListener("click", () => {
+    if (!fonteEscolhida) return;
+    const perfil = acharPerfilDeTela(estado.perfilTela);
+    fecharSeletorDeFontes();
+    iniciarCapturaNativa(fonteEscolhida, perfil);
+  });
+}
+
+async function abrirSeletorDeFontes() {
+  if (!estado.canalVoz) return;
+  prepararSeletorDeFontes();
+
+  fonteEscolhida = null;
+  $("seletor-confirmar").disabled = true;
+  $("seletor-secoes").classList.add("oculto");
+  $("seletor-vazio").classList.add("oculto");
+  $("seletor-carregando").classList.remove("oculto");
+  $("seletor-dialogo").classList.remove("oculto");
+
+  let fontes;
+  try {
+    fontes = await invocar("listar_fontes_de_tela");
+  } catch {
+    fontes = [];
+  }
+
+  $("seletor-carregando").classList.add("oculto");
+  if (!fontes.length) {
+    $("seletor-vazio").classList.remove("oculto");
     return;
   }
+  montarSecoesDeFontes(fontes);
+  $("seletor-secoes").classList.remove("oculto");
+}
+
+function fecharSeletorDeFontes() {
+  $("seletor-dialogo").classList.add("oculto");
+}
+
+function montarSecoesDeFontes(fontes) {
+  const area = $("seletor-secoes");
+  area.textContent = "";
+
+  const grupos = [
+    { tipo: "tela", legenda: "Telas" },
+    { tipo: "janela", legenda: "Janelas" },
+  ];
+
+  for (const grupo of grupos) {
+    const itens = fontes.filter((f) => f.tipo === grupo.tipo);
+    if (!itens.length) continue;
+
+    const secao = document.createElement("div");
+    const legenda = document.createElement("h4");
+    legenda.className = "seletor__legenda";
+    legenda.textContent = grupo.legenda;
+    const grade = document.createElement("div");
+    grade.className = "seletor__grade";
+
+    for (const fonte of itens) {
+      const botao = document.createElement("button");
+      botao.type = "button";
+      botao.className = "fonte";
+      botao.dataset.id = String(fonte.id);
+      botao.dataset.tipo = fonte.tipo;
+      botao.setAttribute("aria-pressed", "false");
+      botao.innerHTML = `
+        <span class="fonte__miniatura"><img alt="" /></span>
+        <span class="fonte__nome"></span>
+      `;
+      botao.querySelector("img").src = fonte.miniatura;
+      botao.querySelector(".fonte__nome").textContent = fonte.nome;
+
+      botao.addEventListener("click", () => {
+        fonteEscolhida = fonte;
+        for (const outro of area.querySelectorAll(".fonte")) {
+          outro.setAttribute("aria-pressed", outro === botao ? "true" : "false");
+        }
+        $("seletor-confirmar").disabled = false;
+      });
+
+      grade.append(botao);
+    }
+
+    secao.append(legenda, grade);
+    area.append(secao);
+  }
+}
+
+/* ── Captura em si: Rust manda quadros, o canvas vira o `MediaStreamTrack` ── */
+
+let pararDeOuvirQuadros = null;
+let canvasDeCaptura = null;
+
+/** Decodifica o JPEG que veio do Rust e desenha no canvas — é o canvas quem
+ *  empresta a `captureStream()` que vira a trilha de vídeo publicada. */
+async function desenharQuadroCapturado(quadro) {
+  if (!canvasDeCaptura) return;
+  if (canvasDeCaptura.width !== quadro.largura || canvasDeCaptura.height !== quadro.altura) {
+    canvasDeCaptura.width = quadro.largura;
+    canvasDeCaptura.height = quadro.altura;
+  }
+
+  const binario = atob(quadro.dados);
+  const bytes = new Uint8Array(binario.length);
+  for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+  const memoria = new Blob([bytes], { type: "image/jpeg" });
+
+  try {
+    const quadroDecodificado = await createImageBitmap(memoria);
+    canvasDeCaptura.getContext("2d").drawImage(quadroDecodificado, 0, 0);
+    quadroDecodificado.close();
+  } catch {
+    // Um quadro corrompido não é motivo para parar a transmissão inteira —
+    // o próximo, um instante depois, resolve sozinho.
+  }
+}
+
+async function iniciarCapturaNativa(fonte, perfil) {
   if (!estado.canalVoz) return;
 
-  const perfil = acharPerfilDeTela(estado.perfilTela);
-  let fluxo;
+  canvasDeCaptura = document.createElement("canvas");
+  canvasDeCaptura.width = fonte.largura;
+  canvasDeCaptura.height = fonte.altura;
+
+  pararDeOuvirQuadros = await window.__TAURI__.event.listen("quadro-tela", (evento) =>
+    desenharQuadroCapturado(evento.payload)
+  );
+
   try {
-    fluxo = await navigator.mediaDevices.getDisplayMedia({
-      // `ideal`, e não `exact`: uma janela de 800×600 não deve ser recusada
-      // por não alcançar 1080p, e uma tela 4K deve descer até o perfil em vez
-      // de mandar 4K para a rede. O `max` é que faz o trabalho.
-      video: {
-        width: { max: perfil.largura },
-        height: { max: perfil.altura },
-        frameRate: { ideal: perfil.quadros, max: perfil.quadros },
-      },
-      audio: estado.audioDaTela,
+    await invocar("iniciar_captura_de_tela", {
+      tipo: fonte.tipo,
+      id: fonte.id,
+      larguraMax: perfil.largura,
+      alturaMax: perfil.altura,
+      quadros: perfil.quadros,
     });
-  } catch (erro) {
-    if (erro?.name !== "NotAllowedError") {
-      avisar("Não foi possível capturar a tela.", "erro");
-    }
+  } catch {
+    pararDeOuvirQuadros?.();
+    pararDeOuvirQuadros = null;
+    canvasDeCaptura = null;
+    avisar("Não foi possível capturar essa fonte.", "erro");
     return;
   }
 
-  // Entre pedir a tela e recebê-la a pessoa pode ter saído da voz. Publicar
-  // agora acenderia uma transmissão sem ninguém do outro lado.
+  // Pedir e começar a capturar leva um instante; nesse meio-tempo a pessoa
+  // pode ter saído da voz. Publicar agora acenderia uma transmissão sem
+  // ninguém do outro lado.
   if (!estado.canalVoz) {
-    fluxo.getTracks().forEach((t) => t.stop());
+    await invocar("parar_captura_de_tela").catch(() => {});
+    pararDeOuvirQuadros?.();
+    pararDeOuvirQuadros = null;
+    canvasDeCaptura = null;
     return;
+  }
+
+  const fluxo = canvasDeCaptura.captureStream(perfil.quadros);
+  const [trilha] = fluxo.getVideoTracks();
+
+  // O áudio do sistema ainda não viaja por esse caminho — a captura é
+  // nativa, e não passa pelo `getDisplayMedia` que oferecia o áudio de
+  // graça. Melhor avisar do que deixar a pessoa descobrir pelo silêncio.
+  if (estado.audioDaTela) {
+    avisar("Som do sistema ainda não é suportado nesta transmissão.", "neutro");
   }
 
   estado.fluxoTela = fluxo;
   estado.transmitindo = true;
 
-  const [trilha] = fluxo.getVideoTracks();
-  // Quem encerra pelo botão do próprio Windows não passa pelo nosso botão.
-  trilha.addEventListener("ended", pararTransmissao);
-
-  // O seletor nativo do Windows nem sempre oferece o som — compartilhar uma
-  // janela só entrega vídeo. Avisar é melhor do que a pessoa descobrir pelo
-  // silêncio do outro lado.
-  if (estado.audioDaTela && fluxo.getAudioTracks().length === 0) {
-    avisar("Esta captura não inclui som. Compartilhe a tela inteira para levar o áudio.", "neutro");
-  }
-
   await malha.definirPerfilTela(perfil);
-  malha.publicarTela(trilha, fluxo, fluxo.getAudioTracks()[0] ?? null);
+  malha.publicarTela(trilha, fluxo, null);
   mostrarTela(estado.meuId, fluxo, `${estado.apelido} (você)`);
 
   const eu = estado.membros.get(estado.meuId);
@@ -1579,6 +1830,10 @@ function pararTransmissao() {
   if (!estado.transmitindo) return;
   estado.transmitindo = false;
   malha.retirarTela();
+  invocar("parar_captura_de_tela").catch(() => {});
+  pararDeOuvirQuadros?.();
+  pararDeOuvirQuadros = null;
+  canvasDeCaptura = null;
   estado.fluxoTela?.getTracks().forEach((t) => t.stop());
   estado.fluxoTela = null;
   removerTela(estado.meuId);
@@ -1601,6 +1856,15 @@ function atualizarBotaoTransmissao() {
 
 /* ═══ Palco ═════════════════════════════════════════════════════ */
 
+/** Qual transmissão ocupa a tela toda da janela agora — no máximo uma, e só
+ *  enquanto o quadro dela ainda existir (ver `atualizarPalco`). */
+let telaMaximizada = null;
+
+const GLIFO_EXPANDIR =
+  '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>';
+const GLIFO_RECOLHER =
+  '<path d="M4 9h5V4M15 4v5h5M20 15h-5v5M9 20v-5H4"/>';
+
 function mostrarTela(id, fluxo, rotulo) {
   removerTela(id);
 
@@ -1617,7 +1881,16 @@ function mostrarTela(id, fluxo, rotulo) {
   etiqueta.className = "transmissao__etiqueta";
   etiqueta.textContent = rotulo;
 
-  quadro.append(video, etiqueta);
+  const expandir = document.createElement("button");
+  expandir.type = "button";
+  expandir.className = "transmissao__expandir";
+  expandir.setAttribute("aria-pressed", "false");
+  expandir.title = "Maximizar";
+  expandir.setAttribute("aria-label", "Maximizar");
+  expandir.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${GLIFO_EXPANDIR}</svg>`;
+  expandir.addEventListener("click", () => alternarMaximizarTela(id));
+
+  quadro.append(video, etiqueta, expandir);
   $("palco-grade").append(quadro);
   telas.set(id, quadro);
   atualizarPalco();
@@ -1629,6 +1902,15 @@ function removerTela(id) {
   quadro.querySelector("video").srcObject = null;
   quadro.remove();
   telas.delete(id);
+  if (telaMaximizada === id) telaMaximizada = null;
+  atualizarPalco();
+}
+
+/** Maximizar não move o quadro nem mexe no `<video>` — só empresta a tela
+ *  toda da janela pra ele via CSS (`position: fixed`), então o vídeo nunca
+ *  recarrega e o áudio que já toca por fora não pisca. */
+function alternarMaximizarTela(id) {
+  telaMaximizada = telaMaximizada === id ? null : id;
   atualizarPalco();
 }
 
@@ -1636,6 +1918,18 @@ function atualizarPalco() {
   const total = telas.size;
   $("palco-grade").dataset.quantidade = String(total);
   $("palco").classList.toggle("oculto", total === 0);
+
+  for (const [id, quadro] of telas) {
+    const maximizada = id === telaMaximizada;
+    quadro.classList.toggle("transmissao--cheia", maximizada);
+    const expandir = quadro.querySelector(".transmissao__expandir");
+    expandir.setAttribute("aria-pressed", maximizada ? "true" : "false");
+    expandir.title = maximizada ? "Restaurar" : "Maximizar";
+    expandir.setAttribute("aria-label", expandir.title);
+    expandir.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${
+      maximizada ? GLIFO_RECOLHER : GLIFO_EXPANDIR
+    }</svg>`;
+  }
 }
 
 /* ═══ Mídia recebida ════════════════════════════════════════════ */
