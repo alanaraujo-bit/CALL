@@ -1371,10 +1371,13 @@ O login do Google só funciona no **Windows**: ele abre o navegador por
 plano.
 
 A imagem da nuvem passou a compilar com `--features google`, o que arrasta
-`reqwest` e `rustls` na `rust:1-alpine`. Isso **não foi verificado aqui** — a
-compilação com a opção ligada foi provada no Windows/MSVC, e a construção da
-imagem musl só acontece no `docker build` da hospedagem. É o primeiro ponto a
-olhar se o deploy quebrar.
+`reqwest` e `rustls` na `rust:1-alpine`. **Verificado depois**: o deploy no
+Railway compilou limpo, o servidor respondeu `disponivel: true` com o par de
+credenciais certo, e um código de autorização inventado voltou do Google com
+`invalid_grant` (e não `invalid_client` ou `redirect_uri_mismatch`) — prova de
+que o par de credenciais e o tipo do cliente OAuth estavam certos. O clique
+humano na tela de consentimento do Google, esse só foi provado na iteração 18,
+quando alguém de verdade entrou pelo Google pela primeira vez.
 
 O tempo de quem já estava na call antes de você é um piso, e a interface diz
 isso com o `+` em vez de esconder. A atividade depende do `FileDescription`
@@ -1395,6 +1398,129 @@ O que continua sem prova automatizada é o **som** de entrada e saída: as
 amostras são medidas em `OfflineAudioContext`, mas que o sino chegue ao
 alto-falante no aplicativo montado, ninguém verifica. `testes/ouvir-sons.ps1`
 existe para essa parte, e ela é de ouvido — nenhum número resolve.
+
+---
+
+## Iteração 18 — Contas em Postgres
+
+Mudança só do lado do servidor: o protocolo não mudou, `src/` e `src-tauri/`
+não mudaram, e por isso não há versão nova do aplicativo aqui — quem já tem
+o CALL instalado continua na 0.8.0, falando com um servidor que agora guarda
+contas de outro jeito, sem saber disso nem precisar saber.
+
+**Motivo:** pedido direto, com uma justificativa que se sustenta sozinha —
+"vamos adicionar muito mais coisa, então já deveríamos ter isso organizado".
+Contas é exatamente onde mais coisa tende a pousar (mais campos de perfil,
+planos, papéis), e é onde um banco relacional de verdade compensa mais: a
+unicidade do e-mail passa a ser garantida pelo próprio Postgres, e não por um
+par de índices (`por_email`, `por_google`) montado à mão em Rust, replicando
+em memória o que uma `UNIQUE` já faz de graça.
+
+**Escopo, decidido e não sorteado:** só contas foram para o Postgres. Grupos e
+histórico de mensagens continuam no par de arquivos de sempre — eles já
+funcionam bem no volume atual, e migrá-los sem uma necessidade concreta (busca
+entre grupos, relatório) seria trabalho sem ganho hoje. A porta fica aberta: o
+mesmo `PgPool` que atende contas serve essas tabelas depois, sem redesenhar
+nada.
+
+### Dois backends atrás da mesma porta
+
+`Cofre` continua com uma interface só; por baixo dela, dois jeitos de guardar
+a mesma coisa, escolhidos **em tempo de execução** pela presença de
+`DATABASE_URL` — não só em tempo de compilação, como o Google:
+
+* **Postgres**, com `--features banco` e `DATABASE_URL` no ambiente. O caso
+  do servidor oficial.
+* **O par de arquivos de sempre**, quando falta qualquer um dos dois. O caso
+  do sidecar em rede local, que nunca teve `DATABASE_URL` para começo de
+  conversa — ali não há Postgres nenhum para se conectar.
+
+Uma falha ao conectar ou migrar cai para o arquivo em vez de recusar subir,
+do mesmo jeito que o resto do projeto sempre preferiu degradar a travar. Isso
+significa que o servidor oficial, hoje, tem um "modo de emergência" honesto:
+se o Postgres cair, ele continua aceitando conexões sem conta — o que já
+existia — sem embutir isso como recurso, só como consequência de como as duas
+peças foram encaixadas.
+
+### O que a migração para async custou de verdade
+
+A parte que mudou mais código não foi o SQL — foi o fato de o Postgres poder
+esperar rede, e `Estado` (grupos, quem está conectado, a malha de voz) não
+poder esperar nada: segurar a mesma tranca para os dois faria um cadastro
+lento de uma pessoa travar o encaminhamento de voz de todo mundo.
+
+A solução foi tirar `Cofre` de dentro de `Mutex<Estado>` e dá-lo um `Arc`
+próprio, sem tranca nenhuma por cima — cada método já resolve a própria
+concorrência (um `std::sync::Mutex` interno e barato para o backend de
+arquivo, o pool do driver para o Postgres). Isso obrigou `criar_grupo`,
+`entrar` e `perfil` a virarem `async fn`, e fez o token da saudação passar a
+ser resolvido **antes** de tocar em `Estado`, nunca com a tranca na mão.
+
+**O bug que a suíte pegou, e não um review**: na primeira versão do
+replumbing, o resumo da conta embutido no "bem-vindo" era buscado *antes* de
+`lembrar_grupo` gravar o grupo novo nela — porque essa gravação tinha virado
+uma tarefa em segundo plano (`tokio::spawn`), disparada só depois da resposta
+já ter saído. `sinalizacao.test.mjs` reprovou em "o grupo em que se acabou de
+entrar já está na lista dela", e a causa era real: quem entrasse num grupo
+pela primeira vez só veria esse grupo na lista da conta depois de uma
+reconexão. Resolvido trocando o disparo em segundo plano por uma espera —
+`sincronizar_conta_e_buscar_resumo` grava e busca de volta antes de a
+resposta ser montada, ao custo de a entrada num grupo esperar um Postgres
+lento, que é a troca certa: a resposta tem que ser verdade, não só rápida.
+
+### O que a compilação sozinha nunca provaria
+
+`sqlx::migrate!` embute o SQL de `servidor/migracoes/` no binário em tempo de
+compilação, sem precisar de banco vivo para isso — só as consultas em si
+(`sqlx::query`/`query_as`, nunca `query!`/`query_as!`) precisariam de um banco
+para conferir, e por isso ficaram de fora dessa checagem. Isso significa que
+o binário compila limpo mesmo com SQL errado dentro — um erro apareceria só
+ao rodar.
+
+Por isso a verificação de verdade foi contra o Postgres real, via
+`railway connect Postgres-jZAX --tunnel-only`: um túnel SSH até o serviço da
+nuvem, sem precisar expor porta pública nenhuma. Contra ele, uma bateria à
+parte (cadastro, entrada, `retomar`, `sair-conta`, e o upsert de atalho que
+`lembrar_grupo` faz) confirmou que as consultas são SQL válido de verdade —
+inclusive o `ON CONFLICT ... WHERE ... IS DISTINCT FROM` condicional que o
+backend de arquivo não tem como testar, porque não existe lá. As tabelas
+foram limpas (`TRUNCATE ... CASCADE`) depois, para o deploy de verdade
+importar a conta real do arquivo antigo, e não competir com dado de teste.
+
+### O deploy, e a conta que não podia se perder
+
+Havia uma conta de verdade em produção — criada pelo Google no dia anterior —
+e o teste que importava era o próprio deploy: `Cofre::carregar` conecta,
+migra, e importa `contas.json`/`sessoes.json` do volume **só se a tabela
+`contas` ainda estiver vazia**, o que torna a importação idempotente sem
+tabela de controle nenhuma a mais. O log do primeiro boot confirmou os três
+passos:
+
+```
+[contas] importando 1 conta(s) do arquivo antigo para o Postgres
+[contas] 1 sessao(oes) viva(s) importada(s)
+[contas] importacao concluida
+[contas] usando Postgres
+[sinalizacao] acervo carregado: 22 grupo(s), 4 linha(s) de mensagem
+```
+
+A conta, a sessão viva (sem precisar logar de novo) e os 22 grupos
+atravessaram a migração de backend inteiros. `google-config` continuou
+respondendo `disponivel: true` depois do redeploy — nada no caminho do Google
+quebrou com a chegada do Postgres.
+
+**Medido na compilação real:**
+
+| Métrica | Antes | Depois |
+| --- | --- | --- |
+| `sinalizacao.exe` (sidecar, sem opção nenhuma) | 599.040 B | inalterado — `banco` nunca compila para o sidecar |
+| `sinalizacao.exe` (`--features google`) | 1.977.344 B | inalterado |
+| `sinalizacao.exe` (`--features google,banco`) | não existia | **2.457.600 B** |
+
+O Postgres sozinho custa cerca de 480 KB acima do que o Google já pesava — e
+nenhum desses bytes chega perto do instalador do CALL: o sidecar que viaja
+com o aplicativo continua nos mesmos 599 KB de sempre, porque `banco` nunca é
+ligado para ele.
 
 ---
 

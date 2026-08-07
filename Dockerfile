@@ -16,6 +16,11 @@ WORKDIR /fonte
 # ver com este binario — por isso a raiz do workspace e reescrita.
 COPY servidor/Cargo.toml servidor/Cargo.toml
 COPY servidor/src servidor/src
+# O `sqlx::migrate!` em `src/contas.rs` embute estes arquivos no binario em
+# tempo de compilacao -- por isso entram aqui, antes do `cargo build`, e nao
+# so na imagem final. O schema vira parte do executavel; nao ha pasta de
+# migracoes para copiar depois.
+COPY servidor/migracoes servidor/migracoes
 COPY Cargo.lock Cargo.lock
 
 RUN printf '[workspace]\n\
@@ -30,12 +35,17 @@ panic = "abort"\n\
 strip = true\n\
 incremental = false\n' > Cargo.toml
 
-# `--features google` e o que separa esta imagem do binario que viaja dentro
-# do instalador do CALL. Ela liga o "Entrar com o Google", que arrasta um
-# cliente HTTPS inteiro -- 599 KB viram 1,93 MB -- e esse 1,3 MB, no sidecar
-# da rede local, pagaria por um recurso que la nem teria como funcionar. Ver
-# `servidor/src/google.rs`.
-RUN cargo build --release -p sinalizacao --features google
+# `--features google,banco` e o que separa esta imagem do binario que viaja
+# dentro do instalador do CALL:
+#
+# * `google` liga "Entrar com o Google", que arrasta um cliente HTTPS inteiro
+#   -- 599 KB viram 1,93 MB. Ver `servidor/src/google.rs`.
+# * `banco` liga o Postgres como backend das contas -- ver `servidor/src/contas.rs`.
+#
+# As duas pagariam por recursos que o sidecar da rede local nem teria como
+# usar: ele nao tem `client_secret` nem `DATABASE_URL`. Sem estas opcoes o
+# servidor compila e roda igual, so que guarda contas num par de arquivos.
+RUN cargo build --release -p sinalizacao --features google,banco
 
 # ─── Imagem final ──────────────────────────────────────────────────────
 FROM scratch

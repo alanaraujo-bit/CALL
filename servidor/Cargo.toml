@@ -9,6 +9,12 @@ edition = "2021"
 # onde o Google nao teria como funcionar de qualquer jeito. A imagem da
 # nuvem compila com `--features google`; ver `src/google.rs`.
 google = ["dep:reqwest"]
+# Contas em Postgres, em vez do par contas.json/sessoes.json. Pelo mesmo
+# motivo que o Google: um driver de banco nao serve a nada no sidecar que
+# hospeda uma conversa em rede local sem internet -- ali nao ha Postgres para
+# se conectar. A imagem da nuvem compila com `--features banco`; sem ela, o
+# servidor continua usando o par de arquivos. Ver `src/contas.rs`.
+banco = ["dep:sqlx"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "io-util"] }
@@ -29,4 +35,22 @@ blake2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",
   "json",
+], optional = true }
+# So com a opcao `banco`. `runtime-tokio-rustls` para nao arrastar OpenSSL
+# (o resto do projeto ja evita libs de sistema); `migrate` roda o schema de
+# `migracoes/` no proprio boot, sem sqlx-cli nem passo manual de implantacao.
+#
+# A feature `macros` esta aqui so pelo `sqlx::migrate!`, que embute os
+# arquivos de `migracoes/` no binario e nao precisa de banco vivo para isso —
+# so le arquivos do disco em tempo de compilacao. As consultas em si, essas,
+# usam `sqlx::query`/`query_as` (funcoes, sem `!`) de proposito: as variantes
+# `query!`/`query_as!` exigiriam um banco vivo *durante a compilacao* na
+# imagem Docker, que nao tem nenhum nesse momento. Um erro de SQL aqui
+# aparece ao rodar, nao ao compilar — o preco de nao depender de
+# infraestrutura externa so para montar o binario.
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio-rustls",
+  "postgres",
+  "migrate",
+  "macros",
 ], optional = true }

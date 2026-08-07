@@ -177,9 +177,13 @@ a troca do código acontece lá — nunca dentro do `.exe`.
 Sua conta fica em **Meu perfil**, embaixo do mascote: qual é, e como sair dela.
 Sair derruba a sessão no servidor, e não só neste computador.
 
-Senhas são guardadas com **Argon2id**, e o que fica em disco é o hash. Tokens
-de sessão valem 90 dias, e o arquivo guarda a impressão deles, não os tokens:
-um `sessoes.json` vazado não abre conta nenhuma.
+Senhas são guardadas com **Argon2id**, e o que fica gravado é o hash. Tokens
+de sessão valem 90 dias, e o que sobrevive deles é a impressão, nunca o
+próprio token: um vazamento da tabela de sessões não abre conta nenhuma.
+
+No servidor oficial as contas ficam num **Postgres**, e não num arquivo — ver
+"Arquitetura" logo abaixo para o porquê de ter dois jeitos de guardar a mesma
+coisa.
 
 ---
 
@@ -197,19 +201,41 @@ de voz**. A mídia não passa por ele: cada participante abre uma conexão diret
 com cada um dos outros (topologia em malha), e a malha se forma por canal —
 estar no mesmo grupo não é estar na mesma conversa.
 
-A persistência são quatro arquivos, e nenhum banco de dados: `grupos.json`,
-reescrito inteiro a cada mudança de estrutura; `mensagens.jsonl`, só
-acréscimo, compactado quando cresce demais; `contas.json`, com os hashes
-Argon2id; e `sessoes.json`, com a impressão dos tokens vivos. Sem a variável
-de ambiente `DADOS` o servidor funciona igual e esquece tudo ao fechar — é o
-caso do sidecar, onde não há conta a guardar.
+Grupos e histórico continuam em dois arquivos, sem banco de dados nenhum:
+`grupos.json`, reescrito inteiro a cada mudança de estrutura, e
+`mensagens.jsonl`, só acréscimo, compactado quando cresce demais. Sem a
+variável de ambiente `DADOS` o servidor funciona igual e esquece tudo ao
+fechar — é o caso do sidecar.
 
-O **"Entrar com o Google" fica atrás da opção de compilação `google`**, que só
-a imagem da nuvem liga. Ele arrasta um cliente HTTPS inteiro para trocar o
-código de autorização pelo perfil — o servidor sai de 599 KB para 1,93 MB —, e
-esse 1,3 MB viajaria dentro do instalador de todo mundo para servir a um
-recurso que o servidor caseiro nem teria como oferecer: ele não tem
-`client_secret` nem endereço público.
+**Contas têm dois backends**, escolhidos em tempo de execução pela presença
+de `DATABASE_URL` — não é o mesmo binário rodando de dois jeitos por acaso,
+é uma escolha deliberada: contas crescem (mais campos de perfil, planos,
+integrações) de um jeito que a estrutura de grupos não cresce, e é ali que um
+banco relacional de verdade compensa — sobretudo a garantia de e-mail único
+que o próprio Postgres impõe, em vez de um índice montado à mão em Rust com
+uma janela de corrida entre dois cadastros simultâneos.
+
+* **Postgres**, quando o binário foi compilado com `--features banco` **e**
+  `DATABASE_URL` está no ambiente — o caso do servidor oficial. Três tabelas
+  (`contas`, `atalhos`, `sessoes`), migradas automaticamente no boot a partir
+  de `servidor/migracoes/`, sem `sqlx-cli` nem passo manual de implantação.
+* **Um par de arquivos** (`contas.json`, `sessoes.json`), do mesmo jeito que
+  sempre foi — o caso do sidecar que hospeda uma conversa em rede local sem
+  internet, onde não há Postgres nenhum para se conectar.
+
+Qualquer falha ao conectar ou migrar faz o servidor cair para o arquivo, em
+vez de recusar subir — um `DATABASE_URL` fora do ar por um instante não deve
+impedir até quem entra sem conta de conversar. E a troca do backend importa
+sozinha, uma vez, o que estiver em `contas.json`/`sessoes.json` no volume:
+é assim que uma conta criada antes de o Postgres existir não se perde.
+
+O **"Entrar com o Google" fica atrás da opção de compilação `google`**, pelo
+mesmo motivo do Postgres: ele arrasta um cliente HTTPS inteiro para trocar o
+código de autorização pelo perfil, e esse cliente não serve a nada no
+servidor caseiro — que não tem `client_secret` nem endereço público. Sozinho,
+o `google` leva o servidor de 599 KB a 1,93 MB; com `banco` junto (a
+combinação que a imagem da nuvem de fato compila), a 2,34 MB. Nenhum desses
+KB viaja no instalador do CALL: o sidecar continua nos 599 KB de sempre.
 
 | Arquivo | Responsabilidade |
 | --- | --- |
@@ -229,7 +255,8 @@ recurso que o servidor caseiro nem teria como oferecer: ele não tem
 | `src-tauri/src/lib.rs` | Comandos nativos, permissões e ajuste de memória |
 | `servidor/src/main.rs` | Protocolo do servidor |
 | `servidor/src/modelo.rs` | Grupos, mensagens e persistência em disco |
-| `servidor/src/contas.rs` | Contas, senhas e sessões |
+| `servidor/src/contas.rs` | Contas, senhas e sessões — backend de arquivo e de Postgres |
+| `servidor/migracoes/` | Schema das contas, migrado automaticamente no boot |
 | `servidor/src/google.rs` | Troca do código de autorização com o Google |
 
 ---
@@ -255,6 +282,7 @@ Copy-Item target\release\sinalizacao.exe `
 
 ```powershell
 cargo test -p sinalizacao                    # e-mail, senha, sessão e castigo
+cargo test -p sinalizacao --features banco   # o mesmo, com o backend Postgres compilado
 cargo test -p call --lib                     # PKCE, convite e atividade
 node testes/sinalizacao.test.mjs             # protocolo do servidor, contas inclusas
 node testes/tempo.test.mjs                   # cronômetro e histórico da call
@@ -277,6 +305,15 @@ outro.
 `CALL_APELIDO` faz o aplicativo pular o portal de conta e entrar direto, sem
 conta, com o apelido dado — é assim que os roteiros de janela real evitam
 preencher formulário por coordenada de clique.
+
+**O backend Postgres não tem suíte automatizada.** `cargo test --features
+banco` confere que o binário compila com o driver dentro e continua a
+exercitar a lógica de `contas.rs` — mas os testes de unidade rodam sem
+`DATABASE_URL`, e por isso caem no backend de arquivo mesmo com a opção
+ligada. As consultas SQL em si foram verificadas à mão contra um Postgres de
+verdade (um túnel `railway connect` até o serviço da nuvem) antes de cada
+deploy; não há uma suíte que repita isso sozinha. É o próximo passo óbvio se
+o schema crescer.
 
 ---
 

@@ -82,14 +82,16 @@ impl Cartao {
     /// Le e recorta o cartao de uma mensagem do cliente. Recortar aqui, e nao
     /// so na interface, e o que vale: a interface e do outro lado da rede.
     ///
-    /// O cofre entra para resolver o token. E so leitura de tabela — nada de
-    /// Argon2 aqui, que e o que permite fazer isto com o estado trancado.
-    fn ler(v: &Value, cofre: &Cofre) -> Self {
-        let conta = texto_de(v, "token");
-        let conta = if conta.is_empty() {
+    /// O cofre entra para resolver o token. Com o backend de arquivo isso e
+    /// so leitura de tabela; com Postgres e uma ida ao banco — por isso o
+    /// metodo e assincrono, e por isso quem chama nao pode estar com nenhuma
+    /// tranca de `Estado` na mao neste instante.
+    async fn ler(v: &Value, cofre: &Cofre) -> Self {
+        let token = texto_de(v, "token");
+        let conta = if token.is_empty() {
             None
         } else {
-            cofre.conta_do_token(&conta).map(|c| c.id.clone())
+            cofre.conta_do_token(&token).await.map(|c| c.id)
         };
 
         Cartao {
@@ -148,10 +150,12 @@ impl Conexao {
     }
 }
 
+/// Grupos, mensagens e quem esta conectado agora. As contas moram fora
+/// daqui, em `Cofre` — ver a nota em `main()` sobre o porque dos dois
+/// trancados separadamente.
 struct Estado {
     conexoes: HashMap<u64, Conexao>,
     acervo: Acervo,
-    cofre: Cofre,
 }
 
 impl Estado {
@@ -210,10 +214,15 @@ async fn main() {
         println!("[contas] entrar com o Google: ligado");
     }
 
+    // Duas trancas, e nao uma, de proposito. `Estado` (grupos, mensagens,
+    // quem esta conectado) muda a cada mensagem de voz e precisa de acesso
+    // sincrono e barato. `Cofre` (contas) pode, com Postgres, esperar a rede
+    // — e segurar `Estado` durante essa espera pararia o encaminhamento de
+    // voz de todo mundo por causa de um cadastro de outra pessoa.
+    let cofre = Arc::new(Cofre::carregar(pasta.clone()).await);
     let estado = Arc::new(Mutex::new(Estado {
         conexoes: HashMap::new(),
-        acervo: Acervo::carregar(pasta.clone()),
-        cofre: Cofre::carregar(pasta),
+        acervo: Acervo::carregar(pasta),
     }));
 
     loop {
@@ -230,8 +239,9 @@ async fn main() {
         };
 
         let estado = estado.clone();
+        let cofre = cofre.clone();
         tokio::spawn(async move {
-            if let Err(e) = atender(fluxo, estado).await {
+            if let Err(e) = atender(fluxo, estado, cofre).await {
                 eprintln!("[sinalizacao] conexao encerrada: {e}");
             }
         });
@@ -291,7 +301,7 @@ async fn responder_se_for_http(fluxo: &TcpStream) -> Result<bool, String> {
     Ok(true)
 }
 
-async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>) -> Result<(), String> {
+async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Cofre>) -> Result<(), String> {
     let _ = fluxo.set_nodelay(true);
 
     if responder_se_for_http(&fluxo).await? {
@@ -356,9 +366,9 @@ async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>) -> Result<(),
             }
         }
 
-        // Cadastro e login precisam de Argon2, que custa dezenas de
-        // milissegundos de CPU e nao pode acontecer com o estado trancado nem
-        // dentro do laco de eventos. Por isso saem daqui, e nao de `tratar`.
+        // Cadastro e login precisam de Argon2 (e, com Postgres, de rede), e
+        // nao podem acontecer com `Estado` trancado nem dentro deste laco
+        // sem controle de repeticao. Por isso saem daqui, e nao de `tratar`.
         if e_pedido_de_conta(tipo) {
             pedidos_de_conta += 1;
             // Um cliente honesto faz um punhado destes por conexao. Passar
@@ -368,11 +378,11 @@ async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>) -> Result<(),
                 let _ = fila.send(recusa("senha", "Tentativas demais nesta conexão."));
                 continue;
             }
-            atender_conta(tipo, &v, &fila, &estado).await;
+            atender_conta(tipo, &v, &fila, &cofre).await;
             continue;
         }
 
-        tratar(tipo, &v, id, &fila, &estado);
+        tratar(tipo, &v, id, &fila, &estado, &cofre).await;
     }
 
     despedir(id, &estado);
@@ -380,22 +390,22 @@ async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>) -> Result<(),
     Ok(())
 }
 
-fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
     match tipo {
-        "criar-grupo" => criar_grupo(v, id, fila, estado),
-        "entrar" => entrar(v, id, fila, estado),
+        "criar-grupo" => criar_grupo(v, id, fila, estado, cofre).await,
+        "entrar" => entrar(v, id, fila, estado, cofre).await,
         "entrar-voz" => entrar_voz(v, id, fila, estado),
         "sair-voz" => sair_voz(id, estado),
         "sinal" => sinal(v, id, estado),
         "estado" => estado_de_midia(v, id, estado),
-        "perfil" => perfil(v, id, estado),
+        "perfil" => perfil(v, id, estado, cofre).await,
         "mensagem" => mensagem(v, id, fila, estado),
         "historico" => historico(v, id, fila, estado),
         "criar-categoria" => criar_categoria(v, id, fila, estado),
         "criar-canal" => criar_canal(v, id, fila, estado),
         "renomear" => renomear(v, id, fila, estado),
         "remover" => remover(v, id, fila, estado),
-        "guardar" => guardar(v, fila, estado),
+        "guardar" => guardar(v, fila, cofre).await,
         _ => {}
     }
 }
@@ -413,12 +423,12 @@ fn e_pedido_de_conta(tipo: &str) -> bool {
     )
 }
 
-async fn atender_conta(tipo: &str, v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn atender_conta(tipo: &str, v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     match tipo {
-        "cadastrar" => cadastrar(v, fila, estado).await,
-        "entrar-conta" => entrar_conta(v, fila, estado).await,
-        "retomar" => retomar(v, fila, estado),
-        "sair-conta" => sair_conta(v, fila, estado),
+        "cadastrar" => cadastrar(v, fila, cofre).await,
+        "entrar-conta" => entrar_conta(v, fila, cofre).await,
+        "retomar" => retomar(v, fila, cofre).await,
+        "sair-conta" => sair_conta(v, fila, cofre).await,
         "google-config" => {
             let _ = fila.send(texto_json(&json!({
                 "tipo": "google",
@@ -426,7 +436,7 @@ async fn atender_conta(tipo: &str, v: &Value, fila: &Fila, estado: &Arc<Mutex<Es
                 "clienteId": google::cliente_id().unwrap_or_default()
             })));
         }
-        "google-entrar" => google_entrar(v, fila, estado).await,
+        "google-entrar" => google_entrar(v, fila, cofre).await,
         _ => {}
     }
 }
@@ -442,7 +452,7 @@ where
     tokio::task::spawn_blocking(trabalho).await.ok()
 }
 
-async fn cadastrar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn cadastrar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     let email = match contas::normalizar_email(&texto_de(v, "email")) {
         Ok(e) => e,
         Err(r) => return recusar(fila, r),
@@ -463,9 +473,11 @@ async fn cadastrar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         );
     }
 
-    // Conferido antes de gastar o Argon2, e outra vez depois dele, dentro do
-    // cofre: duas pessoas podem pedir o mesmo e-mail no mesmo instante.
-    if estado.lock().unwrap().cofre.email_ocupado(&email) {
+    // Conferido antes de gastar o Argon2 — poupa a CPU de um pedido que ja se
+    // sabe recusado. O cofre confere de novo por dentro, na hora de gravar:
+    // duas pessoas podem pedir o mesmo e-mail enquanto o hash rodava, e so
+    // ali a resposta e definitiva.
+    if cofre.email_ocupado(&email).await {
         return recusar(
             fila,
             contas::Recusa {
@@ -485,52 +497,40 @@ async fn cadastrar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     let avatar: String = texto_de(v, "avatar").chars().take(AVATAR_MAX).collect();
     let bio: String = texto_de(v, "bio").trim().chars().take(BIO_MAX).collect();
 
-    let mut e = estado.lock().unwrap();
-    match e.cofre.cadastrar(email, hash, apelido, avatar, bio) {
-        Ok(id) => responder_sessao(&mut e, &id, fila),
+    match cofre.cadastrar(email, hash, apelido, avatar, bio).await {
+        Ok(id) => responder_sessao(cofre, &id, fila).await,
         Err(r) => recusar(fila, r),
     }
 }
 
-async fn entrar_conta(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn entrar_conta(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     // O e-mail e normalizado, mas um erro de forma aqui nao merece a licao de
     // gramatica do cadastro: quem esta entrando ou acerta a conta que tem, ou
     // nao tem conta — e as duas respostas sao a mesma.
     let email = contas::normalizar_email(&texto_de(v, "email")).unwrap_or_default();
     let senha = texto_de(v, "senha");
 
-    let (id, hash) = {
-        let e = estado.lock().unwrap();
+    let restante = cofre.castigo_restante(&email);
+    if restante > 0 {
+        let minutos = (restante / 60_000) + 1;
+        return recusar(
+            fila,
+            contas::Recusa {
+                campo: "senha",
+                motivo: format!("Muitas tentativas. Tente de novo em {minutos} minuto(s)."),
+            },
+        );
+    }
 
-        let restante = e.cofre.castigo_restante(&email);
-        if restante > 0 {
-            let minutos = (restante / 60_000) + 1;
-            return recusar(
-                fila,
-                contas::Recusa {
-                    campo: "senha",
-                    motivo: format!(
-                        "Muitas tentativas. Tente de novo em {minutos} minuto(s)."
-                    ),
-                },
-            );
-        }
+    // Um e-mail sem conta segue o mesmo caminho, com hash vazio: e
+    // `contas::conferir` quem gasta o mesmo tempo dos outros, para que o
+    // relogio nao conte a ninguem quais e-mails existem aqui.
+    let (id, hash) = cofre.hash_de(&email).await.unwrap_or((String::new(), String::new()));
 
-        // Um e-mail sem conta segue o mesmo caminho, com hash vazio: e
-        // `contas::conferir` quem gasta o mesmo tempo dos outros, para que o
-        // relogio nao conte a ninguem quais e-mails existem aqui.
-        e.cofre
-            .hash_de(&email)
-            .unwrap_or((String::new(), String::new()))
-    };
+    let confere = em_paralelo(move || contas::conferir(&senha, &hash)).await.unwrap_or(false);
 
-    let confere = em_paralelo(move || contas::conferir(&senha, &hash))
-        .await
-        .unwrap_or(false);
-
-    let mut e = estado.lock().unwrap();
     if !confere || id.is_empty() {
-        e.cofre.anotar_falha(&email);
+        cofre.anotar_falha(&email);
         return recusar(
             fila,
             contas::Recusa {
@@ -540,17 +540,16 @@ async fn entrar_conta(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         );
     }
 
-    e.cofre.perdoar(&email);
-    responder_sessao(&mut e, &id, fila);
+    cofre.perdoar(&email);
+    responder_sessao(cofre, &id, fila).await;
 }
 
 /// Token guardado no computador de quem volta. E o que faz o CALL abrir
 /// direto na lista de grupos em vez de pedir a senha toda manha.
-fn retomar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn retomar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     let token = texto_de(v, "token");
-    let e = estado.lock().unwrap();
 
-    let Some(conta) = e.cofre.conta_do_token(&token) else {
+    let Some(conta) = cofre.conta_do_token(&token).await else {
         // Nao e erro: e a resposta honesta a "esta sessao ainda vale?".
         let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
         return;
@@ -563,12 +562,12 @@ fn retomar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     })));
 }
 
-fn sair_conta(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
-    estado.lock().unwrap().cofre.fechar_sessao(&texto_de(v, "token"));
+async fn sair_conta(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+    cofre.fechar_sessao(&texto_de(v, "token")).await;
     let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
 }
 
-async fn google_entrar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn google_entrar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     let identidade = google::trocar_codigo(
         &texto_de(v, "codigo"),
         &texto_de(v, "verificador"),
@@ -593,29 +592,22 @@ async fn google_entrar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     // caracteres numa coluna estreita. "Maria Fernanda Albuquerque" vira
     // "Maria" — trocavel no perfil, e melhor que truncado.
     let apelido = limitar(
-        identidade
-            .nome
-            .split_whitespace()
-            .next()
-            .unwrap_or_default()
-            .to_string(),
+        identidade.nome.split_whitespace().next().unwrap_or_default().to_string(),
         APELIDO_MAX,
         "Convidado",
     );
     let email = contas::normalizar_email(&identidade.email).unwrap_or(identidade.email);
 
-    let mut e = estado.lock().unwrap();
-    let id = e.cofre.pelo_google(&identidade.sub, &email, &apelido, "");
-    responder_sessao(&mut e, &id, fila);
+    let id = cofre.pelo_google(&identidade.sub, &email, &apelido, "").await;
+    responder_sessao(cofre, &id, fila).await;
 }
 
 /// Perfil e lista de grupos gravados na conta. E o que a conta promete: o
 /// mesmo apelido, o mesmo mascote e os mesmos grupos num computador novo.
-fn guardar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn guardar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     let token = texto_de(v, "token");
-    let mut e = estado.lock().unwrap();
 
-    let Some(id) = e.cofre.conta_do_token(&token).map(|c| c.id.clone()) else {
+    let Some(id) = cofre.conta_do_token(&token).await.map(|c| c.id) else {
         let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
         return;
     };
@@ -640,27 +632,29 @@ fn guardar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
             .collect()
     });
 
-    e.cofre.guardar_perfil(
-        &id,
-        campo_opcional("apelido").map(|t| limitar(t.to_string(), APELIDO_MAX, "")),
-        campo_opcional("avatar").map(|t| t.chars().take(AVATAR_MAX).collect()),
-        campo_opcional("bio").map(|t| t.trim().chars().take(BIO_MAX).collect()),
-        atalhos,
-    );
+    cofre
+        .guardar_perfil(
+            &id,
+            campo_opcional("apelido").map(|t| limitar(t.to_string(), APELIDO_MAX, "")),
+            campo_opcional("avatar").map(|t| t.chars().take(AVATAR_MAX).collect()),
+            campo_opcional("bio").map(|t| t.trim().chars().take(BIO_MAX).collect()),
+            atalhos,
+        )
+        .await;
 
-    if let Some(conta) = e.cofre.por_id(&id) {
+    if let Some(conta) = cofre.por_id(&id).await {
         let _ = fila.send(texto_json(&json!({ "tipo": "conta", "conta": conta.resumo() })));
     }
 }
 
 /// Quantos grupos cabem numa conta. A coluna da esquerda nao rola bem alem
-/// disso, e o teto e o que impede um cliente adulterado de crescer o arquivo
-/// de contas sem limite.
+/// disso, e o teto e o que impede um cliente adulterado de crescer a conta
+/// sem limite.
 const ATALHOS_MAX: usize = 60;
 
-fn responder_sessao(e: &mut Estado, id: &str, fila: &Fila) {
-    let token = e.cofre.abrir_sessao(id);
-    let Some(conta) = e.cofre.por_id(id) else {
+async fn responder_sessao(cofre: &Cofre, id: &str, fila: &Fila) {
+    let token = cofre.abrir_sessao(id).await;
+    let Some(conta) = cofre.por_id(id).await else {
         let _ = fila.send(erro("Conta não encontrada."));
         return;
     };
@@ -685,29 +679,67 @@ fn recusa(campo: &str, motivo: &str) -> Message {
 
 // ---------------------------------------------------------------- entrada
 
-fn criar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn criar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
     let nome = limitar(texto_de(v, "nome"), NOME_MAX, "Meu grupo");
 
+    // O token e resolvido antes de tocar em `Estado`: com Postgres isto pode
+    // esperar a rede, e essa espera nao pode acontecer com a tranca de todo
+    // mundo na mao.
+    let cartao = Cartao::ler(v, cofre).await;
+
+    // Confere duplicata cedo, antes de gastar as idas ao cofre — poupa
+    // trabalho no caso comum. A checagem que vale, porque so ela acontece
+    // sem intervalo, e a de dentro do lock final, mais abaixo.
+    if estado.lock().unwrap().conexoes.contains_key(&id) {
+        let _ = fila.send(erro("Esta conexao ja esta em um grupo."));
+        return;
+    }
+
+    // O codigo nasce aqui, antes do grupo existir em `Estado`: e o que
+    // permite gravar o grupo na conta e ja ter o resumo atualizado em maos
+    // quando o "bem-vindo" for montado, sem uma segunda volta ao cofre.
+    let codigo = novo_codigo();
+    let conta_resumo = sincronizar_conta_e_buscar_resumo(cofre, &cartao, &codigo, &nome).await;
+
     let mut e = estado.lock().unwrap();
-    let cartao = Cartao::ler(v, &e.cofre);
     if e.conexoes.contains_key(&id) {
         let _ = fila.send(erro("Esta conexao ja esta em um grupo."));
         return;
     }
 
-    let grupo = Grupo::novo(novo_codigo(), nome, cartao.usuario.clone());
-    let codigo = grupo.codigo.clone();
+    let grupo = Grupo::novo(codigo.clone(), nome, cartao.usuario.clone());
     e.acervo.grupos.insert(codigo.clone(), grupo);
     e.acervo.salvar_grupos();
 
-    admitir(&mut e, id, cartao, &codigo, fila);
+    admitir(&mut e, id, cartao, &codigo, fila, conta_resumo);
 }
 
-fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+async fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
     let codigo = texto_de(v, "codigo").trim().to_uppercase();
+    let cartao = Cartao::ler(v, cofre).await;
+
+    // Primeira olhada: confirma que da para entrar e pega o nome do grupo,
+    // sem alterar nada ainda. A checagem que vale acontece de novo depois,
+    // ja com a conta atualizada — o grupo poderia, em tese, ter sido
+    // removido nesse meio tempo.
+    let nome_do_grupo = {
+        let e = estado.lock().unwrap();
+        if e.conexoes.contains_key(&id) {
+            let _ = fila.send(erro("Esta conexao ja esta em um grupo."));
+            return;
+        }
+        match e.acervo.grupos.get(&codigo) {
+            Some(g) => g.nome.clone(),
+            None => {
+                let _ = fila.send(erro("Convite invalido ou grupo removido."));
+                return;
+            }
+        }
+    };
+
+    let conta_resumo = sincronizar_conta_e_buscar_resumo(cofre, &cartao, &codigo, &nome_do_grupo).await;
 
     let mut e = estado.lock().unwrap();
-    let cartao = Cartao::ler(v, &e.cofre);
     if e.conexoes.contains_key(&id) {
         let _ = fila.send(erro("Esta conexao ja esta em um grupo."));
         return;
@@ -717,39 +749,51 @@ fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         return;
     }
 
-    admitir(&mut e, id, cartao, &codigo, fila);
+    admitir(&mut e, id, cartao, &codigo, fila, conta_resumo);
 }
 
-/// Registra a conexao no grupo, entrega o estado inteiro a ela e anuncia a
-/// chegada aos demais.
-fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila) {
-    // Quem entrou com conta leva o grupo junto: e o que faz a coluna da
-    // esquerda reaparecer inteira num computador onde o CALL acabou de ser
-    // instalado. O perfil tambem sobe, porque e nele que a pessoa mexeu.
-    if let Some(conta) = &cartao.conta {
-        let nome = e
-            .acervo
-            .grupos
-            .get(codigo)
-            .map(|g| g.nome.clone())
-            .unwrap_or_default();
-        e.cofre.lembrar_grupo(conta, codigo, &nome);
-        e.cofre.guardar_perfil(
+/// Grava o grupo e o perfil atuais na conta (quando ha conta) e devolve o
+/// resumo ja atualizado, pronto para embutir no "bem-vindo".
+///
+/// Espera terminar de proposito, em vez de rodar em segundo plano: a
+/// resposta a pessoa precisa trazer o grupo que ela acabou de entrar — sem
+/// isso, a coluna da esquerda so mostraria o grupo novo depois de uma
+/// reconexao, e "entrar num grupo" pareceria ter falhado pela metade.
+async fn sincronizar_conta_e_buscar_resumo(
+    cofre: &Cofre,
+    cartao: &Cartao,
+    codigo: &str,
+    nome_do_grupo: &str,
+) -> Option<Value> {
+    let conta = cartao.conta.as_ref()?;
+    cofre.lembrar_grupo(conta, codigo, nome_do_grupo).await;
+    cofre
+        .guardar_perfil(
             conta,
             Some(cartao.apelido.clone()),
             Some(cartao.avatar.clone()),
             Some(cartao.bio.clone()),
             None,
-        );
-    }
+        )
+        .await;
+    cofre.por_id(conta).await.map(|c| c.resumo())
+}
 
+/// Registra a conexao no grupo, entrega o estado inteiro a ela e anuncia a
+/// chegada aos demais.
+///
+/// So mexe em `Estado` — nenhuma chamada ao cofre aqui dentro, de proposito:
+/// esta funcao roda com a tranca de `Estado` na mao, e o cofre pode precisar
+/// de rede. `conta_resumo` chega ja pronto, buscado por quem chamou antes de
+/// trancar.
+fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, conta_resumo: Option<Value>) {
     let nova = Conexao {
         id,
         usuario: cartao.usuario,
         apelido: cartao.apelido,
         avatar: cartao.avatar,
         bio: cartao.bio,
-        conta: cartao.conta.clone(),
+        conta: cartao.conta,
         grupo: Some(codigo.to_string()),
         canal_voz: None,
         fila: fila.clone(),
@@ -760,11 +804,6 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila) {
 
     let presentes: Vec<Value> = e.do_grupo(codigo).iter().map(Conexao::resumo).collect();
     let grupo = e.acervo.grupos.get(codigo).cloned();
-    let conta = cartao
-        .conta
-        .as_ref()
-        .and_then(|id| e.cofre.por_id(id))
-        .map(contas::Conta::resumo);
 
     let aviso = json!({ "tipo": "entrou", "membro": nova.resumo() });
     e.difundir(codigo, &aviso, None);
@@ -774,7 +813,7 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila) {
         "eu": nova.resumo(),
         "grupo": grupo,
         "presentes": presentes,
-        "conta": conta
+        "conta": conta_resumo
     })));
 
     e.conexoes.insert(id, nova);
@@ -940,41 +979,40 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
 /// as mensagens e o que decide quem e o dono do grupo: aceitar uma troca dele
 /// no meio da sessao seria deixar qualquer um se apresentar como outra pessoa
 /// depois de ja ter sido admitido.
-fn perfil(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
-    let mut e = estado.lock().unwrap();
-    let cartao = Cartao::ler(v, &e.cofre);
+async fn perfil(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let cartao = Cartao::ler(v, cofre).await;
 
-    let Some(eu) = e.conexoes.get_mut(&id) else {
-        return;
-    };
-    eu.apelido = cartao.apelido.clone();
-    eu.avatar = cartao.avatar.clone();
-    eu.bio = cartao.bio.clone();
-    let conta = eu.conta.clone();
-    let Some(codigo) = eu.grupo.clone() else {
-        return;
+    let conta = {
+        let mut e = estado.lock().unwrap();
+        let Some(eu) = e.conexoes.get_mut(&id) else {
+            return;
+        };
+        eu.apelido = cartao.apelido.clone();
+        eu.avatar = cartao.avatar.clone();
+        eu.bio = cartao.bio.clone();
+        let conta = eu.conta.clone();
+        let Some(codigo) = eu.grupo.clone() else {
+            return;
+        };
+
+        let aviso = json!({
+            "tipo": "perfil",
+            "de": id.to_string(),
+            "apelido": cartao.apelido.clone(),
+            "avatar": cartao.avatar.clone(),
+            "bio": cartao.bio.clone()
+        });
+        e.difundir(&codigo, &aviso, Some(id));
+        conta
     };
 
     // Numa conexao com conta, mudar o perfil no meio da conversa e mudar o
     // perfil, e nao so o cracha desta sessao.
     if let Some(conta) = conta {
-        e.cofre.guardar_perfil(
-            &conta,
-            Some(cartao.apelido.clone()),
-            Some(cartao.avatar.clone()),
-            Some(cartao.bio.clone()),
-            None,
-        );
+        cofre
+            .guardar_perfil(&conta, Some(cartao.apelido), Some(cartao.avatar), Some(cartao.bio), None)
+            .await;
     }
-
-    let aviso = json!({
-        "tipo": "perfil",
-        "de": id.to_string(),
-        "apelido": cartao.apelido,
-        "avatar": cartao.avatar,
-        "bio": cartao.bio
-    });
-    e.difundir(&codigo, &aviso, Some(id));
 }
 
 // ------------------------------------------------------------------ texto
@@ -1255,4 +1293,20 @@ fn erro(motivo: &str) -> Message {
 
 fn texto_json(v: &Value) -> Message {
     Message::Text(v.to_string())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    /// A recusa de um `usuario` alegando ser conta e a linha `identidade()`
+    /// verifica sozinha, sem servidor nenhum de pe — direto na funcao pura.
+    #[test]
+    fn recusa_quem_se_diz_dono_de_uma_conta_sem_prova() {
+        let v = json!({ "usuario": "conta-XYZ123456789" });
+        assert!(!identidade(&v).starts_with("conta-"));
+
+        let v = json!({ "usuario": "identidade-legitima" });
+        assert_eq!(identidade(&v), "identidade-legitima");
+    }
 }
