@@ -749,6 +749,27 @@ A janela com o painel aberto e o microfone em teste ficou em **31,6 MB** de
 | Protocolo | 49 verificações, sem regressão |
 | Janela real | Painel aberto no WebView2, sob a CSP do Tauri, com os dispositivos de áudio da máquina |
 
+### Publicação da v0.4.0
+
+A release saiu com esta iteração e com o convite por link da outra frente de
+trabalho, e foi conferida de ponta a ponta — não pelo fato de o `publicar.ps1`
+ter terminado sem erro, que é coisa diferente de a atualização chegar:
+
+| Conferência | Resultado |
+| --- | --- |
+| `latest.json` publicado sem marca de ordem de bytes | sim — é o defeito da iteração 8, que era silencioso |
+| Assinatura no manifesto igual à do arquivo `.sig` | sim |
+| Instalador publicado idêntico ao compilado (SHA-256) | sim, 1,71 MB |
+| Identificador da chave que assinou | `0ff7228b0ddd9605` |
+| Identificador embutido em `tauri.conf.json` | `0ff7228b0ddd9605` — é isto que faz as instalações da 0.3.0 aceitarem |
+
+O identificador teve de ser lido dos bytes, e não do comentário: o Tauri escreve
+`signature from tauri secret key` na primeira linha do arquivo, sem o
+identificador. Ele está nos bytes 2 a 9 da segunda linha, e a primeira tentativa
+de conferência — por expressão regular no comentário — deu "não batem" para duas
+chaves iguais. Uma conferência que erra assim é pior do que nenhuma: ela ensina a
+ignorar o próprio alarme.
+
 ---
 
 ## Estado final medido
