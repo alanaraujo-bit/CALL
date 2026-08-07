@@ -1101,6 +1101,98 @@ funcionando junta: API do Windows → `atividade.rs` → `invoke` do Tauri →
 `Vigia` e suas duas leituras → servidor → tela da outra pessoa. Nenhum teste
 de unidade cobre a costura entre esses seis pedaços.
 
+### O recurso que não cabia na janela (0.6.1)
+
+A pergunta "está tudo funcionando?" trouxe o defeito que nenhum teste pegaria,
+porque nenhum teste olhava a janela **no tamanho em que ela nasce**.
+
+A janela padrão tem 1080 px, ou seja, 1064 de área útil. A coluna de presentes
+era escondida abaixo de 1120 px. Ou seja: **numa instalação nova, no tamanho
+padrão, o histórico da call e a atividade embaixo do nome eram invisíveis** —
+e não havia nada na tela sugerindo que existiam. Eu tinha conferido o layout
+numa captura de 1400 px, largura que só existe em quem maximiza a janela.
+
+A regra era defensável quando foi escrita: a lista de presentes repetia, sem o
+aninhamento por canal, o que a árvore de canais já mostra, então era a
+primeira candidata a sair. A iteração 15 tornou isso falso — ela virou o único
+lugar onde vivem "estiveram na call" e o que cada pessoa está usando.
+
+Agora a coluna **encolhe antes de sumir**: de 208 px para 190 px abaixo de
+1120, e só desaparece abaixo de 940, quando a coluna da conversa deixaria de
+caber. Conferido nas três larguras que importam:
+
+| Largura útil | Presentes | Conversa | Resultado |
+| --- | --- | --- | --- |
+| 1064 (padrão do aplicativo) | 190 px | 472 px | histórico e atividade visíveis |
+| 950 (acima do corte) | 190 px | 358 px | apertado, mas inteiro |
+| 880 (mínimo da janela) | oculta | 542 px | sai limpo, sem transbordo |
+
+A lição não é sobre CSS: **um recurso conferido fora do tamanho real da janela
+não foi conferido.** O cronômetro escapou por acidente, não por acerto — ele
+mora no rodapé da voz, que nunca some.
+
+## Iteração 16 — Tirar do caminho o que não decide nada (0.7.0)
+
+**Motivo:** dois atritos que só aparecem em uso repetido, e por isso nenhuma
+suíte notaria. A tela de entrada voltava a cada abertura, com os campos já
+preenchidos, pedindo um clique em "Continuar" que não decidia coisa alguma. E
+o aviso de versão nova, uma vez dispensado com "Depois", sumia sem deixar
+rastro: a única forma de lembrar dele era fechar e reabrir o aplicativo.
+
+**Construído:**
+
+| Antes | Agora |
+| --- | --- |
+| Tela de entrada a cada abertura | Aparece uma vez; quem tem apelido guardado cai direto nos grupos |
+| Apelido e mascote só na entrada | Em "Meu perfil", onde já viviam a bio e o mascote |
+| Endereço do servidor na entrada | Aba **Servidor** nos ajustes, com "Salvar e reconectar" |
+| "Depois" apagava o aviso | "Depois" tira o cartão e deixa uma marca no alto da janela, até resolver |
+
+A marca da atualização não pisca e não anima. Um indicador que chama atenção
+sem parar ensina a pessoa a não olhar para ele; o objetivo aqui é o contrário
+— estar disponível quando ela lembrar. Ela ficaria melhor colada ao canto da
+janela, mas ali cobre o contador de presentes, o que a captura mostrou na
+primeira tentativa. Foi para a barra do topo, que nunca some.
+
+### `CALL_SERVIDOR`
+
+Tirar o endereço do servidor da tela de entrada quebrou o roteiro de duas
+instâncias, que era ali que apontava o aplicativo para o servidor local. A
+saída fácil seria navegar o painel de ajustes por coordenada de clique — e o
+painel é modal, com cinco abas, o que multiplicaria exatamente o tipo de
+fragilidade que a iteração anterior acabou de consertar.
+
+Em vez disso, o Rust passou a ler `CALL_SERVIDOR`, no mesmo padrão do
+`CALL_INSTANCIAS_MULTIPLAS` que já existia. Três linhas, nenhuma dependência,
+e serve também a quem sobe o CALL numa rede local sem querer abrir ajuste.
+
+### O que a conduta por coordenada ensina
+
+Duas armadilhas apareceram, e as duas valem registro porque voltarão:
+
+**Medir no navegador não vale.** As coordenadas da tela de entrada, medidas em
+Edge headless com `--window-size=1064,701`, erraram **46 px na vertical** —
+o viewport do navegador não é a área cliente do WebView2. A medição que vale é
+a captura da própria janela.
+
+**O Windows recusa o primeiro plano a processos de fundo.** Sem um clique numa
+área morta antes de digitar, uma execução em cada três perdia o apelido, e a
+falha parecia defeito do aplicativo. O roteiro agora repete a entrada até três
+vezes usando o grupo no disco como sinal, e só então reprova.
+
+E o Bloco de Notas do Windows 11 é aplicativo empacotado: o processo devolvido
+não é o dono da janela, e `MainWindowHandle` volta vazio. Trocado por `cmd`.
+
+### A voz, enfim verificada
+
+Na primeira execução desta suíte a máquina não tinha dispositivo de captura e
+a verificação de voz era pulada, dizendo por quê. Com um microfone presente,
+ela passou: **as duas instâncias entram no canal de voz**, e a captura
+`15-B-na-voz` mostra o cronômetro da call correndo em `00:08`. Era a última
+peça da iteração 15 sem prova no aplicativo montado.
+
+---
+
 ### Limites honestos
 
 O tempo de quem já estava na call antes de você é um piso, e a interface diz
@@ -1113,12 +1205,15 @@ E a atividade é um recurso do Windows: `atividade.rs` compila fora dele, mas
 devolve sempre `None`. O CALL só é distribuído para Windows, então isto é
 fronteira declarada, e não dívida.
 
-**A entrada no canal de voz continua sem prova automatizada nesta máquina**,
-que não tem dispositivo de captura: o roteiro pula essa verificação e diz por
-quê. A malha WebRTC é exercitada em `rodar-malha.ps1`, com dispositivo falso
-do Chromium, mas o caminho do aplicativo real — `getUserMedia`, porta de
-ruído, sino de entrada — só se prova numa máquina com microfone. Fica anotado
-como lacuna conhecida, e não como recurso verificado.
+A entrada no canal de voz **depende de haver microfone na máquina que roda o
+teste**. Onde não há, o roteiro pula a verificação e diz por quê, em vez de
+reprovar o aplicativo por uma falta de hardware — e em vez de fingir que
+verificou. Com microfone presente, ela passa (iteração 16).
+
+O que continua sem prova automatizada é o **som** de entrada e saída: as
+amostras são medidas em `OfflineAudioContext`, mas que o sino chegue ao
+alto-falante no aplicativo montado, ninguém verifica. `testes/ouvir-sons.ps1`
+existe para essa parte, e ela é de ouvido — nenhum número resolve.
 
 ---
 

@@ -4,6 +4,13 @@
 # As instancias compartilham o perfil do WebView2, e portanto o localStorage:
 # o grupo criado pela primeira ja aparece na lista da segunda, que entra nele
 # sem precisar digitar o codigo do convite.
+#
+# Efeito colateral disso, desde que a tela de entrada passou a ser pulada para
+# quem ja tem apelido guardado: a segunda janela herda o apelido da primeira e
+# as duas aparecem como "ana ribeiro". Nao atrapalha o que este roteiro prova
+# -- que duas instancias reais se encontram, conversam e anunciam atividade --
+# e quem cobre identidade separada e o `rodar-perfil.ps1`, com duas pessoas de
+# verdade.
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -66,6 +73,10 @@ function AbrirInstancia($apelido, $x, $y) {
   # Sem isto a segunda chamada morreria na partida: o aplicativo passou a ser
   # de instancia unica para que o link `call://` chegue a janela ja aberta.
   $env:CALL_INSTANCIAS_MULTIPLAS = "1"
+  # O endereco do servidor saiu da tela de entrada e virou ajuste. Impor pelo
+  # ambiente e o que evita navegar um painel modal por coordenada de clique --
+  # e o que garante que este teste nunca toque no servidor de verdade.
+  $env:CALL_SERVIDOR = "ws://127.0.0.1:8787"
   $p = Start-Process "target\release\call.exe" -PassThru
   Start-Sleep -Seconds 6
   $p.Refresh()
@@ -74,24 +85,20 @@ function AbrirInstancia($apelido, $x, $y) {
   Start-Sleep -Milliseconds 600
 
   $c = Cliente $h
-  # Coordenadas medidas na tela de entrada com a janela em 1080x740 (area
-  # cliente de 1064x701). O cartao e centrado na vertical, entao abrir o bloco
-  # do servidor proprio empurra tudo que esta abaixo dele para baixo e sobe o
-  # que esta acima -- por isso as posicoes antes e depois do clique diferem, e
-  # por isso elas foram medidas passo a passo em vez de calculadas.
-  [J]::Clique($h, 794, 258)          # campo de apelido
+  # Coordenadas lidas de uma captura da propria janela em 1080x740 (area
+  # cliente de 1064x701), e nao do navegador: o viewport do Edge headless nao
+  # bate com a area cliente do WebView2, e medir la da 46 px de erro na
+  # vertical. Sao so duas agora -- o endereco do servidor saiu daqui e passa
+  # por CALL_SERVIDOR.
+  #
+  # O clique numa area morta antes de tudo nao e supersticao: o Windows recusa
+  # SetForegroundWindow a processos em segundo plano, e sem trazer a janela
+  # para a frente primeiro o teclado vai para outro lugar. Sem isto, uma
+  # execucao em cada tres perdia o apelido.
+  [J]::Clique($h, 250, 620)          # area morta da vitrine, so para focar
+  [J]::Clique($h, 794, 276)          # campo de apelido
   Digitar "^a"; Digitar $apelido
-
-  # O padrao do aplicativo e o servidor hospedado. O teste tem de apontar para
-  # o servidor local: senao ele depende da internet, e pior, cria grupos de
-  # verdade no servidor que os amigos usam.
-  [J]::Clique($h, 727, 409)          # "Usar um servidor proprio"
-  Start-Sleep -Milliseconds 700
-  [J]::Clique($h, 735, 410)          # campo do servidor, ja com o bloco aberto
-  Digitar "^a"; Digitar "ws://127.0.0.1:8787"
-  Start-Sleep -Milliseconds 300
-
-  [J]::Clique($h, 794, 528)          # Continuar
+  [J]::Clique($h, 794, 443)          # Continuar
   Start-Sleep -Seconds 2
   return @{ proc = $p; h = $h; cli = $c }
 }
@@ -145,17 +152,31 @@ function TemMicrofone {
 }
 
 Write-Output "Instancia A (ana)"
-$a = AbrirInstancia "ana ribeiro" 0 0
-$criar = PontoCriarGrupo $a.cli
-[J]::Clique($a.h, $criar.x, $criar.y)
-Start-Sleep -Milliseconds 700
-Digitar "reuniao de equipe"; Start-Sleep -Milliseconds 300; Digitar "{ENTER}"
-Start-Sleep -Seconds 4
+$arquivoGrupos = Join-Path $dados "grupos.json"
+
+# O grupo no disco e o sinal observavel de que a entrada funcionou, entao ele
+# serve tambem para saber quando repetir. Conduzir janela por coordenada
+# disputa o primeiro plano com o resto da area de trabalho, e uma tentativa
+# perdida nao e defeito do aplicativo -- mas tres seguidas sao defeito de
+# alguma coisa, e ai o teste reprova.
+$a = $null
+for ($tentativa = 1; $tentativa -le 3 -and -not (Test-Path $arquivoGrupos); $tentativa++) {
+  if ($a) {
+    Write-Output "  (a entrada nao pegou; tentativa $tentativa)"
+    Stop-Process -Id $a.proc.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 800
+  }
+  $a = AbrirInstancia "ana ribeiro" 0 0
+  $criar = PontoCriarGrupo $a.cli
+  [J]::Clique($a.h, $criar.x, $criar.y)
+  Start-Sleep -Milliseconds 700
+  Digitar "reuniao de equipe"; Start-Sleep -Milliseconds 300; Digitar "{ENTER}"
+  Start-Sleep -Seconds 4
+}
 Capturar $a.h "10-A-sozinha"
 
 # Primeira prova, e a que teria pego a quebra silenciosa: se os cliques
 # erraram a tela de entrada, nao ha grupo nenhum no disco do servidor.
-$arquivoGrupos = Join-Path $dados "grupos.json"
 Conferir (Test-Path $arquivoGrupos) "a instancia A chegou ao servidor e criou um grupo"
 if (-not (Test-Path $arquivoGrupos)) {
   Write-Output "`nA instancia A nao passou da tela de entrada. As coordenadas de clique"
@@ -215,9 +236,20 @@ Capturar $b.h "15-B-na-voz"
 # falar com eles. Entao o teste poe outra janela na frente e espera. O Vigia
 # exige duas leituras seguidas de 5 s antes de anunciar; 16 s cobrem isso.
 Write-Output "Atividade em primeiro plano"
-$bloco = Start-Process notepad -PassThru
-Start-Sleep -Seconds 3
-[void][J]::SetForegroundWindow($bloco.MainWindowHandle)
+# `cmd`, e nao o Bloco de Notas: no Windows 11 o Bloco de Notas e aplicativo
+# empacotado, e o processo que o Start-Process devolve nao e o dono da janela
+# -- MainWindowHandle volta vazio. O `cmd` e Win32 classico, existe em toda
+# instalacao, e tem descricao de versao para o `atividade.rs` ler.
+# O `cmd` costuma ser hospedado pelo Windows Terminal, e nesse caso a janela
+# pertence a outro processo: MainWindowHandle volta zero e nao ha o que trazer
+# para a frente. Nao faz falta -- abrir ja rouba o primeiro plano, que e tudo
+# o que este trecho precisa. Se houver handle, insiste; se nao, segue.
+$bloco = Start-Process cmd -ArgumentList "/k title sonda de atividade" -PassThru
+for ($i = 0; $i -lt 10 -and $bloco.MainWindowHandle -eq 0; $i++) {
+  Start-Sleep -Milliseconds 300
+  $bloco.Refresh()
+}
+if ($bloco.MainWindowHandle -ne 0) { [void][J]::SetForegroundWindow($bloco.MainWindowHandle) }
 Start-Sleep -Seconds 16
 Stop-Process -Id $bloco.Id -Force -ErrorAction SilentlyContinue
 

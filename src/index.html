@@ -74,26 +74,6 @@
               <span class="campo__dica">Dá para trocar depois, junto com a bio, no seu perfil.</span>
             </div>
 
-            <details class="avancado" id="avancado-servidor">
-              <summary class="avancado__gatilho">
-                <svg viewBox="0 0 20 20" aria-hidden="true" class="avancado__seta"><path d="M7 5l5 5-5 5" /></svg>
-                Usar um servidor próprio
-              </summary>
-              <div class="avancado__corpo">
-                <label class="campo">
-                  <span class="campo__rotulo">Servidor</span>
-                  <div class="campo__composto">
-                    <input class="campo__entrada" id="campo-servidor" placeholder="wss://sinalizacao-production.up.railway.app" required />
-                    <button class="botao botao--sutil botao--hospedar" type="button" id="botao-hospedar" title="Iniciar um servidor nesta máquina">
-                      <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="6" rx="1.5" /><rect x="3" y="11" width="14" height="6" rx="1.5" /><circle cx="6.5" cy="6" r="0.9" /><circle cx="6.5" cy="14" r="0.9" /></svg>
-                      <span>Hospedar</span>
-                    </button>
-                  </div>
-                  <span class="campo__dica" id="dica-servidor">Já vem no servidor oficial do CALL — é só continuar. “Hospedar” sobe um servidor nesta máquina, para uso na rede local.</span>
-                </label>
-              </div>
-            </details>
-
             <button class="botao botao--primario botao--largo" type="submit" id="botao-continuar">
               <span>Continuar</span>
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 5l5 5-5 5" /></svg>
@@ -205,6 +185,17 @@
             <h2 class="sala__nome" id="titulo-canal">Nenhum canal</h2>
             <span class="sala__meta" id="subtitulo-canal">Selecione ou crie um grupo para começar</span>
           </div>
+
+          <!-- Fica na barra do topo, calada, enquanto a versão nova não for
+               instalada. O cartão do rodapé aparece uma vez e some quando a
+               pessoa diz "Depois"; sem esta marca, "depois" viraria "nunca
+               mais" até reabrir o aplicativo. Vive aqui, e não presa ao canto
+               da janela, porque ali ela cobriria o contador de presentes. -->
+          <button class="marca-atualizacao oculto" type="button" id="marca-atualizacao"
+                  title="Nova versão disponível — clique para instalar">
+            <span class="marca-atualizacao__ponto" aria-hidden="true"></span>
+            <span>Atualizar</span>
+          </button>
         </header>
 
         <div class="palco oculto" id="palco">
@@ -369,6 +360,7 @@
           <button class="aba" type="button" role="tab" data-aba="tela" aria-selected="false">Transmissão</button>
           <button class="aba" type="button" role="tab" data-aba="atalhos" aria-selected="false">Atalhos</button>
           <button class="aba" type="button" role="tab" data-aba="atividade" aria-selected="false">Atividade</button>
+          <button class="aba" type="button" role="tab" data-aba="servidor" aria-selected="false">Servidor</button>
         </nav>
 
         <div class="ajustes__corpo">
@@ -586,6 +578,38 @@
               </p>
               <p class="ajuste__dica" id="dica-atividade-agora">—</p>
             </div>
+          </section>
+
+          <!-- ── Servidor ────────────────────────────────────────── -->
+          <!-- Saiu da tela de entrada: aquela tela virou boas-vindas, e
+               boas-vindas se dá uma vez. Trocar de servidor é ajuste, e
+               ajuste mora nos ajustes. -->
+          <section class="ajustes__painel" data-painel="servidor" hidden>
+            <div class="ajuste">
+              <label class="ajuste__rotulo" for="campo-servidor">Endereço do servidor</label>
+              <div class="campo__composto">
+                <input class="campo__entrada" id="campo-servidor" placeholder="wss://sinalizacao-production.up.railway.app" />
+                <button class="botao botao--sutil botao--hospedar" type="button" id="botao-hospedar" title="Iniciar um servidor nesta máquina">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="6" rx="1.5" /><rect x="3" y="11" width="14" height="6" rx="1.5" /><circle cx="6.5" cy="6" r="0.9" /><circle cx="6.5" cy="14" r="0.9" /></svg>
+                  <span>Hospedar</span>
+                </button>
+              </div>
+              <p class="ajuste__dica" id="dica-servidor">
+                Já vem no servidor oficial do CALL — não há nada a fazer aqui.
+                “Hospedar” sobe um servidor nesta máquina, na porta 8787, para
+                uso em rede local ou sem internet; ele fecha junto com o
+                aplicativo.
+              </p>
+            </div>
+
+            <button class="botao botao--sutil" type="button" id="botao-aplicar-servidor">
+              Salvar e reconectar
+            </button>
+
+            <p class="ajuste__dica ajuste__dica--solta">
+              Trocar de servidor desconecta você do grupo atual: grupos vivem no
+              servidor onde foram criados, e não viajam de um para outro.
+            </p>
           </section>
         </div>
       </div>

@@ -15,7 +15,8 @@
       duas instâncias e do foco de janela, que é o que torna o
       `duas-instancias.ps1` frágil.
     -->
-    <iframe id="app" src="/src/index.html" style="width: 1180px; height: 760px; border: 0"></iframe>
+    <!-- Sem `src`: ele é atribuído depois de semear as preferências. -->
+    <iframe id="app" style="width: 1180px; height: 760px; border: 0"></iframe>
 
     <script type="module">
       const entregar = (dados, rota = "/resultado") =>
@@ -41,6 +42,19 @@
       };
 
       const quadro = document.getElementById("app");
+
+      // O endereço do servidor deixou de ser campo da tela de entrada e virou
+      // preferência, então semear antes de carregar é o único jeito de o
+      // aplicativo nascer apontado para o servidor deste teste. A página e o
+      // quadro têm a mesma origem, logo o mesmo `localStorage`.
+      //
+      // Só o servidor: sem apelido, a tela de entrada continua aparecendo, que
+      // é o que este teste precisa exercitar.
+      localStorage.setItem(
+        "call.preferencias",
+        JSON.stringify({ servidor: "ws://127.0.0.1:8898" })
+      );
+      quadro.src = "/src/index.html";
       await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
       const doc = quadro.contentDocument;
       const jan = quadro.contentWindow;
@@ -84,7 +98,6 @@
 
         // ── Entrar ───────────────────────────────────────────────────
         $("campo-apelido").value = "Alan";
-        $("campo-servidor").value = "ws://127.0.0.1:8898";
         $("formulario-entrada").dispatchEvent(new jan.Event("submit", { cancelable: true }));
         await esperar(300);
         conferir(!$("tela-aplicacao").classList.contains("oculto"), "a aplicação abre");
@@ -257,6 +270,33 @@
         $("perfil-fechar").click();
 
         par.close();
+
+        // ── A tela de entrada não volta ──────────────────────────────
+        // Boas-vindas se dá uma vez. Quem já tem apelido guardado precisa cair
+        // direto na aplicação; antes, toda abertura pedia um clique em
+        // "Continuar" que não decidia nada.
+        // "Alan A." e nao "Alan": o editor de perfil trocou o apelido acima, e
+        // e o valor gravado por ele que decide se a tela de entrada volta.
+        conferir(prefs().apelido === "Alan A.", `o apelido ficou guardado (${prefs().apelido})`);
+        quadro.src = "/src/index.html";
+        await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+        await esperar(400);
+        const doc2 = quadro.contentDocument;
+        conferir(
+          doc2.getElementById("tela-entrada").classList.contains("oculto"),
+          "reabrir com apelido guardado não mostra a tela de entrada"
+        );
+        conferir(
+          !doc2.getElementById("tela-aplicacao").classList.contains("oculto"),
+          "e cai direto na aplicação"
+        );
+        // O endereço do servidor mudou de casa junto: some da entrada e passa
+        // a viver nos ajustes, onde dá para trocar sem reinstalar nada.
+        conferir(
+          doc2.querySelector('[data-painel="servidor"] #campo-servidor'),
+          "o endereço do servidor agora mora nos ajustes"
+        );
+
         conferir(erros.length === 0, `nenhum erro de execução (${erros.join(" | ") || "nenhum"})`);
       } catch (erro) {
         conferir(false, `erro inesperado: ${erro?.message ?? erro}`);

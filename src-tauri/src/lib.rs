@@ -123,6 +123,20 @@ fn convite_pendente(estado: State<'_, Convite>) -> Option<String> {
     estado.0.lock().ok()?.take()
 }
 
+/// Servidor imposto por variavel de ambiente, que vence o gravado nas
+/// preferencias. Devolver `None` e o caso normal.
+///
+/// Existe porque o endereco do servidor saiu da tela de entrada e virou
+/// ajuste: os roteiros que dirigem duas janelas reais precisavam de um jeito
+/// de apontar o aplicativo para um servidor local sem navegar um painel
+/// modal por coordenada de clique — que e justamente o tipo de teste que
+/// quebra em silencio quando o layout muda. Serve tambem a quem sobe o CALL
+/// numa rede local e nao quer mexer em ajuste nenhum.
+#[tauri::command]
+fn servidor_do_ambiente() -> Option<String> {
+    std::env::var("CALL_SERVIDOR").ok().filter(|s| !s.is_empty())
+}
+
 /// Consulta o servidor de atualizacao e devolve a versao nova, se houver.
 /// Devolver `None` e o caso normal: significa que ja estamos em dia.
 #[tauri::command]
@@ -374,6 +388,7 @@ pub fn run() {
             hospedar,
             encerrar_hospedagem,
             convite_pendente,
+            servidor_do_ambiente,
             procurar_atualizacao,
             instalar_atualizacao,
             definir_atalho_mudo,

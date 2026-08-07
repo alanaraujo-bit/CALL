@@ -9,7 +9,10 @@ empacotador e sem Electron. O instalador tem 1,85 MB e o executável ocupa
 32 MB de memória residente em repouso — 7,9 MB deles em memória privada.
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
-instala com um clique, sem sair da tela. Página do projeto:
+instala com um clique, sem sair da tela. Quem responder "Depois" continua
+vendo uma marca discreta no alto da janela, que fica lá até a atualização ser
+feita — dispensar o aviso não faz a versão nova ser esquecida. Página do
+projeto:
 **https://alanaraujo-bit.github.io/CALL/**
 
 > A publicação espelhada na Vercel (`call-rho-dusky.vercel.app`) está fora do
@@ -43,13 +46,20 @@ polvo e dragão —, desenhados para o CALL. Quem não escolher nenhum ganha um
 sorteado, para que ninguém apareça como mais um círculo cinza igual ao dos
 outros.
 
+**Essa tela aparece uma vez só.** Da segunda abertura em diante o aplicativo
+vai direto para os grupos: boas-vindas se dá uma vez, e um clique diário em
+"Continuar" que não decide nada é pedágio, não recurso. Apelido, bio e mascote
+passam a ser trocados em **Meu perfil**, no canto inferior esquerdo.
+
 O servidor apenas apresenta os participantes uns aos outros e guarda a
 estrutura dos grupos e o histórico dos canais de texto. **Áudio e vídeo nunca
 passam por ele** — trafegam diretamente entre as máquinas.
 
-Em "Usar um servidor próprio", na tela de entrada, dá para apontar para outro
-endereço. **Hospedar** sobe um servidor nesta máquina, na porta 8787, útil em
-rede local ou sem internet; ele fecha junto com o aplicativo.
+Para apontar para outro endereço, use a aba **Servidor** nos ajustes.
+**Hospedar** sobe um servidor nesta máquina, na porta 8787, útil em rede local
+ou sem internet; ele fecha junto com o aplicativo. A variável de ambiente
+`CALL_SERVIDOR` vence o que estiver gravado, para quem sobe o CALL apontado a
+um servidor de teste sem mexer em ajuste nenhum.
 
 ### 2. Crie um grupo ou entre com um convite
 

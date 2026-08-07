@@ -404,32 +404,35 @@ function prepararEntrada() {
     salvarPreferencias();
   });
 
-  // O campo de servidor some atrás de "Usar um servidor próprio" para quem
-  // já está no padrão hospedado — mas quem tem um servidor próprio salvo
-  // precisa continuar vendo qual é, não descobrir escondido.
-  if (estado.servidor !== SERVIDOR_PADRAO) $("avancado-servidor").open = true;
-
   $("botao-hospedar").addEventListener("click", hospedar);
 
   $("formulario-entrada").addEventListener("submit", (evento) => {
     evento.preventDefault();
     const apelido = $("campo-apelido").value.trim();
-    const servidor = $("campo-servidor").value.trim();
-    if (!apelido || !servidor) return;
-
-    if (!/^wss?:\/\//i.test(servidor)) {
-      avisar("O endereço precisa começar com ws:// ou wss://", "erro");
-      return;
-    }
+    if (!apelido) return;
 
     estado.apelido = apelido;
-    estado.servidor = servidor;
     salvarPreferencias();
-
-    $("tela-entrada").classList.add("oculto");
-    $("tela-aplicacao").classList.remove("oculto");
-    prepararAplicacao();
+    abrirAplicacao();
   });
+}
+
+/**
+ * Troca a tela de entrada pela aplicação.
+ *
+ * A tela de entrada é boas-vindas, e boas-vindas se dá uma vez: quem já tem
+ * apelido guardado nunca mais a vê. Antes ela aparecia a cada abertura, com
+ * os campos já preenchidos, pedindo um clique em "Continuar" que não decidia
+ * nada — um pedágio diário para chegar onde a pessoa já queria estar.
+ *
+ * Apelido e mascote passaram a viver em "Meu perfil", e o endereço do
+ * servidor nos ajustes. Nada do que estava aqui se perdeu; só saiu do
+ * caminho.
+ */
+function abrirAplicacao() {
+  $("tela-entrada").classList.add("oculto");
+  $("tela-aplicacao").classList.remove("oculto");
+  prepararAplicacao();
 }
 
 async function hospedar() {
@@ -2625,6 +2628,29 @@ function prepararAjustes() {
     salvarPreferencias();
   });
 
+  $("botao-aplicar-servidor").addEventListener("click", async () => {
+    const servidor = $("campo-servidor").value.trim();
+    if (!servidor) return;
+    if (!/^wss?:\/\//i.test(servidor)) {
+      avisar("O endereço precisa começar com ws:// ou wss://", "erro");
+      return;
+    }
+    if (servidor === estado.servidor) {
+      avisar("Este já é o servidor em uso.");
+      return;
+    }
+
+    // Grupos vivem no servidor onde foram criados. Sair do atual antes de
+    // trocar evita ficar com a coluna cheia de atalhos que apontam para um
+    // lugar onde eles não existem.
+    const codigo = estado.grupo?.codigo;
+    desligar();
+    estado.servidor = servidor;
+    salvarPreferencias();
+    avisar("Servidor trocado.");
+    if (codigo) await conectar({ tipo: "entrar", codigo });
+  });
+
   $("ajuste-atividade").addEventListener("change", (e) => {
     estado.mostrarAtividade = e.target.checked;
     salvarPreferencias();
@@ -2995,26 +3021,51 @@ const INTERVALO_ATUALIZACAO = 30 * 60 * 1000;
 
 /** Versão que o usuário já dispensou nesta sessão. */
 let atualizacaoAdiada = null;
+/** Versão nova encontrada, dispensada ou não. Enquanto houver uma aqui, a
+ *  marca do canto fica na tela. */
+let atualizacaoDisponivel = null;
 let instalando = false;
 
 async function procurarAtualizacao() {
   if (instalando) return;
   try {
     const versao = await invocar("procurar_atualizacao");
-    if (versao && versao !== atualizacaoAdiada) anunciarAtualizacao(versao);
+    if (!versao) return;
+    atualizacaoDisponivel = versao;
+    mostrarMarcaDeAtualizacao();
+    // O cartão aparece uma vez por versão. Insistir a cada meia hora com o
+    // mesmo aviso é o caminho mais curto para a pessoa aprender a ignorá-lo.
+    if (versao !== atualizacaoAdiada) abrirCartaoDeAtualizacao(versao);
   } catch {
     // Sem rede, servidor fora do ar ou rodando fora do aplicativo. Nada disso
     // é problema do usuário: a próxima rodada tenta de novo, em silêncio.
   }
 }
 
-function anunciarAtualizacao(versao) {
+/**
+ * A marca do canto superior direito.
+ *
+ * Existe porque "Depois" escondia o cartão e não deixava rastro: a versão
+ * nova continuava lá, e a única forma de lembrar dela era reabrir o
+ * aplicativo. Agora "Depois" tira o cartão da frente e deixa a marca — que
+ * não pisca, não pula e não interrompe, mas também não some.
+ */
+function mostrarMarcaDeAtualizacao() {
+  const marca = $("marca-atualizacao");
+  marca.classList.toggle("oculto", !atualizacaoDisponivel || instalando);
+  marca.onclick = () => abrirCartaoDeAtualizacao(atualizacaoDisponivel);
+}
+
+function abrirCartaoDeAtualizacao(versao) {
+  if (!versao || instalando) return;
   $("atualizacao-detalhe").textContent = `CALL ${versao} — instala em segundos`;
   $("atualizacao").classList.remove("oculto");
 
   $("botao-adiar").onclick = () => {
     atualizacaoAdiada = versao;
     $("atualizacao").classList.add("oculto");
+    // O cartão sai, a marca fica.
+    mostrarMarcaDeAtualizacao();
   };
 
   $("botao-atualizar").onclick = () => instalarAtualizacao();
@@ -3039,6 +3090,7 @@ async function instalarAtualizacao() {
   desligar();
 
   instalando = true;
+  mostrarMarcaDeAtualizacao();
   $("botao-adiar").disabled = true;
   botao.disabled = true;
   botao.textContent = "Baixando…";
@@ -3047,6 +3099,8 @@ async function instalarAtualizacao() {
     await invocar("instalar_atualizacao");
   } catch (erro) {
     instalando = false;
+    // A atualizacao falhou, entao ela continua pendente: a marca volta.
+    mostrarMarcaDeAtualizacao();
     $("botao-adiar").disabled = false;
     botao.disabled = false;
     botao.dataset.confirmado = "nao";
@@ -3063,7 +3117,17 @@ window.addEventListener("beforeunload", () => {
 });
 
 carregarPreferencias();
+
+// Um servidor imposto pelo ambiente vence o gravado. Fora do aplicativo o
+// comando não existe, e a recusa é o caso normal.
+const servidorDoAmbiente = await invocar("servidor_do_ambiente").catch(() => null);
+if (servidorDoAmbiente) estado.servidor = servidorDoAmbiente;
+
 prepararEntrada();
+
+// Quem já se apresentou uma vez entra direto. A tela de entrada só existe
+// para quem ainda não tem apelido guardado.
+if (estado.apelido) abrirAplicacao();
 
 // Um link clicado com o CALL já aberto chega por evento; um link que abriu o
 // CALL já está guardado antes desta linha rodar. Os dois entram pela mesma

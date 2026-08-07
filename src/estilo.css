@@ -1799,6 +1799,43 @@ svg {
 
 /* ─── Aviso de atualização ─────────────────────────────────────── */
 
+/* Marca persistente da atualização, no canto superior direito.
+
+   Ela não pisca e não anima: fica parada até ser resolvida. Um indicador que
+   chama atenção sem parar ensina a pessoa a não olhar para ele — o objetivo
+   aqui é o contrário, estar disponível quando ela lembrar. O ponto verde faz
+   o trabalho de destaque, e o resto é discreto de propósito. */
+.marca-atualizacao {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px 5px 9px;
+  border: 1px solid var(--borda-forte);
+  border-radius: 999px;
+  background: var(--superficie-3);
+  color: var(--texto-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transicao), color var(--transicao),
+    border-color var(--transicao);
+}
+
+.marca-atualizacao:hover {
+  background: var(--acento-suave);
+  border-color: rgba(95, 106, 217, 0.42);
+  color: var(--texto);
+}
+
+.marca-atualizacao__ponto {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--vivo);
+}
+
 .atualizacao {
   position: fixed;
   right: 16px;
@@ -2946,20 +2983,28 @@ textarea.campo__area {
 /* No fim da folha de propósito: estas regras precisam vencer o `display` que
    cada coluna declara acima, e a especificidade das duas é a mesma. */
 
-/* A lista de presentes é a primeira a sair — ela repete, sem o aninhamento
-   por canal, o que a árvore de canais já mostra. */
+/* A lista de presentes era a primeira a sair, porque repetia — sem o
+   aninhamento por canal — o que a árvore de canais já mostra. Isso deixou de
+   ser verdade: ela passou a ser o único lugar onde aparecem quem esteve na
+   call e o que cada pessoa está usando.
+
+   E a janela nasce com 1080 px, ou seja, 1064 de área útil. Com o corte em
+   1120 a coluna sumia no tamanho padrão do aplicativo — quem instalasse do
+   zero nunca veria o histórico da call, e não haveria nada na tela sugerindo
+   que ele existe. Agora ela encolhe antes de sumir, e só sai quando a coluna
+   da conversa deixaria de caber. */
 @media (max-width: 1120px) {
   .aplicacao {
-    grid-template-columns: 190px 212px 1fr;
-  }
-  .participantes {
-    display: none;
+    grid-template-columns: 190px 212px 1fr 190px;
   }
 }
 
-@media (max-width: 880px) {
+@media (max-width: 940px) {
   .aplicacao {
     grid-template-columns: 152px 186px 1fr;
+  }
+  .participantes {
+    display: none;
   }
 }
 
