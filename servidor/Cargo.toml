@@ -31,6 +31,12 @@ argon2 = { version = "0.5", features = ["std"] }
 # Ja vem junto do Argon2. Usado para guardar a *impressao* dos tokens de
 # sessao em vez dos tokens: um `sessoes.json` vazado nao abre conta nenhuma.
 blake2 = "0.10"
+# Transporte dos bytes de um som do soundboard dentro de uma mensagem JSON do
+# proprio WebSocket -- o servidor nao tem (nem precisa ganhar) um framework
+# HTTP com upload multipart so para isto. Sem features extras: so
+# codificar/decodificar, puro Rust, sem custo de instalador (isto e o
+# servidor, nao o sidecar do aplicativo).
+base64 = "0.22"
 # So com a opcao `google`.
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",

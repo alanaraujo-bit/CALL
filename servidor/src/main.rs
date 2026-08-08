@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
@@ -52,6 +53,17 @@ const AVATAR_MAX: usize = 24;
 /// repassa —, entao o teto e o que impede um cliente adulterado de empurrar
 /// um romance para dentro da lista de participantes de todo mundo.
 const ATIVIDADE_MAX: usize = 40;
+/// Icone da atividade, como data URL — pequeno de proposito. E um icone de
+/// 96x96 comprimido, nao uma capa de jogo: o teto e o que impede um cliente
+/// adulterado de empurrar uma imagem grande para a rede de todo mundo no
+/// grupo a cada troca de programa.
+const ATIVIDADE_ICONE_MAX: usize = 40_000;
+/// Id do emoji de uma reacao — "feliz", "coracao"... O servidor de proposito
+/// **nao** conhece a lista dos cinco, pelo mesmo motivo do mascote: emoji e
+/// assunto da interface, e uma sexta reacao no aplicativo nao pode depender
+/// de o servidor hospedado ser atualizado junto. So garante a forma
+/// (minusculas, sem separador) e um teto de tamanho.
+const REACAO_MAX: usize = 24;
 
 /// Teto de mensagens por janela. Nao e defesa contra um atacante dedicado —
 /// e o que impede um cliente com defeito de encher o disco de quem hospeda.
@@ -132,6 +144,10 @@ struct Conexao {
     /// mostrar. Fica na conexao, e nao no acervo: e estado do momento e nao
     /// deve sobreviver a quem o produziu.
     atividade: Option<String>,
+    /// Icone de uma atividade cadastrada a mao, quando a pessoa deu um nome e
+    /// uma imagem para um programa que o CALL nao reconheceu sozinho. So faz
+    /// sentido junto de `atividade`; sem nome nao ha o que ilustrar.
+    atividade_icone: Option<String>,
 }
 
 impl Conexao {
@@ -145,7 +161,8 @@ impl Conexao {
             "canalVoz": self.canal_voz,
             "mudo": self.mudo,
             "transmitindo": self.transmitindo,
-            "atividade": self.atividade
+            "atividade": self.atividade,
+            "atividadeIcone": self.atividade_icone
         })
     }
 }
@@ -358,7 +375,11 @@ async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Co
         }
 
         let tipo = v.get("tipo").and_then(Value::as_str).unwrap_or("");
-        if tipo == "mensagem" {
+        // Envio de som reusa o mesmo contador de "mensagem": os dois sao acao
+        // repetitiva de quem esta no grupo, e o teto existe para o mesmo
+        // motivo — um cliente com defeito nao deve conseguir encher o disco
+        // de quem hospeda.
+        if matches!(tipo, "mensagem" | "adicionar-som" | "adicionar-som-pessoal") {
             enviadas_na_janela += 1;
             if enviadas_na_janela > MENSAGENS_POR_JANELA {
                 let _ = fila.send(erro("Muitas mensagens em pouco tempo."));
@@ -400,12 +421,22 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "estado" => estado_de_midia(v, id, estado),
         "perfil" => perfil(v, id, estado, cofre).await,
         "mensagem" => mensagem(v, id, fila, estado),
+        "reagir" => reagir(v, id, estado),
         "historico" => historico(v, id, fila, estado),
         "criar-categoria" => criar_categoria(v, id, fila, estado),
         "criar-canal" => criar_canal(v, id, fila, estado),
         "renomear" => renomear(v, id, fila, estado),
         "remover" => remover(v, id, fila, estado),
         "guardar" => guardar(v, fila, cofre).await,
+        "adicionar-som" => adicionar_som(v, id, fila, estado),
+        "remover-som" => remover_som(v, id, fila, estado),
+        "pedir-som" => pedir_som(v, id, fila, estado),
+        "som-tocado" => som_tocado(v, id, estado),
+        "adicionar-som-pessoal" => adicionar_som_pessoal(v, fila, cofre).await,
+        "remover-som-pessoal" => remover_som_pessoal(v, fila, cofre).await,
+        "pedir-som-pessoal" => pedir_som_pessoal(v, fila, cofre).await,
+        "listar-sons-pessoais" => listar_sons_pessoais(v, fila, cofre).await,
+        "escolher-som-entrada" => escolher_som_entrada(v, fila, cofre).await,
         _ => {}
     }
 }
@@ -800,10 +831,12 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, c
         mudo: false,
         transmitindo: false,
         atividade: None,
+        atividade_icone: None,
     };
 
     let presentes: Vec<Value> = e.do_grupo(codigo).iter().map(Conexao::resumo).collect();
     let grupo = e.acervo.grupos.get(codigo).cloned();
+    let sons = e.acervo.sons_do_grupo(codigo);
 
     let aviso = json!({ "tipo": "entrou", "membro": nova.resumo() });
     e.difundir(codigo, &aviso, None);
@@ -813,7 +846,8 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, c
         "eu": nova.resumo(),
         "grupo": grupo,
         "presentes": presentes,
-        "conta": conta_resumo
+        "conta": conta_resumo,
+        "sons": sons
     })));
 
     e.conexoes.insert(id, nova);
@@ -950,6 +984,16 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
         .map(|texto| texto.trim().chars().take(ATIVIDADE_MAX).collect::<String>())
         .filter(|texto| !texto.is_empty());
 
+    // Um icone sem nome nao tem o que ilustrar: cai junto se `atividade` nao
+    // veio, em vez de sobreviver sozinho na lista de todo mundo.
+    let atividade_icone = atividade.as_ref().and_then(|_| {
+        v.get("atividadeIcone")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|texto| texto.starts_with("data:image/") && texto.len() <= ATIVIDADE_ICONE_MAX)
+            .map(str::to_string)
+    });
+
     let mut e = estado.lock().unwrap();
     let Some(eu) = e.conexoes.get_mut(&id) else {
         return;
@@ -957,6 +1001,7 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
     eu.mudo = mudo;
     eu.transmitindo = transmitindo;
     eu.atividade = atividade.clone();
+    eu.atividade_icone = atividade_icone.clone();
     let Some(codigo) = eu.grupo.clone() else {
         return;
     };
@@ -966,7 +1011,8 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
         "de": id.to_string(),
         "mudo": mudo,
         "transmitindo": transmitindo,
-        "atividade": atividade
+        "atividade": atividade,
+        "atividadeIcone": atividade_icone
     });
     e.difundir(&codigo, &aviso, Some(id));
 }
@@ -1054,6 +1100,7 @@ fn mensagem(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         avatar: eu.avatar.clone(),
         texto,
         em: agora_ms(),
+        reacoes: HashMap::new(),
     };
 
     e.acervo.registrar_mensagem(m.clone());
@@ -1062,6 +1109,54 @@ fn mensagem(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     // depois de aceita pelo servidor, entao ninguem ve algo que nao foi
     // guardado.
     let aviso = json!({ "tipo": "mensagem", "mensagem": m });
+    e.difundir(&codigo, &aviso, None);
+}
+
+/// Poe ou tira a reacao de quem chamou numa mensagem — um clique alterna,
+/// como o "curtir" de qualquer chat. Difunde para o grupo inteiro, e nao so
+/// para quem reagiu: e assim que todo mundo ve a pilula de contagem mudar.
+fn reagir(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
+    let canal = texto_de(v, "canal");
+    let mensagem_id = texto_de(v, "mensagem");
+    let emoji: String = texto_de(v, "emoji")
+        .chars()
+        .filter(|c| c.is_ascii_lowercase())
+        .take(REACAO_MAX)
+        .collect();
+    if emoji.is_empty() {
+        return;
+    }
+
+    let mut e = estado.lock().unwrap();
+    let Some(conexao) = e.conexoes.get(&id) else {
+        return;
+    };
+    let Some(codigo) = conexao.grupo.clone() else {
+        return;
+    };
+    let usuario = conexao.usuario.clone();
+
+    let valido = e
+        .acervo
+        .grupos
+        .get(&codigo)
+        .and_then(|g| g.canal(&canal))
+        .map(|c| c.tipo == TipoCanal::Texto)
+        .unwrap_or(false);
+    if !valido {
+        return;
+    }
+
+    let Some(reacoes) = e.acervo.reagir(&canal, &mensagem_id, &usuario, &emoji) else {
+        return;
+    };
+
+    let aviso = json!({
+        "tipo": "reacao",
+        "canal": canal,
+        "mensagem": mensagem_id,
+        "reacoes": reacoes
+    });
     e.difundir(&codigo, &aviso, None);
 }
 
@@ -1085,6 +1180,200 @@ fn historico(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         "canal": canal,
         "mensagens": e.acervo.historico(&canal)
     })));
+}
+
+// ------------------------------------------------------------ soundboard
+//
+// Sons de grupo vivem em `Acervo` (arquivo), igual a estrutura e ao
+// historico. A entrega a quem ouve nao passa por aqui: quem toca decodifica
+// o clipe e mistura no proprio audio de saida do WebRTC, e o servidor nunca
+// ve nem encaminha um byte de audio para alguem alem de quem pediu o clipe
+// para tocar. `som-tocado` e so um aviso de interface — "fulano tocou
+// buzina" — para quem nao esta ouvindo notar o que aconteceu.
+
+fn adicionar_som(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+    let nome = limitar(texto_de(v, "nome"), modelo::SOM_NOME_MAX, "Som");
+    let mime = texto_de(v, "mime");
+    let Ok(dados) = base64::engine::general_purpose::STANDARD.decode(texto_de(v, "dados")) else {
+        let _ = fila.send(erro("Som malformado."));
+        return;
+    };
+
+    let mut e = estado.lock().unwrap();
+    let Some((codigo, usuario)) = e
+        .conexoes
+        .get(&id)
+        .and_then(|c| c.grupo.clone().map(|g| (g, c.usuario.clone())))
+    else {
+        return;
+    };
+
+    match e.acervo.adicionar_som(&codigo, &usuario, nome, mime, dados) {
+        Ok(som) => {
+            e.difundir(&codigo, &json!({ "tipo": "som-adicionado", "som": som }), None);
+        }
+        Err(motivo) => {
+            let _ = fila.send(erro(motivo));
+        }
+    }
+}
+
+fn remover_som(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+    let som_id = texto_de(v, "id");
+
+    let mut e = estado.lock().unwrap();
+    let Some((codigo, usuario)) = e
+        .conexoes
+        .get(&id)
+        .and_then(|c| c.grupo.clone().map(|g| (g, c.usuario.clone())))
+    else {
+        return;
+    };
+
+    match e.acervo.remover_som(&codigo, &som_id, &usuario) {
+        Ok(_) => {
+            e.difundir(&codigo, &json!({ "tipo": "som-removido", "id": som_id }), None);
+        }
+        Err(motivo) => {
+            let _ = fila.send(erro(motivo));
+        }
+    }
+}
+
+/// Busca sob demanda, so para quem pediu — nao ha motivo para mandar os
+/// bytes de todo som para todo mundo assim que a biblioteca muda.
+fn pedir_som(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+    let som_id = texto_de(v, "id");
+
+    let e = estado.lock().unwrap();
+    let Some(codigo) = e.conexoes.get(&id).and_then(|c| c.grupo.clone()) else {
+        return;
+    };
+    if !e.acervo.sons_do_grupo(&codigo).iter().any(|s| s.id == som_id) {
+        return;
+    }
+    let Some(dados) = e.acervo.bytes_do_som(&som_id) else {
+        return;
+    };
+
+    let _ = fila.send(texto_json(&json!({
+        "tipo": "som",
+        "id": som_id,
+        "dados": base64::engine::general_purpose::STANDARD.encode(dados)
+    })));
+}
+
+/// So o aviso — "fulano tocou este som" — para a interface de quem esta no
+/// mesmo canal de voz. O audio em si ja chegou (ou esta chegando) pela
+/// trilha WebRTC de quem tocou; isto nao entrega nenhum byte de audio.
+fn som_tocado(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
+    let som_id = texto_de(v, "id");
+
+    let e = estado.lock().unwrap();
+    let Some(eu) = e.conexoes.get(&id) else { return };
+    let Some(canal) = eu.canal_voz.clone() else { return };
+
+    let aviso = json!({
+        "tipo": "som-tocado",
+        "de": id.to_string(),
+        "canal": canal,
+        "id": som_id
+    });
+    for c in e.na_voz(&canal) {
+        if c.id != id {
+            let _ = c.fila.send(texto_json(&aviso));
+        }
+    }
+}
+
+// -------------------------------------------------------- sons pessoais
+//
+// Presos a conta, e nao ao grupo — ver a nota de `contas.rs`. So quem tem
+// conta ve estes tipos fazerem algo; sem token valido, cada handler devolve
+// "sem-sessao" (o mesmo caminho que `guardar` ja usa) e nao mexe em nada.
+
+async fn adicionar_som_pessoal(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+    let Some(id) = cofre.conta_do_token(&texto_de(v, "token")).await.map(|c| c.id) else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+
+    let nome = limitar(texto_de(v, "nome"), modelo::SOM_NOME_MAX, "Som");
+    let mime = texto_de(v, "mime");
+    let Ok(dados) = base64::engine::general_purpose::STANDARD.decode(texto_de(v, "dados")) else {
+        let _ = fila.send(erro("Som malformado."));
+        return;
+    };
+
+    match cofre.adicionar_som_pessoal(&id, nome, mime, dados).await {
+        Ok(som) => {
+            let _ = fila.send(texto_json(&json!({ "tipo": "som-pessoal-adicionado", "som": som })));
+        }
+        Err(motivo) => {
+            let _ = fila.send(erro(motivo));
+        }
+    }
+}
+
+async fn remover_som_pessoal(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+    let Some(id) = cofre.conta_do_token(&texto_de(v, "token")).await.map(|c| c.id) else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    let som_id = texto_de(v, "id");
+    if cofre.remover_som_pessoal(&id, &som_id).await {
+        let _ = fila.send(texto_json(&json!({ "tipo": "som-pessoal-removido", "id": som_id })));
+    }
+}
+
+async fn listar_sons_pessoais(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+    let Some(id) = cofre.conta_do_token(&texto_de(v, "token")).await.map(|c| c.id) else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    let sons = cofre.sons_pessoais_de(&id).await;
+    let _ = fila.send(texto_json(&json!({ "tipo": "sons-pessoais", "sons": sons })));
+}
+
+async fn pedir_som_pessoal(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+    let Some(id) = cofre.conta_do_token(&texto_de(v, "token")).await.map(|c| c.id) else {
+        let _ = fila.send(erro("Sessão inválida."));
+        return;
+    };
+    let som_id = texto_de(v, "id");
+    let Some(dados) = cofre.bytes_de_som_pessoal(&id, &som_id).await else {
+        let _ = fila.send(erro("Som não encontrado."));
+        return;
+    };
+
+    let _ = fila.send(texto_json(&json!({
+        "tipo": "som",
+        "id": som_id,
+        "dados": base64::engine::general_purpose::STANDARD.encode(dados)
+    })));
+}
+
+/// Grava o que toca quando a pessoa entra num canal de voz. `preferencia`
+/// ausente ou nula volta ao sino sintetizado padrao.
+async fn escolher_som_entrada(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+    let Some(id) = cofre.conta_do_token(&texto_de(v, "token")).await.map(|c| c.id) else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+
+    let preferencia = v
+        .get("preferencia")
+        .filter(|p| !p.is_null())
+        .map(|p| contas::PreferenciaSom {
+            origem: texto_de(p, "origem"),
+            grupo: p.get("grupo").and_then(Value::as_str).map(String::from),
+            id: texto_de(p, "id"),
+        });
+
+    cofre.guardar_som_entrada(&id, preferencia).await;
+    if let Some(conta) = cofre.por_id(&id).await {
+        let _ = fila.send(texto_json(&json!({ "tipo": "conta", "conta": conta.resumo() })));
+    }
 }
 
 // -------------------------------------------------------------- estrutura

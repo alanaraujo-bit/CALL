@@ -194,6 +194,7 @@ let servidor = await subirServidor();
 let codigo;
 let canalTexto;
 let canalVoz;
+let somPersistenteId;
 
 try {
   console.log("\nAperto de mão de navegador, atrás de proxy");
@@ -304,6 +305,66 @@ try {
   const estado = await ana.aguardar("estado");
   conferir(estado?.mudo === true && estado?.transmitindo === true, "o estado é propagado");
   conferir((await bruno.aguardar("estado", 300)) === null, "quem mudou não recebe o próprio eco");
+
+  console.log("\nSoundboard");
+  ana.enviar({
+    tipo: "adicionar-som",
+    nome: "Buzina",
+    mime: "audio/mpeg",
+    dados: Buffer.from("um clipe pequeno de mentira").toString("base64"),
+  });
+  const somAdicionado = await bruno.aguardar("som-adicionado");
+  conferir(somAdicionado?.som?.nome === "Buzina", "o som adicionado é anunciado ao grupo");
+  conferir(somAdicionado?.som?.dono === "ana-001", "com quem enviou");
+  const idBuzina = somAdicionado.som.id;
+
+  ana.enviar({ tipo: "pedir-som", id: idBuzina });
+  const bytesDoSom = await ana.aguardar("som");
+  conferir(
+    Buffer.from(bytesDoSom?.dados ?? "", "base64").toString() === "um clipe pequeno de mentira",
+    "os bytes pedidos batem com os enviados"
+  );
+
+  ana.enviar({
+    tipo: "adicionar-som",
+    nome: "Grande demais",
+    mime: "audio/mpeg",
+    dados: Buffer.alloc(300 * 1024 + 1).toString("base64"),
+  });
+  conferir(!!(await ana.aguardar("erro")), "um som acima de 300 KB é recusado");
+
+  bruno.enviar({ tipo: "remover-som", id: idBuzina });
+  conferir(
+    !!(await bruno.aguardar("erro")),
+    "só quem enviou o som, ou o dono do grupo, pode removê-lo"
+  );
+
+  ana.enviar({ tipo: "remover-som", id: idBuzina });
+  const somRemovido = await bruno.aguardar("som-removido");
+  conferir(somRemovido?.id === idBuzina, "a remoção é anunciada ao grupo");
+
+  // `som-tocado` é só o aviso — "fulano tocou este som" — para quem está na
+  // mesma voz. O áudio em si nunca passa pelo servidor: quem toca decodifica
+  // e mistura no próprio envio WebRTC.
+  ana.enviar({
+    tipo: "adicionar-som",
+    nome: "Buzina 2",
+    mime: "audio/mpeg",
+    dados: Buffer.from("outro clipe").toString("base64"),
+  });
+  const som2 = (await bruno.aguardar("som-adicionado"))?.som;
+  somPersistenteId = som2?.id;
+
+  ana.enviar({ tipo: "som-tocado", id: som2.id });
+  const tocado = await bruno.aguardar("som-tocado");
+  conferir(
+    tocado?.id === som2.id && tocado?.canal === canalVoz.id,
+    "o aviso de quem tocou diz o som e o canal"
+  );
+  conferir(
+    (await ana.aguardar("som-tocado", 300)) === null,
+    "quem tocou não recebe o próprio eco"
+  );
 
   console.log("\nIsolamento entre canais de voz");
   bruno.enviar({ tipo: "sair-voz" });
@@ -687,6 +748,11 @@ conferir(
 );
 conferir(existsSync(join(PASTA, "contas.json")), "as contas vão para contas.json");
 conferir(existsSync(join(PASTA, "sessoes.json")), "e as sessões para sessoes.json");
+conferir(existsSync(join(PASTA, "sons.json")), "os metadados dos sons vão para sons.json");
+conferir(
+  existsSync(join(PASTA, "sons", "grupos", codigo, somPersistenteId)),
+  "o clipe em si fica num arquivo próprio, fora do JSON de metadados"
+);
 
 const arquivoDeContas = readFileSync(join(PASTA, "contas.json"), "utf8");
 conferir(
@@ -723,6 +789,10 @@ try {
   conferir(!!devolta, "o grupo sobrevive ao fechamento do servidor");
   conferir(devolta?.grupo?.nome === "Equipe de produto", "com o nome que tinha");
   conferir(devolta?.grupo?.dono === "ana-001", "e com o mesmo dono");
+  conferir(
+    devolta?.sons?.some((s) => s.id === somPersistenteId && s.nome === "Buzina 2"),
+    "a biblioteca de sons do grupo sobrevive ao reinício"
+  );
 
   ana.enviar({ tipo: "historico", canal: canalTexto.id });
   const historico = await ana.aguardar("historico");

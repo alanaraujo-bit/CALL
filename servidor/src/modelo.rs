@@ -108,6 +108,35 @@ impl Grupo {
     }
 }
 
+/// Teto de um clipe do soundboard. Coerente com o resto do projeto — medido
+/// em quilobytes, nao em megabytes: um clipe curto de efeito sonoro cabe
+/// folgado, e um teto pequeno mantem `sons.json`/o volume montado pequenos
+/// mesmo com dezenas deles por grupo.
+pub const SOM_BYTES_MAX: usize = 300 * 1024;
+/// Quantos sons cabem na biblioteca de um grupo. Sem teto, a pasta de blobs
+/// cresceria sem limite — como `grupos.json`, o projeto prefere recusar cedo
+/// a crescer sem controle.
+pub const SONS_POR_GRUPO_MAX: usize = 50;
+pub const SOM_NOME_MAX: usize = 40;
+
+/// Um clipe do soundboard: o metadado. Os bytes em si vivem a parte — em
+/// `Acervo::blobs`, e no disco em `DADOS/sons/grupos/<codigo>/<id>` quando ha
+/// pasta — pelo mesmo motivo de `mensagens.jsonl` nao embutir anexos: um
+/// arquivo JSON reescrito a cada mudanca nao deve carregar dados binarios
+/// grandes.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Som {
+    pub id: String,
+    pub dono: String,
+    pub nome: String,
+    /// O que o navegador de quem enviou relatou (`audio/mpeg`, `audio/ogg`,
+    /// ...). O servidor nunca decodifica o clipe — quem toca e o motor de
+    /// audio do cliente, com `decodeAudioData`.
+    pub mime: String,
+    pub bytes: u64,
+    pub criado_em: u64,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Mensagem {
     pub id: String,
@@ -124,12 +153,23 @@ pub struct Mensagem {
     pub avatar: String,
     pub texto: String,
     pub em: u64,
+    /// Id do emoji (ver `EMOJIS_VALIDOS` em `main.rs`) -> lista de `usuario`
+    /// que reagiu com ele. `default` pelo mesmo motivo do `avatar`: uma
+    /// mensagem gravada antes deste campo existir nao pode falhar ao carregar.
+    #[serde(default)]
+    pub reacoes: HashMap<String, Vec<String>>,
 }
 
 /// Tudo que sobrevive a uma reinicializacao.
 pub struct Acervo {
     pub grupos: HashMap<String, Grupo>,
     mensagens: HashMap<String, VecDeque<Mensagem>>,
+    /// codigo do grupo -> sons da biblioteca dele.
+    sons: HashMap<String, Vec<Som>>,
+    /// id do som -> bytes. Sempre em memoria (mesmo sem `pasta`, o sidecar
+    /// sem `DADOS` precisa continuar tocando sons durante a sessao), e
+    /// espelhado em disco quando ha pasta.
+    blobs: HashMap<String, Vec<u8>>,
     pasta: Option<PathBuf>,
     linhas_gravadas: usize,
 }
@@ -142,6 +182,8 @@ impl Acervo {
         let mut acervo = Acervo {
             grupos: HashMap::new(),
             mensagens: HashMap::new(),
+            sons: HashMap::new(),
+            blobs: HashMap::new(),
             pasta: pasta.clone(),
             linhas_gravadas: 0,
         };
@@ -177,10 +219,29 @@ impl Acervo {
             }
         }
 
+        if let Ok(bruto) = std::fs::read_to_string(pasta.join("sons.json")) {
+            match serde_json::from_str::<HashMap<String, Vec<Som>>>(&bruto) {
+                Ok(mapa) => {
+                    for (codigo, lista) in &mapa {
+                        for som in lista {
+                            if let Ok(dados) = std::fs::read(
+                                pasta.join("sons").join("grupos").join(codigo).join(&som.id),
+                            ) {
+                                acervo.blobs.insert(som.id.clone(), dados);
+                            }
+                        }
+                    }
+                    acervo.sons = mapa;
+                }
+                Err(e) => eprintln!("[sinalizacao] sons.json ilegivel: {e}"),
+            }
+        }
+
         println!(
-            "[sinalizacao] acervo carregado: {} grupo(s), {} linha(s) de mensagem",
+            "[sinalizacao] acervo carregado: {} grupo(s), {} linha(s) de mensagem, {} som(ns)",
             acervo.grupos.len(),
-            acervo.linhas_gravadas
+            acervo.linhas_gravadas,
+            acervo.blobs.len()
         );
         acervo
     }
@@ -227,6 +288,43 @@ impl Acervo {
         }
     }
 
+    /// Alterna a reacao de `usuario` numa mensagem: se ela ja tinha reagido
+    /// com este emoji, tira; senao, poe. Devolve as reacoes atualizadas, ou
+    /// `None` quando a mensagem nao existe (canal errado, ou historico velho
+    /// demais e ja saiu da janela de `HISTORICO_POR_CANAL`).
+    ///
+    /// Ao contrario de `registrar_mensagem`, que so acrescenta, reagir muda
+    /// uma linha que ja existe — entao a unica forma de manter o arquivo
+    /// fiel ao que esta em memoria e reescreve-lo por inteiro, e nao so
+    /// acrescentar. `compactar` ja faz exatamente isso, e o historico
+    /// inteiro cabe folgadamente em memoria, entao chama-lo a cada reacao
+    /// custa pouco.
+    pub fn reagir(
+        &mut self,
+        canal: &str,
+        mensagem_id: &str,
+        usuario: &str,
+        emoji: &str,
+    ) -> Option<HashMap<String, Vec<String>>> {
+        let fila = self.mensagens.get_mut(canal)?;
+        let m = fila.iter_mut().find(|m| m.id == mensagem_id)?;
+
+        let usuarios = m.reacoes.entry(emoji.to_string()).or_default();
+        match usuarios.iter().position(|u| u == usuario) {
+            Some(posicao) => {
+                usuarios.remove(posicao);
+                if usuarios.is_empty() {
+                    m.reacoes.remove(emoji);
+                }
+            }
+            None => usuarios.push(usuario.to_string()),
+        }
+
+        let atualizado = m.reacoes.clone();
+        self.compactar();
+        Some(atualizado)
+    }
+
     /// Descarta do disco o que ja saiu do historico servido.
     fn compactar(&mut self) {
         let Some(pasta) = self.pasta.clone() else {
@@ -268,6 +366,94 @@ impl Acervo {
     pub fn esquecer_canais(&mut self, ids: &[String]) {
         for id in ids {
             self.mensagens.remove(id);
+        }
+    }
+
+    pub fn sons_do_grupo(&self, codigo: &str) -> Vec<Som> {
+        self.sons.get(codigo).cloned().unwrap_or_default()
+    }
+
+    pub fn bytes_do_som(&self, id: &str) -> Option<Vec<u8>> {
+        self.blobs.get(id).cloned()
+    }
+
+    /// Acrescenta um som a biblioteca do grupo. Recusa com uma mensagem
+    /// pronta para o cliente quando algum teto estoura — o mesmo espirito de
+    /// `alterar_estrutura`, que tambem devolve o motivo em vez de so falhar.
+    pub fn adicionar_som(
+        &mut self,
+        grupo: &str,
+        dono: &str,
+        nome: String,
+        mime: String,
+        dados: Vec<u8>,
+    ) -> Result<Som, &'static str> {
+        if dados.len() > SOM_BYTES_MAX {
+            return Err("Esse som passa do tamanho máximo (300 KB).");
+        }
+        if dados.is_empty() {
+            return Err("Som vazio.");
+        }
+        let lista = self.sons.entry(grupo.to_string()).or_default();
+        if lista.len() >= SONS_POR_GRUPO_MAX {
+            return Err("Este grupo já tem sons demais na biblioteca (50).");
+        }
+
+        let som = Som {
+            id: novo_id(),
+            dono: dono.to_string(),
+            nome: nome.chars().take(SOM_NOME_MAX).collect(),
+            mime,
+            bytes: dados.len() as u64,
+            criado_em: agora_ms(),
+        };
+
+        if let Some(pasta) = &self.pasta {
+            let pasta_grupo = pasta.join("sons").join("grupos").join(grupo);
+            if std::fs::create_dir_all(&pasta_grupo).is_ok() {
+                if let Err(e) = std::fs::write(pasta_grupo.join(&som.id), &dados) {
+                    eprintln!("[sinalizacao] falha ao gravar som {}: {e}", som.id);
+                }
+            }
+        }
+        self.blobs.insert(som.id.clone(), dados);
+        lista.push(som.clone());
+        self.salvar_sons();
+        Ok(som)
+    }
+
+    /// Remove um som, se `quem` for quem o enviou ou o dono do grupo. Devolve
+    /// o som removido, para quem chamou montar o aviso de difusao.
+    pub fn remover_som(&mut self, grupo: &str, id: &str, quem: &str) -> Result<Som, &'static str> {
+        let dono_do_grupo = self.grupos.get(grupo).map(|g| g.dono.clone());
+        let Some(lista) = self.sons.get_mut(grupo) else {
+            return Err("Som não encontrado.");
+        };
+        let Some(posicao) = lista.iter().position(|s| s.id == id) else {
+            return Err("Som não encontrado.");
+        };
+        if lista[posicao].dono != quem && dono_do_grupo.as_deref() != Some(quem) {
+            return Err("Só quem enviou o som, ou o dono do grupo, pode removê-lo.");
+        }
+
+        let som = lista.remove(posicao);
+        self.blobs.remove(&som.id);
+        if let Some(pasta) = &self.pasta {
+            let _ = std::fs::remove_file(pasta.join("sons").join("grupos").join(grupo).join(&som.id));
+        }
+        self.salvar_sons();
+        Ok(som)
+    }
+
+    fn salvar_sons(&self) {
+        let Some(pasta) = &self.pasta else { return };
+        match serde_json::to_string(&self.sons) {
+            Ok(corpo) => {
+                if let Err(e) = gravar_atomico(&pasta.join("sons.json"), &corpo) {
+                    eprintln!("[sinalizacao] falha ao salvar sons: {e}");
+                }
+            }
+            Err(e) => eprintln!("[sinalizacao] sons nao serializaveis: {e}"),
         }
     }
 }

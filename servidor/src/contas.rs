@@ -39,7 +39,36 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::modelo::{agora_ms, gravar_atomico, novo_id, sortear};
+use crate::modelo::{agora_ms, gravar_atomico, novo_id, sortear, SOM_BYTES_MAX, SOM_NOME_MAX};
+
+/// Quantos sons cabem na biblioteca pessoal de uma conta. Bem menor que o
+/// teto por grupo (50): e uma coleção pequena para o som de entrada e para
+/// usar em qualquer grupo, não um soundboard inteiro.
+pub const SONS_PESSOAIS_MAX: usize = 3;
+
+/// Um clipe da biblioteca pessoal — o mesmo papel de `modelo::Som`, mas preso
+/// a conta em vez de a um grupo, e por isso guardado ao lado dela (Postgres
+/// quando existe, `sons_pessoais.json` quando não).
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SomPessoal {
+    pub id: String,
+    pub nome: String,
+    pub mime: String,
+    pub bytes: u64,
+    pub criado_em: u64,
+}
+
+/// O que toca quando a pessoa entra num canal de voz, no lugar do sino
+/// sintetizado padrão. `origem` é `"grupo"` (um som da biblioteca de um
+/// grupo específico — só toca dentro dele) ou `"pessoal"` (a biblioteca
+/// própria, funciona em qualquer grupo).
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PreferenciaSom {
+    pub origem: String,
+    #[serde(default)]
+    pub grupo: Option<String>,
+    pub id: String,
+}
 
 /// Quanto tempo um token vale sem que ninguem o use. Noventa dias e o
 /// intervalo em que "eu uso o CALL" ainda e verdade; alem disso, pedir a senha
@@ -89,6 +118,8 @@ pub struct Conta {
     pub bio: String,
     #[serde(default)]
     pub atalhos: Vec<Atalho>,
+    #[serde(default)]
+    pub som_entrada: Option<PreferenciaSom>,
     pub criada_em: u64,
 }
 
@@ -105,6 +136,7 @@ impl Conta {
             "atalhos": self.atalhos,
             "google": !self.google.is_empty(),
             "temSenha": !self.senha.is_empty(),
+            "somEntrada": self.som_entrada,
         })
     }
 }
@@ -269,6 +301,7 @@ impl Cofre {
                     avatar,
                     bio,
                     atalhos: Vec::new(),
+                    som_entrada: None,
                     criada_em: agora_ms(),
                 };
                 let id = conta.id.clone();
@@ -314,6 +347,7 @@ impl Cofre {
                     avatar: avatar_sugerido.to_string(),
                     bio: String::new(),
                     atalhos: Vec::new(),
+                    som_entrada: None,
                     criada_em: agora_ms(),
                 };
                 let id = conta.id.clone();
@@ -389,6 +423,78 @@ impl Cofre {
         }
     }
 
+    pub async fn sons_pessoais_de(&self, conta_id: &str) -> Vec<SomPessoal> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => estado
+                .lock()
+                .unwrap()
+                .sons_pessoais
+                .get(conta_id)
+                .cloned()
+                .unwrap_or_default(),
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::sons_pessoais_de(pool, conta_id).await,
+        }
+    }
+
+    /// Bytes de um som pessoal — só devolvidos a quem é dono da conta, nunca
+    /// a outra pessoa: diferente do soundboard de grupo, este clipe nunca
+    /// precisa ser buscado por ninguém além de quem o enviou (o áudio chega
+    /// aos outros pela própria trilha WebRTC de quem o toca).
+    pub async fn bytes_de_som_pessoal(&self, conta_id: &str, id: &str) -> Option<Vec<u8>> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                let e = estado.lock().unwrap();
+                let pertence = e.sons_pessoais.get(conta_id)?.iter().any(|s| s.id == id);
+                if !pertence {
+                    return None;
+                }
+                e.blobs.get(id).cloned()
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::bytes_de_som_pessoal(pool, conta_id, id).await,
+        }
+    }
+
+    pub async fn adicionar_som_pessoal(
+        &self,
+        conta_id: &str,
+        nome: String,
+        mime: String,
+        dados: Vec<u8>,
+    ) -> Result<SomPessoal, &'static str> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => estado.lock().unwrap().adicionar_som_pessoal(conta_id, nome, mime, dados),
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::adicionar_som_pessoal(pool, conta_id, nome, mime, dados).await,
+        }
+    }
+
+    pub async fn remover_som_pessoal(&self, conta_id: &str, id: &str) -> bool {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => estado.lock().unwrap().remover_som_pessoal(conta_id, id),
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::remover_som_pessoal(pool, conta_id, id).await,
+        }
+    }
+
+    /// `None` volta o som de entrada para o sino sintetizado padrão.
+    pub async fn guardar_som_entrada(&self, conta_id: &str, preferencia: Option<PreferenciaSom>) -> bool {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                let mut e = estado.lock().unwrap();
+                let Some(conta) = e.contas.get_mut(conta_id) else {
+                    return false;
+                };
+                conta.som_entrada = preferencia;
+                e.salvar_contas();
+                true
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::guardar_som_entrada(pool, conta_id, preferencia).await,
+        }
+    }
+
     /// Abre uma sessao e devolve o token em claro — a unica vez em que ele
     /// existe fora do cliente.
     pub async fn abrir_sessao(&self, conta: &str) -> String {
@@ -460,6 +566,11 @@ struct EstadoArquivo {
     por_email: HashMap<String, String>,
     por_google: HashMap<String, String>,
     sessoes: HashMap<String, Sessao>, // marca -> sessao
+    /// conta_id -> sons da biblioteca pessoal dela.
+    sons_pessoais: HashMap<String, Vec<SomPessoal>>,
+    /// id do som -> bytes. Sempre em memoria, como os blobs de grupo em
+    /// `modelo::Acervo`.
+    blobs: HashMap<String, Vec<u8>>,
     pasta: Option<PathBuf>,
 }
 
@@ -479,6 +590,8 @@ impl EstadoArquivo {
             por_email: HashMap::new(),
             por_google: HashMap::new(),
             sessoes: HashMap::new(),
+            sons_pessoais: HashMap::new(),
+            blobs: HashMap::new(),
             pasta: pasta.clone(),
         };
 
@@ -510,10 +623,29 @@ impl EstadoArquivo {
             }
         }
 
+        if let Ok(bruto) = std::fs::read_to_string(pasta.join("sons_pessoais.json")) {
+            match serde_json::from_str::<HashMap<String, Vec<SomPessoal>>>(&bruto) {
+                Ok(mapa) => {
+                    for lista in mapa.values() {
+                        for som in lista {
+                            if let Ok(dados) =
+                                std::fs::read(pasta.join("sons").join("pessoais").join(&som.id))
+                            {
+                                estado.blobs.insert(som.id.clone(), dados);
+                            }
+                        }
+                    }
+                    estado.sons_pessoais = mapa;
+                }
+                Err(e) => eprintln!("[contas] sons_pessoais.json ilegivel: {e}"),
+            }
+        }
+
         println!(
-            "[contas] arquivo local: {} conta(s), {} sessao(oes) viva(s)",
+            "[contas] arquivo local: {} conta(s), {} sessao(oes) viva(s), {} som(ns) pessoal(is)",
             estado.contas.len(),
-            estado.sessoes.len()
+            estado.sessoes.len(),
+            estado.blobs.len()
         );
         estado
     }
@@ -553,6 +685,74 @@ impl EstadoArquivo {
         let agora = agora_ms();
         self.sessoes.retain(|_, s| s.expira > agora);
     }
+
+    fn salvar_sons_pessoais(&self) {
+        let Some(pasta) = &self.pasta else { return };
+        match serde_json::to_string(&self.sons_pessoais) {
+            Ok(corpo) => {
+                if let Err(e) = gravar_atomico(&pasta.join("sons_pessoais.json"), &corpo) {
+                    eprintln!("[contas] falha ao salvar sons pessoais: {e}");
+                }
+            }
+            Err(e) => eprintln!("[contas] sons pessoais nao serializaveis: {e}"),
+        }
+    }
+
+    fn adicionar_som_pessoal(
+        &mut self,
+        conta_id: &str,
+        nome: String,
+        mime: String,
+        dados: Vec<u8>,
+    ) -> Result<SomPessoal, &'static str> {
+        if dados.len() > SOM_BYTES_MAX {
+            return Err("Esse som passa do tamanho máximo (300 KB).");
+        }
+        if dados.is_empty() {
+            return Err("Som vazio.");
+        }
+        let lista = self.sons_pessoais.entry(conta_id.to_string()).or_default();
+        if lista.len() >= SONS_PESSOAIS_MAX {
+            return Err("Sua biblioteca pessoal já tem sons demais (3).");
+        }
+
+        let som = SomPessoal {
+            id: novo_id(),
+            nome: nome.chars().take(SOM_NOME_MAX).collect(),
+            mime,
+            bytes: dados.len() as u64,
+            criado_em: agora_ms(),
+        };
+
+        if let Some(pasta) = &self.pasta {
+            let pasta_conta = pasta.join("sons").join("pessoais");
+            if std::fs::create_dir_all(&pasta_conta).is_ok() {
+                if let Err(e) = std::fs::write(pasta_conta.join(&som.id), &dados) {
+                    eprintln!("[contas] falha ao gravar som pessoal {}: {e}", som.id);
+                }
+            }
+        }
+        self.blobs.insert(som.id.clone(), dados);
+        lista.push(som.clone());
+        self.salvar_sons_pessoais();
+        Ok(som)
+    }
+
+    fn remover_som_pessoal(&mut self, conta_id: &str, id: &str) -> bool {
+        let Some(lista) = self.sons_pessoais.get_mut(conta_id) else {
+            return false;
+        };
+        let Some(posicao) = lista.iter().position(|s| s.id == id) else {
+            return false;
+        };
+        let som = lista.remove(posicao);
+        self.blobs.remove(&som.id);
+        if let Some(pasta) = &self.pasta {
+            let _ = std::fs::remove_file(pasta.join("sons").join("pessoais").join(&som.id));
+        }
+        self.salvar_sons_pessoais();
+        true
+    }
 }
 
 /* ─── Backend Postgres ────────────────────────────────────────────────── */
@@ -563,10 +763,11 @@ mod postgres {
     use sqlx::PgPool;
     use std::path::Path;
 
-    use super::{Atalho, Conta, Recusa};
+    use super::{Atalho, Conta, PreferenciaSom, Recusa, SomPessoal};
     use crate::modelo::{agora_ms, novo_id};
 
-    /// (id, email, senha, google, apelido, avatar, bio, criada_em)
+    /// (id, email, senha, google, apelido, avatar, bio, criada_em,
+    ///  som_entrada_origem, som_entrada_grupo, som_entrada_id)
     type LinhaConta = (
         String,
         String,
@@ -576,10 +777,18 @@ mod postgres {
         String,
         String,
         i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
     );
 
     fn montar(linha: LinhaConta, atalhos: Vec<Atalho>) -> Conta {
-        let (id, email, senha, google, apelido, avatar, bio, criada_em) = linha;
+        let (id, email, senha, google, apelido, avatar, bio, criada_em, som_origem, som_grupo, som_id) = linha;
+        let som_entrada = som_origem.zip(som_id).map(|(origem, id)| PreferenciaSom {
+            origem,
+            grupo: som_grupo,
+            id,
+        });
         Conta {
             id,
             email,
@@ -589,11 +798,13 @@ mod postgres {
             avatar,
             bio,
             atalhos,
+            som_entrada,
             criada_em: criada_em as u64,
         }
     }
 
-    const COLUNAS: &str = "id, email, senha, google, apelido, avatar, bio, criada_em";
+    const COLUNAS: &str = "id, email, senha, google, apelido, avatar, bio, criada_em, \
+        som_entrada_origem, som_entrada_grupo, som_entrada_id";
 
     async fn atalhos_de(pool: &PgPool, conta_id: &str) -> Vec<Atalho> {
         sqlx::query_as::<_, (String, String)>("SELECT codigo, nome FROM atalhos WHERE conta_id = $1 ORDER BY codigo")
@@ -895,6 +1106,119 @@ mod postgres {
         matches!(resultado, Ok(r) if r.rows_affected() > 0)
     }
 
+    pub async fn sons_pessoais_de(pool: &PgPool, conta_id: &str) -> Vec<SomPessoal> {
+        sqlx::query_as::<_, (String, String, String, i64, i64)>(
+            "SELECT id, nome, mime, length(dados)::bigint, criado_em
+             FROM sons_pessoais WHERE conta_id = $1 ORDER BY criado_em",
+        )
+        .bind(conta_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, nome, mime, bytes, criado_em)| SomPessoal {
+            id,
+            nome,
+            mime,
+            bytes: bytes as u64,
+            criado_em: criado_em as u64,
+        })
+        .collect()
+    }
+
+    pub async fn bytes_de_som_pessoal(pool: &PgPool, conta_id: &str, id: &str) -> Option<Vec<u8>> {
+        sqlx::query_as::<_, (Vec<u8>,)>("SELECT dados FROM sons_pessoais WHERE id = $1 AND conta_id = $2")
+            .bind(id)
+            .bind(conta_id)
+            .fetch_optional(pool)
+            .await
+            .ok()?
+            .map(|(dados,)| dados)
+    }
+
+    pub async fn adicionar_som_pessoal(
+        pool: &PgPool,
+        conta_id: &str,
+        nome: String,
+        mime: String,
+        dados: Vec<u8>,
+    ) -> Result<SomPessoal, &'static str> {
+        if dados.len() > crate::modelo::SOM_BYTES_MAX {
+            return Err("Esse som passa do tamanho máximo (300 KB).");
+        }
+        if dados.is_empty() {
+            return Err("Som vazio.");
+        }
+
+        let contagem: (i64,) = sqlx::query_as("SELECT count(*) FROM sons_pessoais WHERE conta_id = $1")
+            .bind(conta_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or((0,));
+        if contagem.0 as usize >= super::SONS_PESSOAIS_MAX {
+            return Err("Sua biblioteca pessoal já tem sons demais (3).");
+        }
+
+        let id = novo_id();
+        let nome: String = nome.chars().take(crate::modelo::SOM_NOME_MAX).collect();
+        let criado_em = agora_ms() as i64;
+        let bytes = dados.len() as u64;
+
+        let resultado = sqlx::query(
+            "INSERT INTO sons_pessoais (id, conta_id, nome, mime, dados, criado_em)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&id)
+        .bind(conta_id)
+        .bind(&nome)
+        .bind(&mime)
+        .bind(&dados)
+        .bind(criado_em)
+        .execute(pool)
+        .await;
+
+        match resultado {
+            Ok(_) => Ok(SomPessoal {
+                id,
+                nome,
+                mime,
+                bytes,
+                criado_em: criado_em as u64,
+            }),
+            Err(e) => {
+                eprintln!("[contas] falha ao gravar som pessoal: {e}");
+                Err("Não foi possível guardar o som agora.")
+            }
+        }
+    }
+
+    pub async fn remover_som_pessoal(pool: &PgPool, conta_id: &str, id: &str) -> bool {
+        let resultado = sqlx::query("DELETE FROM sons_pessoais WHERE id = $1 AND conta_id = $2")
+            .bind(id)
+            .bind(conta_id)
+            .execute(pool)
+            .await;
+        matches!(resultado, Ok(r) if r.rows_affected() > 0)
+    }
+
+    pub async fn guardar_som_entrada(pool: &PgPool, conta_id: &str, preferencia: Option<PreferenciaSom>) -> bool {
+        let (origem, grupo, id) = match preferencia {
+            Some(p) => (Some(p.origem), p.grupo, Some(p.id)),
+            None => (None, None, None),
+        };
+        let resultado = sqlx::query(
+            "UPDATE contas SET som_entrada_origem = $2, som_entrada_grupo = $3, som_entrada_id = $4
+             WHERE id = $1",
+        )
+        .bind(conta_id)
+        .bind(&origem)
+        .bind(&grupo)
+        .bind(&id)
+        .execute(pool)
+        .await;
+        matches!(resultado, Ok(r) if r.rows_affected() > 0)
+    }
+
     pub async fn abrir_sessao(pool: &PgPool, marca: &str, conta: &str, expira: u64) {
         let _ = sqlx::query("INSERT INTO sessoes (marca, conta_id, expira) VALUES ($1, $2, $3)")
             .bind(marca)
@@ -909,7 +1233,8 @@ mod postgres {
     }
 
     pub async fn conta_do_token(pool: &PgPool, marca: &str) -> Option<Conta> {
-        let colunas_com_prefixo = "c.id, c.email, c.senha, c.google, c.apelido, c.avatar, c.bio, c.criada_em";
+        let colunas_com_prefixo = "c.id, c.email, c.senha, c.google, c.apelido, c.avatar, c.bio, c.criada_em, \
+            c.som_entrada_origem, c.som_entrada_grupo, c.som_entrada_id";
         let agora = agora_ms() as i64;
         let linha: LinhaConta = sqlx::query_as(&format!(
             "SELECT {colunas_com_prefixo} FROM sessoes s
