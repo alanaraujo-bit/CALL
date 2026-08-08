@@ -74,8 +74,49 @@ export const EMOJIS = [
   { id: "choro", nome: "Choro", cor: "#3f5f96", arte: CHORO },
 ];
 
+const nativos = (categoria, lista) =>
+  lista.trim().split(/\s+/u).map((id) => ({ id, nome: id, categoria, nativo: true }));
+
+/** Emojis Unicode organizados como nos mensageiros modernos. O desenho fica a
+ * cargo do sistema operacional, portanto acompanha Windows, macOS, Android e
+ * iOS sem baixar imagens nem prender o CALL a um pacote específico. */
+export const CATEGORIAS_EMOJI = [
+  { id: "call", nome: "CALL", icone: "✨", emojis: EMOJIS },
+  { id: "rostos", nome: "Rostos", icone: "😀", emojis: nativos("rostos", `
+    😀 😃 😄 😁 😆 😅 😂 🤣 🥲 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫣 🤭 🫢 🤫 🤥 😶 😐 😑 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕
+  `) },
+  { id: "gestos", nome: "Gestos", icone: "👋", emojis: nativos("gestos", `
+    👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ 🫵 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦵 🦶 👂 👃 🧠 🫀 🫁 👀 👁️ 👅 👄
+  `) },
+  { id: "coracoes", nome: "Corações", icone: "❤️", emojis: nativos("coracoes", `
+    ❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❤️‍🔥 ❤️‍🩹 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ♥️ 💋 💯 💢 💥 💫 💦 💨 🕳️ 💬 👁️‍🗨️ 🗨️ 🗯️ 💭 💤
+  `) },
+  { id: "animais", nome: "Animais", icone: "🐶", emojis: nativos("animais", `
+    🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐻‍❄️ 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🙈 🙉 🙊 🐒 🐔 🐧 🐦 🐤 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪱 🐛 🦋 🐌 🐞 🐜 🪰 🪲 🦂 🐢 🐍 🦎 🐙 🦑 🦀 🐠 🐟 🐬 🐳 🦈 🐊 🐅 🐆 🦓 🦍 🐘 🦛 🦏 🐪 🦒 🦘 🦬 🐃 🐄 🐎 🐖 🐏 🦙 🐐 🦌 🐕 🐈 🪶 🐉 🐲 🌵 🎄 🌲 🌳 🌴 🪴 🌱 🌿 ☘️ 🍀 🍁 🍂 🍃 🌺 🌻 🌹 🌷 🌸 💐 🍄
+  `) },
+  { id: "comida", nome: "Comida", icone: "🍕", emojis: nativos("comida", `
+    🍏 🍎 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🥑 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🥐 🥯 🍞 🥖 🧀 🥚 🍳 🧈 🥞 🧇 🥓 🥩 🍗 🌭 🍔 🍟 🍕 🥪 🌮 🌯 🫔 🥗 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🍤 🍚 🍙 🍘 🍥 🥠 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🍯 🥛 ☕ 🫖 🍵 🧃 🥤 🧋 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🍾 🧊
+  `) },
+  { id: "atividades", nome: "Atividades", icone: "⚽", emojis: nativos("atividades", `
+    ⚽ 🏀 🏈 ⚾ 🥎 🎾 🏐 🏉 🥏 🎱 🪀 🏓 🏸 🏒 🏑 🥍 🏏 🪃 🥅 ⛳ 🪁 🏹 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🛷 ⛸️ 🥌 🎿 ⛷️ 🏂 🪂 🏋️ 🤼 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🏄 🏊 🤽 🚣 🧗 🚵 🚴 🏆 🥇 🥈 🥉 🏅 🎖️ 🎗️ 🎫 🎟️ 🎪 🤹 🎭 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🎷 🎺 🎸 🎻 🎲 ♟️ 🎯 🎳 🎮 🕹️ 🧩
+  `) },
+  { id: "viagem", nome: "Viagem", icone: "🚀", emojis: nativos("viagem", `
+    🚗 🚕 🚙 🚌 🚎 🏎️ 🚓 🚑 🚒 🚐 🛻 🚚 🚛 🚜 🛵 🏍️ 🛺 🚲 🛴 🚨 🚔 🚍 🚘 🚖 🚡 🚠 🚟 🚃 🚋 🚞 🚝 🚄 🚅 🚈 🚂 🚆 🚇 🚊 🚉 ✈️ 🛫 🛬 🛩️ 💺 🛰️ 🚀 🛸 🚁 🛶 ⛵ 🚤 🛥️ 🛳️ ⛴️ 🚢 ⚓ ⛽ 🚧 🚦 🚥 🗺️ 🗿 🗽 🗼 🏰 🏯 🏟️ 🎡 🎢 🎠 ⛲ ⛱️ 🏖️ 🏝️ 🏜️ 🌋 ⛰️ 🏕️ ⛺ 🛖 🏠 🏢 🏥 🏦 🏨 🏪 🏫 🏭 ⛪ 🕌 🕍 ⛩️ 🕋 🌅 🌄 🌠 🎇 🎆 🌇 🌆 🏙️ 🌃 🌌 🌉 🌁
+  `) },
+  { id: "objetos", nome: "Objetos", icone: "💡", emojis: nativos("objetos", `
+    ⌚ 📱 💻 ⌨️ 🖥️ 🖨️ 🖱️ 🕹️ 💽 💾 💿 📀 📷 📸 📹 🎥 📞 ☎️ 📺 📻 🎙️ ⏱️ ⏰ ⌛ 🔋 🔌 💡 🔦 🕯️ 🧯 🛢️ 💸 💵 💰 💳 💎 ⚖️ 🧰 🔧 🔨 ⚒️ 🛠️ ⛏️ 🪛 🔩 ⚙️ 🧱 ⛓️ 🧲 🔫 💣 🧨 🪓 🔪 🗡️ ⚔️ 🛡️ 🚬 ⚰️ 🪦 ⚱️ 🔮 📿 🧿 💈 ⚗️ 🔭 🔬 💊 💉 🩸 🩹 🩺 🚪 🛏️ 🛋️ 🚽 🚿 🛁 🧴 🧷 🧹 🧺 🧻 🪣 🧼 🪥 🧽 🛒 🎁 🎈 🎀 🪄 🪅 🪩 ✉️ 📩 📦 🏷️ 📪 📬 📜 📄 📊 📈 📉 📅 📌 📍 ✂️ 🖊️ 📝 🔍 🔒 🔑
+  `) },
+  { id: "simbolos", nome: "Símbolos", icone: "✅", emojis: nativos("simbolos", `
+    ✅ ❌ ❓ ❗ ‼️ ⁉️ ⭕ 🚫 ⛔ 📛 ♻️ ⚠️ 🔱 ⚜️ 🔰 🔆 🔅 🆗 🆕 🆙 🆒 🆓 🆘 ☑️ ✔️ ✖️ ➕ ➖ ➗ ➡️ ⬅️ ⬆️ ⬇️ ↗️ ↘️ ↙️ ↖️ ↔️ ↕️ 🔄 🔃 🔙 🔚 🔛 🔜 🔝 ▶️ ⏸️ ⏯️ ⏹️ ⏺️ ⏭️ ⏮️ ⏩ ⏪ 🔀 🔁 🔂 🔼 🔽 🔊 🔉 🔈 🔇 📣 📢 🔔 🔕 ♠️ ♣️ ♥️ ♦️ 🃏 🎴 🀄 🕐 🕑 🕒 🕓 🕔 🕕 🕖 🕗 🕘 🕙 🕚 🕛
+  `) },
+];
+
+export const TODOS_EMOJIS = [
+  ...new Map(CATEGORIAS_EMOJI.flatMap((categoria) => categoria.emojis).map((emoji) => [emoji.id, emoji])).values(),
+];
+
 export function acharEmoji(id) {
-  return EMOJIS.find((e) => e.id === id) ?? null;
+  return TODOS_EMOJIS.find((e) => e.id === id) ?? null;
 }
 
 /** Um `<span>` com o SVG do emoji dentro, do tamanho que o CSS mandar. */
@@ -83,7 +124,12 @@ export function elementoDeEmoji(id, classe = "emoji") {
   const encontrado = acharEmoji(id);
   const elemento = document.createElement("span");
   elemento.className = classe;
-  if (!encontrado) return elemento;
+  if (!encontrado || encontrado.nativo) {
+    elemento.classList.add("emoji--nativo");
+    elemento.textContent = encontrado?.id ?? id;
+    elemento.title = encontrado?.nome ?? id;
+    return elemento;
+  }
 
   elemento.title = encontrado.nome;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");

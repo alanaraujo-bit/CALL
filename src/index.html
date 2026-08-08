@@ -45,10 +45,6 @@
           </div>
 
           <p class="entrada__slogan">Sua equipe, num só lugar.</p>
-          <p class="entrada__lead">
-            Grupos com canais de texto e voz, e transmissão de tela — tudo
-            trafegando direto entre os participantes.
-          </p>
 
           <ul class="entrada__recursos">
             <li class="entrada__recurso">
@@ -57,7 +53,6 @@
               </span>
               <div>
                 <strong>Canais de voz</strong>
-                <span>Fala detectada em tempo real, sem apertar botão</span>
               </div>
             </li>
             <li class="entrada__recurso">
@@ -66,7 +61,6 @@
               </span>
               <div>
                 <strong>Canais de texto</strong>
-                <span>Histórico salvo, disponível quando alguém entra</span>
               </div>
             </li>
             <li class="entrada__recurso">
@@ -75,7 +69,6 @@
               </span>
               <div>
                 <strong>Transmissão de tela</strong>
-                <span>Compartilhe uma janela sem sair do canal de voz</span>
               </div>
             </li>
 
@@ -87,8 +80,7 @@
                 <svg viewBox="0 0 20 20"><path d="M10 11.5a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5z" /><path d="M3.5 17c.9-3 3.4-4.5 6.5-4.5s5.6 1.5 6.5 4.5" /></svg>
               </span>
               <div>
-                <strong>Sua conta vai junto</strong>
-                <span>Apelido, mascote e grupos em qualquer computador</span>
+                <strong>Conta sincronizada</strong>
               </div>
             </li>
           </ul>
@@ -103,7 +95,7 @@
             <span class="avatar portal__retrato" id="portal-avatar"></span>
             <div class="portal__dizeres">
               <span class="portal__titulo" id="portal-titulo">Bem-vindo de volta</span>
-              <span class="portal__legenda" id="portal-legenda">Entre para levar seus grupos com você.</span>
+              <span class="portal__legenda" id="portal-legenda">Entre na sua conta</span>
             </div>
           </div>
 
@@ -239,7 +231,7 @@
                   <span class="forca__barras" aria-hidden="true">
                     <i></i><i></i><i></i><i></i><i></i>
                   </span>
-                  <span class="forca__texto" id="forca-texto">A senha protege sua conta</span>
+                  <span class="forca__texto" id="forca-texto">Força da senha</span>
                 </div>
               </div>
 
@@ -270,8 +262,7 @@
           <footer class="portal__rodape">
             <button class="elo" type="button" id="botao-sem-conta">Entrar sem conta</button>
             <p class="portal__nota">
-              Sem conta o CALL funciona igual, inclusive sem internet — só que
-              seus grupos e seu perfil ficam neste computador.
+              Sem conta, seus dados ficam neste computador.
             </p>
           </footer>
         </div>
@@ -347,7 +338,7 @@
              mesma coluna, um conteúdo diferente, e não uma tela nova por
              cima de tudo. -->
         <div class="oculto" id="amigos-secao">
-          <div id="vista-amigos">
+              <div id="vista-amigos">
             <header class="canais__topo vista-amigos__topo">
               <span class="canais__nome">Amigos</span>
               <button class="icone" type="button" id="botao-adicionar-amigo" title="Adicionar por código" aria-label="Adicionar amigo por código">
@@ -358,14 +349,12 @@
               <div class="vista-amigos__pedidos" id="pedidos-amigo"></div>
               <div class="vista-amigos__lista" id="lista-amigos"></div>
               <p class="vista-amigos__vazio oculto" id="amigos-vazio">
-                Você ainda não tem amigos por aqui. Adicione alguém pelo cartão de
-                perfil dentro de um grupo, ou pelo código na aba "+".
+                Nenhum amigo.
               </p>
             </div>
           </div>
           <p class="vista-amigos__sem-conta oculto" id="amigos-sem-conta">
-            Crie uma conta para adicionar amigos e conversar em privado — sem
-            ela, a identidade não sobrevive nem à própria sessão.
+            Crie uma conta para usar Amigos.
           </p>
         </div>
 
@@ -422,7 +411,7 @@
           </header>
           <ul class="soundboard__lista" id="soundboard-lista"></ul>
           <p class="soundboard__vazio oculto" id="soundboard-vazio">
-            Nenhum som ainda. Clique em "+" para adicionar um clipe (até 300 KB, 5 segundos).
+            Nenhum som.
           </p>
           <input type="file" id="soundboard-arquivo" accept="audio/*" hidden>
         </div>
@@ -474,9 +463,7 @@
               <path d="M8 12h32v22H20l-8 7v-7H8z"/>
             </svg>
             <p class="conversa__titulo" id="conversa-vazio-titulo">Nada por aqui ainda</p>
-            <p class="conversa__texto" id="conversa-vazio-texto">
-              Escolha um canal de texto para conversar, ou um de voz para falar.
-            </p>
+            <p class="conversa__texto" id="conversa-vazio-texto" hidden></p>
           </div>
           <div class="conversa__linha" id="linha-do-tempo"></div>
         </div>
@@ -571,9 +558,6 @@
           <div class="ajuste">
             <label class="ajuste__rotulo" for="grupo-nome">Nome do grupo</label>
             <input class="campo__entrada" id="grupo-nome" maxlength="40" placeholder="Equipe de produto" />
-            <p class="ajuste__dica">
-              A foto aparece na lista de grupos e no topo do canal. Sem foto, o CALL usa as iniciais.
-            </p>
           </div>
 
           <div class="ajuste">
@@ -588,9 +572,6 @@
               rows="3"
               placeholder="Sobre o que é este grupo?"
             ></textarea>
-            <p class="ajuste__dica">
-              Ajuda quem entra a entender o contexto do grupo antes de sair falando.
-            </p>
           </div>
         </div>
 
@@ -606,7 +587,6 @@
         <header class="ajustes__topo">
           <div>
             <h3 class="ajustes__titulo" id="foto-titulo">Ajustar foto</h3>
-            <p class="dialogo__texto" id="foto-texto">Arraste para posicionar e use o zoom para aproximar.</p>
           </div>
           <button class="icone" type="button" id="foto-fechar" title="Fechar" aria-label="Fechar">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
@@ -626,9 +606,7 @@
               <span class="campo__aviso" id="foto-zoom-valor">100%</span>
             </div>
             <input class="deslizante" id="foto-zoom" type="range" min="1" max="4" step="0.01" value="1" />
-            <p class="ajuste__dica" id="foto-ajuda">
-              O recorte final segue o círculo/quadrado do avatar em todo o CALL.
-            </p>
+            <p class="ajuste__dica" id="foto-ajuda">Arraste e ajuste o zoom.</p>
           </div>
         </div>
 
@@ -690,12 +668,8 @@
               id="perfil-bio"
               rows="3"
               maxlength="160"
-              placeholder="Uma linha sobre você — fuso horário, o que você joga, quando costuma estar por aqui"
+              placeholder="Uma linha sobre você"
             ></textarea>
-            <p class="ajuste__dica">
-              Aparece no seu cartão, para quem está no mesmo grupo. Fica neste
-              computador: o servidor esquece quando você fecha o CALL.
-            </p>
           </div>
 
           <hr class="ajustes__risco" />
@@ -712,7 +686,7 @@
               </span>
               <div class="conta-linha__texto">
                 <strong id="perfil-conta-titulo">Você está sem conta</strong>
-                <span id="perfil-conta-detalhe">Seu perfil e seus grupos ficam só neste computador.</span>
+                <span id="perfil-conta-detalhe">Somente neste computador</span>
               </div>
               <button class="botao botao--sutil" type="button" id="perfil-conta-acao">Criar conta</button>
             </div>
@@ -771,7 +745,6 @@
                 <button class="botao botao--sutil botao--perigo oculto" type="button" id="onboarding-remover-foto">Remover</button>
               </div>
               <p class="portal__erro" id="onboarding-foto-erro" hidden></p>
-              <p class="ajuste__dica">Um GIF anima normalmente. Fica só neste computador — os outros ainda veem seu mascote, aqui embaixo.</p>
               <input type="file" id="onboarding-foto-arquivo" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
             </div>
 
@@ -793,12 +766,8 @@
                 id="onboarding-bio"
                 rows="3"
                 maxlength="160"
-                placeholder="Fuso horário, o que você joga, quando costuma estar por aqui"
+                placeholder="Uma linha sobre você"
               ></textarea>
-              <p class="ajuste__dica">
-                Aparece no seu cartão, para quem está no mesmo grupo. Dá para
-                mudar isso a qualquer hora, nos ajustes do perfil.
-              </p>
             </div>
           </section>
         </div>
@@ -825,7 +794,7 @@
           <span class="cartao__etiquetas" id="cartao-etiquetas" hidden></span>
           <p class="cartao__atividade" id="cartao-atividade" hidden></p>
           <p class="cartao__bio" id="cartao-bio" hidden></p>
-          <p class="cartao__vazio" id="cartao-vazio">Ainda não escreveu nada sobre si.</p>
+          <p class="cartao__vazio" id="cartao-vazio">Sem bio.</p>
           <div class="cartao__acoes" id="cartao-acoes" hidden></div>
         </div>
       </div>
@@ -903,8 +872,7 @@
                     <div class="medidor__limiar" id="medidor-limiar"></div>
                   </div>
                   <p class="ajuste__dica">
-                    Fale normalmente. A barra fica clara quando a porta está aberta e
-                    escura quando ela está cortando. O traço mostra onde ela abre.
+                    O traço marca o limiar de ativação.
                   </p>
                 </div>
 
@@ -941,7 +909,6 @@
                   <span class="chave__marca" aria-hidden="true"></span>
                   <span class="chave__texto">
                     <strong>Sons de entrada e saída</strong>
-                    <span>Um sino curto avisa quem chegou e quem saiu da voz. Sobe na chegada, desce na saída</span>
                   </span>
                 </label>
 
@@ -951,10 +918,6 @@
                     <span class="ajuste__valor" id="valor-volume-sons">70%</span>
                   </div>
                   <input class="deslizante" type="range" id="ajuste-volume-sons" min="0" max="100" step="5" />
-                  <p class="ajuste__dica">
-                    Independente do volume geral: abaixar a voz de todo mundo não
-                    apaga os avisos. Solte o controle para ouvir o volume escolhido.
-                  </p>
                 </div>
 
                 <label class="chave">
@@ -962,7 +925,7 @@
                   <span class="chave__marca" aria-hidden="true"></span>
                   <span class="chave__texto">
                     <strong>Porta de ruído</strong>
-                    <span>Cala o ruído de fundo entre as falas, sem cortar a voz</span>
+                    <span>Silencia o ruído entre as falas</span>
                   </span>
                 </label>
 
@@ -972,11 +935,6 @@
                     <span class="ajuste__valor" id="valor-limiar">−50 dB</span>
                   </div>
                   <input class="deslizante" type="range" id="ajuste-limiar" min="-80" max="-20" step="1" />
-                  <p class="ajuste__dica">
-                    Mais para a esquerda deixa passar sussurros; mais para a direita
-                    exige voz firme. A porta nunca abre abaixo do ruído medido da sua
-                    sala, então o padrão serve à maioria.
-                  </p>
                 </div>
               </div>
             </div>
@@ -996,7 +954,6 @@
                   <span class="chave__marca" aria-hidden="true"></span>
                   <span class="chave__texto">
                     <strong>Cancelamento de eco</strong>
-                    <span>Impede que o som dos alto-falantes volte pelo microfone</span>
                   </span>
                 </label>
 
@@ -1005,7 +962,6 @@
                   <span class="chave__marca" aria-hidden="true"></span>
                   <span class="chave__texto">
                     <strong>Supressão de ruído do sistema</strong>
-                    <span>Tira o chiado constante — ventilador, ar-condicionado</span>
                   </span>
                 </label>
 
@@ -1014,7 +970,6 @@
                   <span class="chave__marca" aria-hidden="true"></span>
                   <span class="chave__texto">
                     <strong>Volume automático</strong>
-                    <span>Nivela sua voz quando você se afasta do microfone</span>
                   </span>
                 </label>
               </div>
@@ -1032,10 +987,6 @@
               <div class="ajustes__secao-corpo">
                 <div class="ajuste">
                   <div class="opcoes" id="ajuste-bitrate"></div>
-                  <p class="ajuste__dica">
-                    Vale para o que sai daqui. Cada pessoa escolhe a própria — a sua
-                    escolha não limita a voz de ninguém.
-                  </p>
                 </div>
 
                 <label class="chave">
@@ -1043,7 +994,7 @@
                   <span class="chave__marca" aria-hidden="true"></span>
                   <span class="chave__texto">
                     <strong>Envio contínuo</strong>
-                    <span>Não corta a transmissão no silêncio. Gasta um pouco mais de banda e evita o degrau na volta da fala</span>
+                    <span>Mantém o áudio ativo no silêncio</span>
                   </span>
                 </label>
               </div>
@@ -1072,15 +1023,8 @@
                   <span class="chave__marca" aria-hidden="true"></span>
                   <span class="chave__texto">
                     <strong>Compartilhar o som</strong>
-                    <span>Envia o áudio do que está na tela, separado da sua voz e sem os filtros dela</span>
                   </span>
                 </label>
-
-                <p class="ajuste__dica ajuste__dica--solta">
-                  O perfil vale a partir da próxima transmissão que você iniciar, e
-                  trocá-lo durante uma transmissão vale na hora. Quem recebe não paga
-                  por isso: quem codifica é quem transmite.
-                </p>
               </div>
             </div>
           </section>
@@ -1102,21 +1046,12 @@
                   <button class="atalho-campo" type="button" id="atalho-mudo-campo">
                     <span class="atalho-campo__teclas" id="atalho-mudo-teclas"></span>
                   </button>
-                  <p class="ajuste__dica">
-                    Funciona em qualquer lugar — mesmo com o CALL minimizado na
-                    bandeja, sem a janela em primeiro plano.
-                  </p>
+                  <p class="ajuste__dica">Funciona com o CALL minimizado.</p>
                 </div>
 
                 <button class="botao botao--sutil" type="button" id="atalho-mudo-limpar">
                   Remover atalho
                 </button>
-
-                <p class="ajuste__dica ajuste__dica--solta">
-                  Fechar a janela do CALL agora minimiza para a bandeja, em vez de
-                  encerrar — a voz e este atalho continuam funcionando. Para sair
-                  de verdade, use "Sair" no ícone da bandeja.
-                </p>
               </div>
             </div>
           </section>
@@ -1138,7 +1073,6 @@
                   <span class="chave__marca" aria-hidden="true"></span>
                   <span class="chave__texto">
                     <strong>Mostrar o que estou usando</strong>
-                    <span>O grupo vê o nome do programa que está na sua frente</span>
                   </span>
                 </label>
 
@@ -1146,14 +1080,7 @@
                      na própria tela, exatamente onde está o limite. -->
                 <div class="ajuste ajuste--recuado" id="bloco-atividade">
                   <p class="ajuste__dica">
-                    Vai <strong>só o nome do programa</strong> — "Google Chrome",
-                    "Rocket League". Nunca o título da janela, então o site aberto,
-                    o nome do arquivo e o assunto do e-mail não saem daqui.
-                  </p>
-                  <p class="ajuste__dica">
-                    Aparece para quem está no mesmo grupo, e some quando você fecha
-                    o CALL. Nada disso é gravado: o servidor esquece assim que você
-                    desconecta. A área de trabalho vazia não conta como programa.
+                    Compartilha apenas o nome do programa, nunca o título da janela.
                   </p>
                   <p class="ajuste__dica" id="dica-atividade-agora">—</p>
 
@@ -1232,11 +1159,6 @@
                   <select class="campo__entrada" id="ajuste-som-entrada">
                     <option value="">Sino padrão</option>
                   </select>
-                  <p class="ajuste__dica">
-                    Toca para o grupo inteiro quando você entra numa call, no lugar
-                    do sino. Escolha um som do grupo atual ou da sua biblioteca
-                    pessoal — precisa de conta para ter biblioteca pessoal.
-                  </p>
                 </div>
               </div>
             </div>
@@ -1253,8 +1175,7 @@
               <div class="ajustes__secao-corpo">
                 <div class="ajuste">
                   <p class="ajuste__dica" id="sons-pessoais-dica">
-                    Entre numa conta para guardar sons seus e usá-los como som de
-                    entrada em qualquer grupo.
+                    Entre numa conta para usar sua biblioteca.
                   </p>
                   <ul class="soundboard__lista soundboard__lista--ajustes" id="sons-pessoais-lista"></ul>
                   <button class="botao botao--sutil oculto" type="button" id="sons-pessoais-adicionar">
@@ -1291,10 +1212,7 @@
                     </button>
                   </div>
                   <p class="ajuste__dica" id="dica-servidor">
-                    Já vem no servidor oficial do CALL — não há nada a fazer aqui.
-                    “Hospedar” sobe um servidor nesta máquina, na porta 8787, para
-                    uso em rede local ou sem internet; ele fecha junto com o
-                    aplicativo.
+                    “Hospedar” inicia um servidor local na porta 8787.
                   </p>
                 </div>
 
@@ -1303,8 +1221,7 @@
                 </button>
 
                 <p class="ajuste__dica ajuste__dica--solta">
-                  Trocar de servidor desconecta você do grupo atual: grupos vivem no
-                  servidor onde foram criados, e não viajam de um para outro.
+                  Trocar de servidor desconecta o grupo atual.
                 </p>
               </div>
             </div>
@@ -1334,7 +1251,6 @@
           </span>
           <div class="transmitir__cabecalho">
             <h3 class="transmitir__titulo" id="transmitir-titulo">Qualidade da transmissão</h3>
-            <p class="transmitir__texto">Vale para a próxima vez que você compartilhar a tela.</p>
           </div>
           <button class="icone" type="button" id="transmitir-fechar" title="Fechar" aria-label="Fechar">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
@@ -1349,7 +1265,6 @@
             <span class="chave__marca" aria-hidden="true"></span>
             <span class="chave__texto">
               <strong>Compartilhar o som</strong>
-              <span>Envia o áudio do que está na tela junto com o vídeo</span>
             </span>
           </label>
         </div>

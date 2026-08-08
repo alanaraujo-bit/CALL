@@ -159,6 +159,10 @@ pub struct Mensagem {
     pub avatar: String,
     pub texto: String,
     pub em: u64,
+    #[serde(default, rename = "editadaEm")]
+    pub editada_em: Option<u64>,
+    #[serde(default)]
+    pub excluida: bool,
     /// Id do emoji (ver `EMOJIS_VALIDOS` em `main.rs`) -> lista de `usuario`
     /// que reagiu com ele. `default` pelo mesmo motivo do `avatar`: uma
     /// mensagem gravada antes deste campo existir nao pode falhar ao carregar.
@@ -294,6 +298,58 @@ impl Acervo {
         }
     }
 
+    pub fn editar_mensagem(
+        &mut self,
+        canal: &str,
+        mensagem_id: &str,
+        usuario: &str,
+        texto: String,
+        em: u64,
+    ) -> Result<Mensagem, &'static str> {
+        let fila = self.mensagens.get_mut(canal).ok_or("Mensagem não encontrada.")?;
+        let m = fila
+            .iter_mut()
+            .find(|m| m.id == mensagem_id)
+            .ok_or("Mensagem não encontrada.")?;
+        if m.autor != usuario {
+            return Err("Você só pode editar suas mensagens.");
+        }
+        if m.excluida {
+            return Err("Esta mensagem foi excluída.");
+        }
+        m.texto = texto;
+        m.editada_em = Some(em);
+        let atualizada = m.clone();
+        self.compactar();
+        Ok(atualizada)
+    }
+
+    pub fn excluir_mensagem(
+        &mut self,
+        canal: &str,
+        mensagem_id: &str,
+        usuario: &str,
+    ) -> Result<Mensagem, &'static str> {
+        let fila = self.mensagens.get_mut(canal).ok_or("Mensagem não encontrada.")?;
+        let m = fila
+            .iter_mut()
+            .find(|m| m.id == mensagem_id)
+            .ok_or("Mensagem não encontrada.")?;
+        if m.autor != usuario {
+            return Err("Você só pode excluir suas mensagens.");
+        }
+        if m.excluida {
+            return Ok(m.clone());
+        }
+        m.texto.clear();
+        m.excluida = true;
+        m.editada_em = None;
+        m.reacoes.clear();
+        let atualizada = m.clone();
+        self.compactar();
+        Ok(atualizada)
+    }
+
     /// Alterna a reacao de `usuario` numa mensagem: se ela ja tinha reagido
     /// com este emoji, tira; senao, poe. Devolve as reacoes atualizadas, ou
     /// `None` quando a mensagem nao existe (canal errado, ou historico velho
@@ -314,6 +370,9 @@ impl Acervo {
     ) -> Option<HashMap<String, Vec<String>>> {
         let fila = self.mensagens.get_mut(canal)?;
         let m = fila.iter_mut().find(|m| m.id == mensagem_id)?;
+        if m.excluida {
+            return None;
+        }
 
         let usuarios = m.reacoes.entry(emoji.to_string()).or_default();
         match usuarios.iter().position(|u| u == usuario) {

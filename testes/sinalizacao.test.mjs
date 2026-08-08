@@ -406,6 +406,47 @@ try {
   conferir(historico?.mensagens?.length === 1, "quem chega depois recebe o que já foi dito");
   conferir(historico?.mensagens?.[0]?.texto === "bom dia", "o histórico vem íntegro");
 
+  console.log("\nEditar, reagir e excluir mensagens");
+  bruno.enviar({ tipo: "mensagem", canal: canalTexto.id, texto: "vou editar" });
+  const editavel = (await bruno.aguardar("mensagem"))?.mensagem;
+  await ana.aguardar("mensagem");
+  await carla.aguardar("mensagem");
+
+  ana.enviar({ tipo: "editar-mensagem", canal: canalTexto.id, mensagem: editavel.id, texto: "invasão" });
+  conferir(!!(await ana.aguardar("erro")), "só o autor pode editar a mensagem");
+
+  bruno.enviar({ tipo: "editar-mensagem", canal: canalTexto.id, mensagem: editavel.id, texto: "texto editado" });
+  const mensagemEditada = await ana.aguardar("mensagem-atualizada");
+  await bruno.aguardar("mensagem-atualizada");
+  await carla.aguardar("mensagem-atualizada");
+  conferir(
+    mensagemEditada?.mensagem?.texto === "texto editado" && typeof mensagemEditada?.mensagem?.editadaEm === "number",
+    "a edição é difundida e marcada"
+  );
+
+  ana.enviar({ tipo: "reagir", canal: canalTexto.id, mensagem: editavel.id, emoji: "🔥" });
+  const reacaoUnicode = await bruno.aguardar("reacao");
+  await ana.aguardar("reacao");
+  await carla.aguardar("reacao");
+  conferir(reacaoUnicode?.reacoes?.["🔥"]?.includes("ana-001"), "reações aceitam emoji Unicode");
+
+  bruno.enviar({ tipo: "excluir-mensagem", canal: canalTexto.id, mensagem: editavel.id });
+  const mensagemExcluida = await ana.aguardar("mensagem-atualizada");
+  await bruno.aguardar("mensagem-atualizada");
+  await carla.aguardar("mensagem-atualizada");
+  conferir(
+    mensagemExcluida?.mensagem?.excluida === true && mensagemExcluida?.mensagem?.texto === "" &&
+      Object.keys(mensagemExcluida?.mensagem?.reacoes ?? {}).length === 0,
+    "excluir mantém o registro, remove o texto e limpa as reações"
+  );
+
+  carla.enviar({ tipo: "historico", canal: canalTexto.id });
+  const historicoAlterado = await carla.aguardar("historico");
+  conferir(
+    historicoAlterado?.mensagens?.some((mensagem) => mensagem.id === editavel.id && mensagem.excluida),
+    "a exclusão permanece no histórico"
+  );
+
   console.log("\nEstrutura: só o dono altera");
   carla.enviar({ tipo: "criar-categoria", nome: "Invasão" });
   conferir(!!(await carla.aguardar("erro")), "quem não é dono não cria categoria");

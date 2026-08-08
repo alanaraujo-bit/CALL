@@ -432,14 +432,6 @@ svg {
   line-height: 1.28;
 }
 
-.entrada__lead {
-  margin-top: 10px;
-  max-width: 40ch;
-  color: var(--texto-2);
-  font-size: 13.5px;
-  line-height: 1.6;
-}
-
 .entrada__recursos {
   list-style: none;
   margin-top: 30px;
@@ -2451,6 +2443,17 @@ svg {
   vertical-align: -4px;
 }
 
+.emoji--nativo {
+  align-items: center;
+  justify-content: center;
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.emoji--linha.emoji--nativo { font-size: 19px; }
+.emoji--pilula.emoji--nativo { font-size: 15px; }
+
 .emoji svg {
   width: 18px;
   height: 18px;
@@ -2511,6 +2514,56 @@ svg {
   color: var(--texto);
 }
 
+.mensagem__acao--perigo:hover {
+  color: #ff7189;
+  background: rgba(255, 83, 112, 0.1);
+}
+
+.mensagem__excluida {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  background: #090a0c;
+  color: var(--texto-3);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.mensagem__editada {
+  color: var(--texto-3);
+  font-size: 10.5px;
+}
+
+.mensagem__editor {
+  display: block;
+  width: min(100%, 680px);
+  resize: vertical;
+  margin-top: 3px;
+  padding: 9px 10px;
+  border: 1px solid rgba(95, 106, 217, 0.7);
+  border-radius: var(--raio-p);
+  background: var(--superficie-2);
+  color: var(--texto);
+  font: inherit;
+  line-height: 1.45;
+  outline: none;
+}
+
+.mensagem__editor-acoes {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mensagem__editor-acoes .botao {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
 .mensagem__reacoes {
   display: flex;
   flex-wrap: wrap;
@@ -2547,9 +2600,10 @@ svg {
 .seletor-emoji {
   position: fixed;
   z-index: 50;
-  display: flex;
-  gap: 2px;
-  padding: 5px;
+  width: min(360px, calc(100vw - 16px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  padding: 8px;
   background: var(--superficie-3);
   border: 1px solid var(--borda-forte);
   border-radius: var(--raio-m);
@@ -2557,9 +2611,54 @@ svg {
   animation: surgir 130ms cubic-bezier(0.32, 0.72, 0.28, 1);
 }
 
+.seletor-emoji__abas {
+  display: flex;
+  gap: 1px;
+  padding-bottom: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.seletor-emoji__abas::-webkit-scrollbar { display: none; }
+
+.seletor-emoji__aba {
+  flex: 1 0 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--texto-3);
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.seletor-emoji__aba:hover,
+.seletor-emoji__aba[data-ativa="sim"] {
+  background: var(--superficie-2);
+  color: var(--texto);
+}
+
+.seletor-emoji__titulo {
+  padding: 5px 4px 7px;
+  color: var(--texto-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.seletor-emoji__grade {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  max-height: 250px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .seletor-emoji__item {
-  width: 38px;
-  height: 38px;
+  width: 100%;
+  aspect-ratio: 1;
   display: grid;
   place-items: center;
   border: none;
@@ -2577,6 +2676,10 @@ svg {
 .seletor-emoji__item .emoji svg {
   width: 27px;
   height: 27px;
+}
+
+.seletor-emoji__item .emoji--nativo {
+  font-size: 24px;
 }
 
 /* ─── Seletor de avatar ────────────────────────────────────────── */
@@ -2637,6 +2740,21 @@ svg {
   transition: border-color var(--transicao);
 }
 
+#redator-emoji,
+.icone--enviar {
+  flex: none;
+  align-self: flex-end;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 1px;
+}
+
+#redator-emoji svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+
 .redator:focus-within {
   border-color: rgba(95, 106, 217, 0.45);
 }
@@ -2646,7 +2764,8 @@ svg {
   min-width: 0;
   max-height: 160px;
   overflow-y: auto;
-  padding: 7px 0;
+  min-height: 33px;
+  padding: 6px 0;
   border: none;
   background: transparent;
   color: var(--texto);
@@ -4146,13 +4265,6 @@ select.campo__entrada {
   font-weight: 600;
 }
 
-.transmitir__texto {
-  margin-top: 3px;
-  font-size: 12px;
-  color: var(--texto-3);
-  line-height: 1.4;
-}
-
 .transmitir__corpo {
   padding: 16px 20px 4px;
   overflow-y: auto;
@@ -4953,10 +5065,6 @@ textarea.campo__area {
   .marca--grande {
     justify-content: center;
   }
-  .entrada__lead {
-    max-width: none;
-    margin-inline: auto;
-  }
   .entrada__recursos {
     margin-top: 22px;
   }
@@ -4974,9 +5082,6 @@ textarea.campo__area {
   .entrada__slogan {
     margin-top: 16px;
     font-size: 20px;
-  }
-  .entrada__lead {
-    margin-top: 8px;
   }
   .entrada__recursos {
     margin-top: 20px;

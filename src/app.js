@@ -4,7 +4,7 @@ import { MotorDeAudio, AUDIO_PADRAO, BITRATES_AUDIO, listarDispositivos } from "
 import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
 import { Vigia } from "./atividade.js";
 import { avatarSugerido, pintarAvatar, pintarMarcaDeGrupo } from "./avatares.js";
-import { EMOJIS, TOKEN_EMOJI, elementoDeEmoji } from "./emojis.js";
+import { CATEGORIAS_EMOJI, TODOS_EMOJIS, TOKEN_EMOJI, acharEmoji, elementoDeEmoji } from "./emojis.js";
 import {
   editarGrupo,
   editarPerfil,
@@ -34,6 +34,11 @@ const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
  *  gravado, e sem a troca continuaria preso a um servidor local que na maioria
  *  das máquinas nem está de pé. */
 const SERVIDOR_ANTIGO = "ws://127.0.0.1:8787";
+
+/** No navegador de desenvolvimento, o endereço local pode ter sido escolhido
+ *  de propósito. Migrá-lo de volta ao servidor hospedado a cada recarga fazia
+ *  o teste local mudar de backend sem avisar. */
+const PAGINA_LOCAL = ["127.0.0.1", "localhost"].includes(window.location.hostname);
 
 /** Página do projeto, que hospeda a página de convite. */
 const SITE = "https://alanaraujo-bit.github.io/CALL";
@@ -212,7 +217,7 @@ function carregarPreferencias() {
     // Quem escolheu um servidor próprio continua com ele; só o padrão antigo,
     // que a pessoa nunca escolheu de fato, é levado ao servidor hospedado.
     estado.servidor =
-      !bruto.servidor || bruto.servidor === SERVIDOR_ANTIGO
+      !bruto.servidor || (bruto.servidor === SERVIDOR_ANTIGO && !PAGINA_LOCAL)
         ? SERVIDOR_PADRAO
         : bruto.servidor;
     estado.usuario = bruto.usuario || "";
@@ -508,20 +513,45 @@ function fecharMenu() {
 function abrirSeletorDeEmoji(ancora, aoEscolher) {
   const seletor = $("seletor-emoji");
   seletor.textContent = "";
+  seletor.onclick = (evento) => evento.stopPropagation();
 
-  for (const emoji of EMOJIS) {
-    const botao = document.createElement("button");
-    botao.type = "button";
-    botao.className = "seletor-emoji__item";
-    botao.title = emoji.nome;
-    botao.append(elementoDeEmoji(emoji.id));
-    botao.addEventListener("click", (evento) => {
-      evento.stopPropagation();
-      fecharSeletorDeEmoji();
-      aoEscolher(emoji.id);
-    });
-    seletor.append(botao);
-  }
+  const abas = document.createElement("div");
+  abas.className = "seletor-emoji__abas";
+  const titulo = document.createElement("div");
+  titulo.className = "seletor-emoji__titulo";
+  const grade = document.createElement("div");
+  grade.className = "seletor-emoji__grade";
+  const mostrar = (categoria, ativa) => {
+    titulo.textContent = categoria.nome;
+    grade.textContent = "";
+    for (const aba of abas.children) aba.dataset.ativa = aba === ativa ? "sim" : "nao";
+    for (const emoji of categoria.emojis) {
+      const botao = document.createElement("button");
+      botao.type = "button";
+      botao.className = "seletor-emoji__item";
+      botao.title = emoji.nome;
+      botao.setAttribute("aria-label", emoji.nome);
+      botao.append(elementoDeEmoji(emoji.id));
+      botao.addEventListener("click", () => {
+        fecharSeletorDeEmoji();
+        aoEscolher(emoji.id);
+      });
+      grade.append(botao);
+    }
+    grade.scrollTop = 0;
+  };
+  CATEGORIAS_EMOJI.forEach((categoria, indice) => {
+    const aba = document.createElement("button");
+    aba.type = "button";
+    aba.className = "seletor-emoji__aba";
+    aba.textContent = categoria.icone;
+    aba.title = categoria.nome;
+    aba.addEventListener("click", () => mostrar(categoria, aba));
+    abas.append(aba);
+  });
+  seletor.append(abas, titulo, grade);
+  const indiceInicial = Math.max(0, CATEGORIAS_EMOJI.findIndex((categoria) => categoria.id === "rostos"));
+  mostrar(CATEGORIAS_EMOJI[indiceInicial], abas.children[indiceInicial]);
 
   seletor.classList.remove("oculto");
 
@@ -755,11 +785,11 @@ function refletirPortal() {
 
   if (criando) {
     $("portal-titulo").textContent = apelido || "Quem é você aqui?";
-    $("portal-legenda").textContent = "Assim os outros vão te ver no grupo.";
+    $("portal-legenda").textContent = "Seu nome no CALL";
   } else {
     $("portal-titulo").textContent = apelido ? `Olá de novo, ${apelido}` : "Bem-vindo de volta";
     $("portal-legenda").textContent =
-      estado.ultimoEmail || "Entre para levar seus grupos com você.";
+      estado.ultimoEmail || "Entre na sua conta";
   }
 }
 
@@ -993,7 +1023,7 @@ async function hospedar() {
     estado.hospedando = true;
     $("campo-servidor").value = endereco;
     $("dica-servidor").textContent =
-      "Servidor ativo nesta máquina. Compartilhe seu IP na porta 8787 com o grupo.";
+      "Servidor local ativo na porta 8787.";
     // Só o rótulo muda — o botão carrega um ícone antes do texto, e
     // `textContent` no elemento inteiro o apagaria junto.
     botao.querySelector("span").textContent = "Hospedando";
@@ -1089,6 +1119,7 @@ function prepararAplicacao() {
   sinal.addEventListener("estado", (e) => aoEstadoDeMidia(e.detail));
   sinal.addEventListener("perfil", (e) => aoPerfilDeOutro(e.detail));
   sinal.addEventListener("mensagem", (e) => aoMensagem(e.detail.mensagem));
+  sinal.addEventListener("mensagem-atualizada", (e) => aoMensagemAtualizada(e.detail.mensagem, e.detail.canal));
   sinal.addEventListener("reacao", (e) => aoReacao(e.detail));
   sinal.addEventListener("historico", (e) => aoHistorico(e.detail));
   sinal.addEventListener("som", (e) => aoReceberBytesDeSom(e.detail));
@@ -1225,7 +1256,7 @@ function mostrarContaNoPerfil() {
     : "Você está sem conta";
   $("perfil-conta-detalhe").textContent = ligada
     ? estado.conta.email
-    : "Seu perfil e seus grupos ficam só neste computador.";
+    : "Somente neste computador";
   acao.textContent = ligada ? "Sair da conta" : "Criar conta";
 
   acao.onclick = () => (ligada ? sairDaConta() : voltarAoPortal());
@@ -1420,7 +1451,6 @@ async function criarGrupo() {
     {
       titulo: "Criar grupo",
       confirmar: "Criar",
-      texto: "O servidor devolve um código de convite para você compartilhar.",
     }
   );
   if (!grupo) return;
@@ -1439,6 +1469,12 @@ async function editarGrupoAtual() {
     confirmar: "Salvar",
   });
   if (!grupo) return;
+
+  // Reflete a edição imediatamente no grupo ativo e no atalho. A resposta
+  // `grupo` do servidor ainda confirma a fonte de verdade logo depois, mas a
+  // foto não desaparece da interface enquanto faz essa volta pela rede.
+  aoEstrutura({ ...estado.grupo, ...grupo });
+
   sinal.enviar({
     tipo: "editar-grupo",
     nome: grupo.nome,
@@ -1512,6 +1548,16 @@ async function conectar(saudacao) {
 function assumirGrupo({ eu, grupo, presentes, conta: daConta, sons }) {
   estado.grupo = grupo;
   estado.meuId = eu.id;
+
+  // A identidade efetiva é a que o servidor confirmou na saudação. Isto
+  // importa especialmente ao trocar de backend: um token que não existe no
+  // servidor novo cai para uma identidade de visitante, e o cliente precisa
+  // adotá-la para reconhecer que é dono do grupo que acabou de criar.
+  if (typeof eu.usuario === "string" && eu.usuario && estado.usuario !== eu.usuario) {
+    estado.usuario = eu.usuario;
+    salvarPreferencias();
+  }
+
   malha.definirIdentidade(eu.id);
   // Um grupo novo começa com a coluna decidindo sozinha de novo — a escolha
   // manual era sobre o grupo anterior, e não teria por que valer aqui.
@@ -2357,7 +2403,7 @@ function inserirEmojiNoCampo(id) {
   }
 
   alcance.deleteContents();
-  const elemento = elementoDeEmojiNoCampo(id);
+  const elemento = acharEmoji(id)?.nativo ? document.createTextNode(id) : elementoDeEmojiNoCampo(id);
   alcance.insertNode(elemento);
   alcance.setStartAfter(elemento);
   alcance.collapse(true);
@@ -2440,16 +2486,14 @@ function desenharConversa() {
     linhaDoTempo.textContent = "";
     $("conversa-vazio").classList.remove("oculto");
     vazio(
-      "Nada por aqui ainda",
-      estado.vistaAmigos
-        ? "Escolha um amigo para conversar."
-        : "Escolha um canal de texto para conversar, ou um de voz para falar."
+      estado.vistaAmigos ? "Selecione um amigo" : estado.grupo ? "Selecione um canal" : "Selecione um grupo",
+      ""
     );
     $("subtitulo-canal").textContent = estado.vistaAmigos
       ? "Selecione um amigo"
       : estado.grupo
         ? "Escolha um canal"
-        : "Selecione ou crie um grupo para começar";
+        : "Selecione um grupo";
     return;
   }
 
@@ -2462,10 +2506,7 @@ function desenharConversa() {
         : `${mensagens.length} mensagem${mensagens.length === 1 ? "" : "s"}`;
 
   $("conversa-vazio").classList.toggle("oculto", (mensagens?.length ?? 0) > 0);
-  vazio(
-    alvo.privado ? `Nada por aqui ainda com ${alvo.nome}` : `Ninguém escreveu em ${alvo.nome} ainda`,
-    "A primeira mensagem pode ser a sua."
-  );
+  vazio("Sem mensagens", "");
 
   // Só cola no fim se já estava no fim: quem subiu para reler algo não deve
   // ser arrastado de volta a cada mensagem que chega.
@@ -2495,6 +2536,7 @@ function desenharConversa() {
 function vazio(titulo, texto) {
   $("conversa-vazio-titulo").textContent = titulo;
   $("conversa-vazio-texto").textContent = texto;
+  $("conversa-vazio-texto").hidden = !texto;
 }
 
 function mesmoDia(a, b) {
@@ -2577,10 +2619,23 @@ function corpoDeMensagem(mensagem, dentroDoBloco = false) {
   if (!dentroDoBloco) linha.classList.add("mensagem__linha--seguida");
   linha.dataset.mensagemId = mensagem.id;
 
-  const texto = document.createElement("p");
-  texto.className = "mensagem__texto";
+  let texto;
+  if (mensagem.excluida) {
+    texto = document.createElement("span");
+    texto.className = "mensagem__excluida";
+    texto.textContent = "Mensagem excluída";
+  } else {
+    texto = document.createElement("p");
+    texto.className = "mensagem__texto";
+    preencherTextoComEmoji(texto, mensagem.texto);
+    if (mensagem.editadaEm) {
+      const editada = document.createElement("span");
+      editada.className = "mensagem__editada";
+      editada.textContent = "editada";
+      texto.append(" ", editada);
+    }
+  }
   texto.title = HORA.format(new Date(mensagem.em));
-  preencherTextoComEmoji(texto, mensagem.texto);
 
   const reacoes = document.createElement("div");
   reacoes.className = "mensagem__reacoes";
@@ -2588,22 +2643,93 @@ function corpoDeMensagem(mensagem, dentroDoBloco = false) {
 
   const acoes = document.createElement("div");
   acoes.className = "mensagem__acoes";
-  const botaoReagir = document.createElement("button");
-  botaoReagir.type = "button";
-  botaoReagir.className = "mensagem__reagir";
-  botaoReagir.title = "Reagir";
-  botaoReagir.setAttribute("aria-label", "Reagir a esta mensagem");
-  botaoReagir.innerHTML =
-    '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.4"/><circle cx="7.3" cy="8.4" r=".9" fill="currentColor" stroke="none"/><circle cx="12.7" cy="8.4" r=".9" fill="currentColor" stroke="none"/><path d="M7 12.2c.9 1.1 1.9 1.7 3 1.7s2.1-.6 3-1.7" stroke-linecap="round"/></svg>';
-  botaoReagir.addEventListener("click", (evento) => {
-    evento.stopPropagation();
-    abrirSeletorDeEmoji(botaoReagir, (emoji) => reagir(mensagem.id, emoji));
-  });
-  acoes.append(botaoReagir);
+  if (!mensagem.excluida) {
+    const botaoReagir = botaoDeAcaoDeMensagem("Reagir", '<circle cx="10" cy="10" r="7.4"/><circle cx="7.3" cy="8.4" r=".9" fill="currentColor" stroke="none"/><circle cx="12.7" cy="8.4" r=".9" fill="currentColor" stroke="none"/><path d="M7 12.2c.9 1.1 1.9 1.7 3 1.7s2.1-.6 3-1.7" stroke-linecap="round"/>');
+    botaoReagir.addEventListener("click", (evento) => {
+      evento.stopPropagation();
+      abrirSeletorDeEmoji(botaoReagir, (emoji) => reagir(mensagem.id, emoji));
+    });
+    acoes.append(botaoReagir);
+    if (mensagem.autor === estado.usuario) {
+      const editar = botaoDeAcaoDeMensagem("Editar", '<path d="M4 14.5l.8-3.3L13 3l4 4-8.2 8.2zM11.8 4.2l4 4"/>');
+      editar.addEventListener("click", () => abrirEditorDeMensagem(mensagem, linha));
+      const excluir = botaoDeAcaoDeMensagem("Excluir", '<path d="M4 6h12M8 6V4h4v2M6 6l.7 11h6.6L14 6M8.5 9v5M11.5 9v5"/>');
+      excluir.classList.add("mensagem__acao--perigo");
+      excluir.addEventListener("click", () => excluirMensagem(mensagem));
+      acoes.append(editar, excluir);
+    }
+  }
 
   linha.append(texto, reacoes, acoes);
   desenharReacoes(linha, mensagem.id, mensagem.reacoes);
   return linha;
+}
+
+function botaoDeAcaoDeMensagem(titulo, desenho) {
+  const botao = document.createElement("button");
+  botao.type = "button";
+  botao.className = "mensagem__reagir";
+  botao.title = titulo;
+  botao.setAttribute("aria-label", titulo);
+  botao.innerHTML = `<svg viewBox="0 0 20 20" aria-hidden="true">${desenho}</svg>`;
+  return botao;
+}
+
+function abrirEditorDeMensagem(mensagem, linha) {
+  if (linha.querySelector(".mensagem__editor")) return;
+  const texto = linha.querySelector(".mensagem__texto");
+  const editor = document.createElement("textarea");
+  editor.className = "mensagem__editor";
+  editor.value = mensagem.texto;
+  editor.maxLength = 2000;
+  editor.rows = Math.min(6, Math.max(2, mensagem.texto.split("\n").length));
+  const controles = document.createElement("div");
+  controles.className = "mensagem__editor-acoes";
+  const cancelar = document.createElement("button");
+  cancelar.type = "button";
+  cancelar.className = "botao botao--sutil";
+  cancelar.textContent = "Cancelar";
+  const salvar = document.createElement("button");
+  salvar.type = "button";
+  salvar.className = "botao botao--primario";
+  salvar.textContent = "Salvar";
+  cancelar.addEventListener("click", () => {
+    editor.remove();
+    controles.remove();
+    texto.hidden = false;
+  });
+  const concluir = () => {
+    const novoTexto = editor.value.trim();
+    if (!novoTexto || novoTexto === mensagem.texto) return cancelar.click();
+    salvar.disabled = true;
+    enviarAlteracaoDeMensagem("editar", mensagem.id, novoTexto);
+  };
+  salvar.addEventListener("click", concluir);
+  editor.addEventListener("keydown", (evento) => {
+    if (evento.key === "Escape") cancelar.click();
+    if (evento.key === "Enter" && !evento.shiftKey) {
+      evento.preventDefault();
+      concluir();
+    }
+  });
+  controles.append(cancelar, salvar);
+  texto.hidden = true;
+  texto.after(editor, controles);
+  editor.focus();
+  editor.setSelectionRange(editor.value.length, editor.value.length);
+}
+
+async function excluirMensagem(mensagem) {
+  const confirmou = await perguntar({ titulo: "Excluir mensagem?", confirmar: "Excluir", perigo: true });
+  if (confirmou) enviarAlteracaoDeMensagem("excluir", mensagem.id);
+}
+
+function enviarAlteracaoDeMensagem(acao, mensagem, texto = "") {
+  if (estado.conversaPrivada) {
+    social.enviar({ tipo: `${acao}-mensagem-privada`, token: estado.token, para: estado.conversaPrivada, mensagem, texto });
+  } else if (estado.canalTexto) {
+    sinal.enviar({ tipo: `${acao}-mensagem`, canal: estado.canalTexto, mensagem, texto });
+  }
 }
 
 /**
@@ -2617,7 +2743,12 @@ function desenharReacoes(linha, mensagemId, reacoes) {
   area.textContent = "";
   let houveAlguma = false;
 
-  for (const emoji of EMOJIS) {
+  const conhecidos = new Set(TODOS_EMOJIS.map((emoji) => emoji.id));
+  const emojis = [
+    ...TODOS_EMOJIS,
+    ...Object.keys(reacoes ?? {}).filter((id) => !conhecidos.has(id)).map((id) => ({ id })),
+  ];
+  for (const emoji of emojis) {
     const usuarios = reacoes?.[emoji.id];
     if (!usuarios?.length) continue;
     houveAlguma = true;
@@ -2642,8 +2773,11 @@ function desenharReacoes(linha, mensagemId, reacoes) {
  *  clicar de novo no mesmo emoji tira. Otimista? Não: a pílula só muda
  *  quando o servidor confirma, a mesma regra que já vale para o texto. */
 function reagir(mensagemId, emoji) {
-  if (!estado.canalTexto) return;
-  sinal.enviar({ tipo: "reagir", canal: estado.canalTexto, mensagem: mensagemId, emoji });
+  if (estado.conversaPrivada) {
+    social.enviar({ tipo: "reagir-privado", token: estado.token, para: estado.conversaPrivada, mensagem: mensagemId, emoji });
+  } else if (estado.canalTexto) {
+    sinal.enviar({ tipo: "reagir", canal: estado.canalTexto, mensagem: mensagemId, emoji });
+  }
 }
 
 function aoReacao({ canal, mensagem: mensagemId, reacoes }) {
@@ -2656,6 +2790,13 @@ function aoReacao({ canal, mensagem: mensagemId, reacoes }) {
   // reação faria a tela pular e perderia a posição de quem estava lendo.
   const linha = document.querySelector(`[data-mensagem-id="${CSS.escape(mensagemId)}"]`);
   if (linha) desenharReacoes(linha, mensagemId, reacoes);
+}
+
+function aoMensagemAtualizada(mensagem, canal = mensagem.canal) {
+  const lista = estado.mensagens.get(canal);
+  const indice = lista?.findIndex((item) => item.id === mensagem.id) ?? -1;
+  if (indice >= 0) lista[indice] = mensagem;
+  if (canal === estado.canalTexto) desenharConversa();
 }
 
 /* ═══ Amigos ════════════════════════════════════════════════════ */
@@ -2720,6 +2861,8 @@ social.addEventListener("amigo-pedido", (e) => aoPedidoDeAmizade(e.detail));
 social.addEventListener("amigo-atualizado", () => pedirListaDeAmigos());
 social.addEventListener("amigos", (e) => aoListaDeAmigos(e.detail));
 social.addEventListener("mensagem-privada", (e) => aoMensagemPrivada(e.detail));
+social.addEventListener("mensagem-privada-atualizada", (e) => aoMensagemPrivadaAtualizada(e.detail));
+social.addEventListener("reacao-privada", (e) => aoReacaoPrivada(e.detail));
 social.addEventListener("historico-privado", (e) => aoHistoricoPrivado(e.detail));
 
 function souAmigoDe(contaId) {
@@ -2751,7 +2894,6 @@ function removerAmizade(amigoId) {
 async function adicionarAmigoPorCodigo() {
   const valores = await perguntar({
     titulo: "Adicionar amigo",
-    texto: 'A pessoa encontra o próprio código em "Meu perfil", perto da conta.',
     campos: [{ rotulo: "Código de amigo", dica: "conta-xxxxxxxxxxxx", maximo: 40 }],
     confirmar: "Adicionar",
   });
@@ -2892,6 +3034,24 @@ function aoMensagemPrivada({ mensagem, para }) {
   } else if (mensagem.autor !== estado.usuario) {
     avisar(`${mensagem.apelido} mandou uma mensagem.`);
   }
+}
+
+function aoMensagemPrivadaAtualizada({ mensagem, para }) {
+  const outraParte = mensagem.autor === estado.usuario ? para : mensagem.autor;
+  const lista = estado.mensagens.get(outraParte);
+  const indice = lista?.findIndex((item) => item.id === mensagem.id) ?? -1;
+  if (indice >= 0) lista[indice] = mensagem;
+  if (outraParte === estado.conversaPrivada) desenharConversa();
+}
+
+function aoReacaoPrivada({ de, para, mensagem, reacoes }) {
+  const outraParte = de === estado.usuario ? para : de;
+  const lista = estado.mensagens.get(outraParte);
+  const alvo = lista?.find((item) => item.id === mensagem);
+  if (alvo) alvo.reacoes = reacoes;
+  if (outraParte !== estado.conversaPrivada) return;
+  const linha = document.querySelector(`[data-mensagem-id="${CSS.escape(mensagem)}"]`);
+  if (linha) desenharReacoes(linha, mensagem, reacoes);
 }
 
 function aoHistoricoPrivado({ com, mensagens }) {
@@ -3303,7 +3463,7 @@ function desenharSonsPessoais() {
   lista.innerHTML = "";
 
   if (!estado.conta) {
-    dica.textContent = "Entre numa conta para guardar sons seus e usá-los como som de entrada em qualquer grupo.";
+    dica.textContent = "Entre numa conta para usar sua biblioteca.";
     dica.classList.remove("oculto");
     botaoAdicionar.classList.add("oculto");
     // Sem conta não há som nenhum a listar — a caixa vazia com borda não
@@ -3544,10 +3704,10 @@ function ajustarVigia() {
 function mostrarAtividadeAtual() {
   const linha = $("dica-atividade-agora");
   if (!linha) return;
-  if (!estado.mostrarAtividade) linha.textContent = "Agora o grupo não vê nada.";
-  else if (!estado.grupo) linha.textContent = "Entre em um grupo para começar a mostrar.";
-  else if (estado.minhaAtividade) linha.textContent = `Agora o grupo vê: ${estado.minhaAtividade}`;
-  else linha.textContent = "Agora o grupo não vê nada — nenhum programa em primeiro plano.";
+  if (!estado.mostrarAtividade) linha.textContent = "Desativado";
+  else if (!estado.grupo) linha.textContent = "Sem grupo";
+  else if (estado.minhaAtividade) linha.textContent = estado.minhaAtividade;
+  else linha.textContent = "Nenhuma atividade";
 }
 
 /* ═══ Cadastro manual de atividade ══════════════════════════════════
@@ -4605,6 +4765,18 @@ function prepararAjustes() {
     // lugar onde eles não existem.
     const codigo = estado.grupo?.codigo;
     desligar();
+
+    // Token e identidade de conta pertencem ao servidor que os emitiu. Levar
+    // um token do Railway para o servidor local fazia o backend recusar a
+    // conta e sortear outra identidade, enquanto a interface ainda se achava
+    // dona do grupo. O resultado era conseguir criar, mas não editar de
+    // verdade. Ao trocar de servidor, continuamos como visitante com uma
+    // identidade local estável; quem quiser conta entra numa conta desse novo
+    // servidor.
+    if (estado.token || estado.usuario.startsWith("conta-")) {
+      largarIdentidadeDaConta();
+    }
+
     estado.servidor = servidor;
     salvarPreferencias();
     // A conta também é o de lá — amigos e PV de um servidor não existem no
@@ -5257,6 +5429,15 @@ try {
   const guardada = conta.sessaoGuardada();
   let entrouPelaSessao = false;
   let sessaoRecusada = false;
+
+  // Uma sessão só prova identidade no servidor que a emitiu. Isto também
+  // cobre quem selecionou o backend local antes desta correção e recarregou
+  // a página: não reapresentamos um id `conta-*` do servidor hospedado como
+  // se ele valesse no servidor local.
+  if (guardada?.token && guardada.servidor !== estado.servidor && estado.usuario.startsWith("conta-")) {
+    estado.usuario = crypto.randomUUID().replace(/-/g, "");
+    salvarPreferencias();
+  }
 
   if (guardada?.token && guardada.servidor === estado.servidor) {
     // Assumido desde já: se o servidor estiver fora do ar, a saudação ainda

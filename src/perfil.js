@@ -381,7 +381,7 @@ async function ajustarFotoDeArquivo(
 export function lerFotoDeArquivo(arquivo) {
   return ajustarFotoDeArquivo(arquivo, {
     titulo: "Ajustar foto",
-    ajuda: "Arraste para posicionar e use o zoom para aproximar. GIF continua animado.",
+    ajuda: "Arraste e ajuste o zoom.",
     confirmar: "Usar esta foto",
     ladoMax: FOTO_PREPARO_LADO,
     qualidadeBase: 0.82,
@@ -393,7 +393,7 @@ export function lerFotoDeArquivo(arquivo) {
 export function lerFotoDoGrupoDeArquivo(arquivo) {
   return ajustarFotoDeArquivo(arquivo, {
     titulo: "Ajustar foto do grupo",
-    ajuda: "Arraste para posicionar e use o zoom para aproximar. A prévia vale para lista e cabeçalho.",
+    ajuda: "Arraste e ajuste o zoom.",
     confirmar: "Usar esta foto",
     ladoMax: FOTO_GRUPO_PREPARO_LADO,
     qualidadeBase: 0.8,
@@ -584,10 +584,10 @@ export function editarPerfil(atual) {
 
       const mascote = acharAvatar(rascunho.avatar);
       $("perfil-previa-lema").textContent = rascunho.foto
-        ? "Sua foto — os outros veem o mascote, aqui embaixo"
+        ? "Foto local"
         : mascote
-          ? `${mascote.nome} — ${mascote.lema.toLowerCase()}`
-          : "Sem mascote — aparecem suas iniciais";
+          ? mascote.nome
+          : "Iniciais";
 
       $("perfil-previa-bio").textContent = previa.bio;
       $("perfil-previa-bio").hidden = !previa.bio;
@@ -723,10 +723,10 @@ export function iniciarOnboarding(atual) {
 
       const mascote = acharAvatar(retrato.avatar);
       $("onboarding-previa-lema").textContent = retrato.foto
-        ? "Sua foto — os outros veem o mascote, aqui embaixo, por enquanto"
+        ? "Foto local"
         : mascote
-          ? `${mascote.nome} — ${mascote.lema.toLowerCase()}`
-          : "Sem mascote — aparecem suas iniciais";
+          ? mascote.nome
+          : "Iniciais";
 
       botaoRemoverFoto.classList.toggle("oculto", !retrato.foto);
     };
@@ -924,8 +924,8 @@ export function editarGrupo(atual, { titulo = "Editar grupo", confirmar = "Salva
       pintarMarcaDeGrupo(previa, { nome, foto: rascunho.foto });
 
       $("grupo-previa-nome").textContent = nome || "Sem nome";
-      $("grupo-previa-lema").textContent =
-        descricao || (rascunho.foto ? "A foto aparece para todo mundo no grupo." : "Sem foto, o CALL usa as iniciais do nome.");
+      $("grupo-previa-lema").textContent = descricao;
+      $("grupo-previa-lema").hidden = !descricao;
       $("grupo-descricao-conta").textContent = `${[...campoDescricao.value].length}/${GRUPO_DESCRICAO_MAX}`;
       $("grupo-confirmar").disabled = !campoNome.value.trim();
     };

@@ -258,11 +258,11 @@ export function forcaDaSenha(senha) {
   const texto = String(senha ?? "");
   const tamanho = [...texto].length;
 
-  if (tamanho === 0) return { nivel: 0, texto: "A senha protege sua conta" };
+  if (tamanho === 0) return { nivel: 0, texto: "Força da senha" };
 
   const achatada = texto.toLowerCase();
   if (RUINS.some((ruim) => achatada.includes(ruim))) {
-    return { nivel: 1, texto: "Essa é das primeiras que qualquer ataque tenta" };
+    return { nivel: 1, texto: "Senha muito comum" };
   }
   if (tamanho < 8) {
     return { nivel: 1, texto: `Faltam ${8 - tamanho} caractere(s)` };
@@ -281,17 +281,13 @@ export function forcaDaSenha(senha) {
 
   const nivel = Math.max(1, Math.min(5, nota));
   const recados = {
-    1: "Curta e repetitiva",
-    2: "Serve, mas dá para melhorar",
-    3: "Razoável",
-    4: "Boa senha",
+    1: "Fraca",
+    2: "Regular",
+    3: "Boa",
+    4: "Forte",
     5: "Excelente",
   };
-
-  // Um conselho só, e o mais barato: comprimento vence variedade, e mandar
-  // "acrescente um símbolo" a quem tem 20 caracteres seria conselho ruim.
-  const conselho = nivel < 4 && tamanho < 12 ? " — senhas longas valem mais" : "";
-  return { nivel, texto: recados[nivel] + conselho };
+  return { nivel, texto: recados[nivel] };
 }
 
 /** A forma de um e-mail, para o tique de confirmação do campo. O servidor é

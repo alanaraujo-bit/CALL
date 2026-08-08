@@ -455,6 +455,8 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "estado" => estado_de_midia(v, id, estado),
         "perfil" => perfil(v, id, estado, cofre).await,
         "mensagem" => mensagem(v, id, fila, estado),
+        "editar-mensagem" => alterar_mensagem(v, id, fila, estado, false),
+        "excluir-mensagem" => alterar_mensagem(v, id, fila, estado, true),
         "reagir" => reagir(v, id, estado),
         "historico" => historico(v, id, fila, estado),
         "criar-categoria" => criar_categoria(v, id, fila, estado),
@@ -477,6 +479,9 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "amigo-remover" => amigo_remover(v, id, fila, estado, cofre).await,
         "amigos" => listar_amigos(v, id, fila, estado, cofre).await,
         "mensagem-privada" => mensagem_privada(v, id, fila, estado, cofre).await,
+        "editar-mensagem-privada" => alterar_mensagem_privada(v, id, fila, estado, cofre, false).await,
+        "excluir-mensagem-privada" => alterar_mensagem_privada(v, id, fila, estado, cofre, true).await,
+        "reagir-privado" => reagir_privado(v, id, fila, estado, cofre).await,
         "historico-privado" => historico_privado(v, id, fila, estado, cofre).await,
         _ => {}
     }
@@ -1195,6 +1200,8 @@ fn mensagem(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         avatar: eu.avatar.clone(),
         texto,
         em: agora_ms(),
+        editada_em: None,
+        excluida: false,
         reacoes: HashMap::new(),
     };
 
@@ -1207,15 +1214,43 @@ fn mensagem(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     e.difundir(&codigo, &aviso, None);
 }
 
+fn alterar_mensagem(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, excluir: bool) {
+    let canal = texto_de(v, "canal");
+    let mensagem_id = texto_de(v, "mensagem");
+    let texto: String = texto_de(v, "texto").trim().chars().take(TEXTO_MAX).collect();
+    if mensagem_id.is_empty() || (!excluir && texto.is_empty()) { return; }
+
+    let mut e = estado.lock().unwrap();
+    let Some(conexao) = e.conexoes.get(&id) else { return; };
+    let Some(codigo) = conexao.grupo.clone() else { return; };
+    let usuario = conexao.usuario.clone();
+    let valido = e.acervo.grupos.get(&codigo).and_then(|g| g.canal(&canal))
+        .map(|c| c.tipo == TipoCanal::Texto).unwrap_or(false);
+    if !valido { return; }
+
+    let resultado = if excluir {
+        e.acervo.excluir_mensagem(&canal, &mensagem_id, &usuario)
+    } else {
+        e.acervo.editar_mensagem(&canal, &mensagem_id, &usuario, texto, agora_ms())
+    };
+    match resultado {
+        Ok(mensagem) => {
+            let aviso = json!({ "tipo": "mensagem-atualizada", "canal": canal, "mensagem": mensagem });
+            e.difundir(&codigo, &aviso, None);
+        }
+        Err(motivo) => { let _ = fila.send(erro(motivo)); }
+    }
+}
+
 /// Poe ou tira a reacao de quem chamou numa mensagem — um clique alterna,
 /// como o "curtir" de qualquer chat. Difunde para o grupo inteiro, e nao so
 /// para quem reagiu: e assim que todo mundo ve a pilula de contagem mudar.
 fn reagir(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
     let canal = texto_de(v, "canal");
     let mensagem_id = texto_de(v, "mensagem");
-    let emoji: String = texto_de(v, "emoji")
+    let emoji: String = texto_de(v, "emoji").trim()
         .chars()
-        .filter(|c| c.is_ascii_lowercase())
+        .filter(|c| !c.is_control() && !c.is_whitespace())
         .take(REACAO_MAX)
         .collect();
     if emoji.is_empty() {
@@ -1791,6 +1826,8 @@ async fn mensagem_privada(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Es
         avatar: minha.avatar.clone(),
         texto,
         em: agora_ms(),
+        editada_em: None,
+        excluida: false,
         reacoes: HashMap::new(),
     };
 
@@ -1804,6 +1841,51 @@ async fn mensagem_privada(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Es
     // Direto pra quem escreveu, e nao via `online`: e a mesma garantia que
     // `mensagem` (de grupo) ja da — a propria mensagem so aparece depois de
     // aceita pelo servidor, entregue de volta pela conexao que a mandou.
+    let _ = fila.send(texto_json(&aviso));
+    e.enviar_a_conta(&para, &aviso);
+}
+
+async fn alterar_mensagem_privada(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>, excluir: bool) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    estado.lock().unwrap().registrar_online(&minha.id, id, fila);
+    let para = texto_de(v, "para");
+    if !minha.amigos.iter().any(|a| a == &para) { return; }
+    let mensagem_id = texto_de(v, "mensagem");
+    let texto: String = texto_de(v, "texto").trim().chars().take(TEXTO_MAX).collect();
+    if mensagem_id.is_empty() || (!excluir && texto.is_empty()) { return; }
+    let conversa = id_da_conversa(&minha.id, &para);
+    let mut e = estado.lock().unwrap();
+    let resultado = if excluir {
+        e.acervo.excluir_mensagem(&conversa, &mensagem_id, &minha.id)
+    } else {
+        e.acervo.editar_mensagem(&conversa, &mensagem_id, &minha.id, texto, agora_ms())
+    };
+    match resultado {
+        Ok(mensagem) => {
+            let aviso = json!({ "tipo": "mensagem-privada-atualizada", "para": para, "mensagem": mensagem });
+            let _ = fila.send(texto_json(&aviso));
+            e.enviar_a_conta(&para, &aviso);
+        }
+        Err(motivo) => { let _ = fila.send(erro(motivo)); }
+    }
+}
+
+async fn reagir_privado(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else { return; };
+    estado.lock().unwrap().registrar_online(&minha.id, id, fila);
+    let para = texto_de(v, "para");
+    if !minha.amigos.iter().any(|a| a == &para) { return; }
+    let mensagem_id = texto_de(v, "mensagem");
+    let emoji: String = texto_de(v, "emoji").trim().chars()
+        .filter(|c| !c.is_control() && !c.is_whitespace()).take(REACAO_MAX).collect();
+    if mensagem_id.is_empty() || emoji.is_empty() { return; }
+    let conversa = id_da_conversa(&minha.id, &para);
+    let mut e = estado.lock().unwrap();
+    let Some(reacoes) = e.acervo.reagir(&conversa, &mensagem_id, &minha.id, &emoji) else { return; };
+    let aviso = json!({ "tipo": "reacao-privada", "de": minha.id, "para": para, "mensagem": mensagem_id, "reacoes": reacoes });
     let _ = fila.send(texto_json(&aviso));
     e.enviar_a_conta(&para, &aviso);
 }

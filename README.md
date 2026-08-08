@@ -104,8 +104,8 @@ no rodapé, quem **esteve na call e já saiu**, com quanto tempo ficou. De quem
 já estava na sala quando você chegou não dá para saber desde quando, e essas
 linhas levam um `+` de "pelo menos" — o número é um piso, e não um total.
 
-As mensagens aceitam **reação com emoji** — cinco, desenhados para o CALL —
-num clique, e todo mundo no canal vê a contagem na hora. O aplicativo também
+As mensagens aceitam **emojis Unicode**, reações, edição e exclusão pelo
+próprio autor, e todo mundo no canal vê as mudanças na hora. O aplicativo também
 tem **soundboard de grupo**: uma biblioteca de sons que qualquer um na call
 adiciona e toca para todos. Os clipes ficam no servidor, mas o áudio em si vai
 direto pela sua conexão — quem toca mistura o som no próprio áudio de saída, e
@@ -266,7 +266,7 @@ KB viaja no instalador do CALL: o sidecar continua nos 599 KB de sempre.
 | `src/audio.js` | Motor de áudio: voz, soundboard e saídas por pessoa |
 | `src/tempo.js` | Tempo em call e histórico de quem passou por ela |
 | `src/atividade.js` | O que mostrar do programa em uso, e com que calma |
-| `src/emojis.js` | Os cinco emoji de reação, desenhados em SVG |
+| `src/emojis.js` | Emojis Unicode e os cinco emojis próprios do CALL |
 | `src-tauri/src/atividade.rs` | Qual programa está em primeiro plano |
 | `src-tauri/src/google.rs` | PKCE, navegador do sistema e porta de retorno |
 | `src-tauri/src/lib.rs` | Comandos nativos, permissões e ajuste de memória |
