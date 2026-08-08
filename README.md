@@ -5,7 +5,7 @@ texto**, **chat de voz** e **transmissão de tela**. Interface inteiramente em
 português do Brasil.
 
 Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
-empacotador e sem Electron. O instalador tem 1,90 MB e o executável ocupa
+empacotador e sem Electron. O instalador tem 1,95 MB e o executável ocupa
 32 MB de memória residente em repouso — 7,9 MB deles em memória privada.
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
