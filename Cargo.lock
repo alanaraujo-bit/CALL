@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "call"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.2.17",

@@ -169,10 +169,23 @@ svg {
 /* O JS acrescenta esta classe quando a decisão — abrir a aplicação ou
    mostrar o portal — já foi tomada e a tela de baixo já está montada. A
    camada só desaparece, nunca é removida por baixo dos dedos de quem talvez
-   ainda esteja lendo a marca. */
+   ainda esteja lendo a marca. A despedida é um gesto só: a camada se apaga
+   enquanto o conteúdo cresce um fio e sobe — a marca entrega o lugar, em
+   vez de ser cortada por um fade frio. */
 .carregando--saindo {
   opacity: 0;
   pointer-events: none;
+}
+
+.carregando--saindo .carregando__conteudo {
+  animation: carregando-sair 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes carregando-sair {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(1.04);
+  }
 }
 
 .carregando__mancha {
@@ -263,6 +276,11 @@ svg {
     opacity: 0.85;
   }
   .carregando__conteudo {
+    animation: none;
+  }
+  .carregando--saindo .carregando__conteudo {
+    /* A camada ainda se apaga (o fade é um gesto pequeno); o deslocamento e
+       o crescimento é que ficam de fora. */
     animation: none;
   }
 }

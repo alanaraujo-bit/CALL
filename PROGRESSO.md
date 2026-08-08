@@ -1594,6 +1594,43 @@ atualização explica o que ela traz.
 
 ---
 
+## Iteração 20 — A partida não mostra mais o login (0.9.1)
+
+**Motivo:** quem já estava logado via a tela de login piscar por um instante
+entre o fim do carregando e a tela inicial. A partida sempre escondeu o
+portal atrás da tela de carregando — só que escondia com uma animação: o
+cartão recuava 220 ms e então sumia. Com a conta, retomar a sessão custa uma
+ida e volta ao servidor, e quando essa confirmação demora, os 220 ms do
+recuo coincidem com o fade de 380 ms da tela de carregando — o login
+aparecia no meio da troca. Antes das contas (0.8.0) não havia verificação de
+sessão na partida, e por isso o piscar nunca tinha existido.
+
+### A partida entrega direto
+
+A descoberta foi que o recuo animado não servia para nada na partida: a tela
+de carregando é opaca, e ninguém vê o cartão se mexer atrás dela. Agora, em
+partida, o portal é escondido na hora, sem animação, e quem está logado sai
+do carregando direto para a aplicação — sem login nem por um frame. O recuo
+animado ficou para quem entra pelo portal, onde o cartão é visto de
+verdade. A detecção é pela presença da tela de carregando: ela só existe
+enquanto a decisão da partida não foi tomada.
+
+### A despedida do carregando
+
+A troca ganhou um gesto próprio: a camada se apaga enquanto o glifo e o nome
+crescem um fio e sobem (380 ms, com a mesma curva de entrada) — a marca
+entrega o lugar, em vez de ser cortada por um fade frio. Quem prefere menos
+movimento (`prefers-reduced-motion`) continua vendo só o fade.
+
+### Verificado
+
+Nada de servidor mudou, e as suítes seguem todas verdes. A verificação da
+correção é manual, na janela real, com sessão guardada: abrir o CALL não
+mostra o portal em momento nenhum, e a saída da conta e a reentrada pelo
+portal mantêm o recuo animado de sempre.
+
+---
+
 ## Testes automatizados
 
 | Suíte | Comando | Cobertura |

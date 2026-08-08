@@ -907,10 +907,30 @@ function esconderTelaDeCarregando() {
 
 function abrirAplicacao() {
   const portal = $("portal");
-  portal.classList.add("portal--indo");
+  const telaEntrada = $("tela-entrada");
 
-  // A aplicação é montada já, e a tela de entrada só sai depois do recuo do
-  // cartão: montar depois faria a espera aparecer como uma tela preta.
+  // Na partida, a tela de carregando ainda cobre o portal do primeiro pixel:
+  // o recuo animado do cartão seria enfeite que ninguém vê — e, pior,
+  // arriscado. Quando a confirmação da sessão demora (retomar uma conta
+  // custa uma ida e volta ao servidor), os 220 ms do recuo coincidem com o
+  // fade da tela de carregando, e o login chega a piscar no meio da troca.
+  // Em partida o portal some já, sem animação, e a despedida do carregando
+  // revela direto a aplicação. O recuo animado fica para quem entra pelo
+  // portal — lá o cartão é visto de verdade.
+  const naPartida = $("tela-carregando") !== null;
+  if (naPartida) {
+    telaEntrada.classList.add("oculto");
+    portal.classList.remove("portal--indo");
+  } else {
+    portal.classList.add("portal--indo");
+    setTimeout(() => {
+      telaEntrada.classList.add("oculto");
+      portal.classList.remove("portal--indo");
+    }, 220);
+  }
+
+  // A aplicação é montada já, e a tela de entrada só sai depois: montar
+  // depois faria a espera aparecer como uma tela preta.
   $("tela-aplicacao").classList.remove("oculto");
   // Quem saiu da conta e entrou de novo já tem tudo ligado; repetir aqui
   // duplicaria cada ouvinte, e cada clique passaria a valer por dois.
@@ -921,11 +941,6 @@ function abrirAplicacao() {
   } else {
     prepararAplicacao();
   }
-
-  setTimeout(() => {
-    $("tela-entrada").classList.add("oculto");
-    portal.classList.remove("portal--indo");
-  }, 220);
 }
 
 async function hospedar() {
