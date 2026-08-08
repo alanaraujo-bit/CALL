@@ -293,6 +293,14 @@
             </span>
           </span>
         </header>
+        <!-- Fixo, fora da lista rolável: não é um grupo, é a outra vista
+             desta mesma coluna — a mesma ideia do "Home" do Discord acima
+             dos servidores. -->
+        <button class="grupo grupo--amigos" type="button" id="botao-amigos" title="Amigos" aria-label="Amigos">
+          <span class="grupo__marca" aria-hidden="true">
+            <svg viewBox="0 0 20 20"><path d="M7 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path d="M2.5 16c.5-3 2-4.5 4.5-4.5s4 1.5 4.5 4.5"/><path d="M13.5 6a2 2 0 1 1 0 4"/><path d="M13 11.6c1.9.3 3 1.7 3.4 4.1"/></svg>
+          </span>
+        </button>
         <nav class="grupos__lista" id="lista-grupos"></nav>
         <footer class="grupos__rodape">
           <div class="perfil">
@@ -323,11 +331,37 @@
            mesmo lugar não é conveniência, é ruído — daí este topo só ter o
            nome. -->
       <aside class="canais">
-        <header class="canais__topo">
+        <header class="canais__topo" id="canais-topo">
           <span class="canais__nome" id="nome-grupo">Nenhum grupo</span>
         </header>
 
         <nav class="canais__arvore" id="arvore-canais"></nav>
+
+        <!-- Substitui a árvore de canais quando a régua abre "Amigos" — a
+             mesma coluna, um conteúdo diferente, e não uma tela nova por
+             cima de tudo. -->
+        <div class="oculto" id="amigos-secao">
+          <div id="vista-amigos">
+            <header class="canais__topo vista-amigos__topo">
+              <span class="canais__nome">Amigos</span>
+              <button class="icone" type="button" id="botao-adicionar-amigo" title="Adicionar por código" aria-label="Adicionar amigo por código">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>
+              </button>
+            </header>
+            <div class="vista-amigos__corpo">
+              <div class="vista-amigos__pedidos" id="pedidos-amigo"></div>
+              <div class="vista-amigos__lista" id="lista-amigos"></div>
+              <p class="vista-amigos__vazio oculto" id="amigos-vazio">
+                Você ainda não tem amigos por aqui. Adicione alguém pelo cartão de
+                perfil dentro de um grupo, ou pelo código na aba "+".
+              </p>
+            </div>
+          </div>
+          <p class="vista-amigos__sem-conta oculto" id="amigos-sem-conta">
+            Crie uma conta para adicionar amigos e conversar em privado — sem
+            ela, a identidade não sobrevive nem à própria sessão.
+          </p>
+        </div>
 
         <footer class="voz oculto" id="rodape-voz">
           <div class="voz__cabecalho">
@@ -450,13 +484,15 @@
               <path d="M7 12.2c.9 1.1 1.9 1.7 3 1.7s2.1-.6 3-1.7" stroke-linecap="round" />
             </svg>
           </button>
-          <textarea
+          <div
             class="redator__campo"
             id="campo-mensagem"
-            rows="1"
-            maxlength="2000"
-            placeholder="Escreva uma mensagem"
-          ></textarea>
+            contenteditable="true"
+            role="textbox"
+            aria-multiline="true"
+            aria-label="Escreva uma mensagem"
+            data-placeholder="Escreva uma mensagem"
+          ></div>
           <button class="icone icone--enviar" type="submit" title="Enviar" aria-label="Enviar">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10l14-6-6 14-2-6-6-2z"/></svg>
           </button>
@@ -508,15 +544,30 @@
 
         <div class="painel-perfil__corpo">
           <!-- A prévia acompanha a digitação: é o mesmo desenho que os outros
-               vão ver, e não uma promessa de como ficaria. -->
+               vão ver, e não uma promessa de como ficaria. O próprio avatar é
+               o botão que abre foto e mascote — uma ação no lugar dos dois
+               cartões que ficavam sempre à vista. -->
           <div class="previa">
-            <span class="avatar avatar--grande" id="perfil-previa-avatar"></span>
+            <button
+              class="previa__avatar-botao"
+              type="button"
+              id="perfil-avatar-botao"
+              title="Trocar foto ou mascote"
+              aria-label="Trocar foto ou mascote"
+            >
+              <span class="avatar avatar--grande" id="perfil-previa-avatar"></span>
+              <span class="previa__avatar-editar" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><path d="M14.2 3.8a1.8 1.8 0 0 1 2.5 2.5l-8.4 8.4-3.2.7.7-3.2 8.4-8.4z" /></svg>
+              </span>
+            </button>
             <div class="previa__texto">
               <span class="previa__nome" id="perfil-previa-nome">—</span>
               <span class="previa__lema" id="perfil-previa-lema">—</span>
               <p class="previa__bio" id="perfil-previa-bio" hidden></p>
             </div>
           </div>
+          <p class="portal__erro" id="perfil-foto-erro" hidden></p>
+          <input type="file" id="perfil-foto-arquivo" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
 
           <div class="ajuste">
             <label class="ajuste__rotulo" for="perfil-apelido">Apelido</label>
@@ -541,28 +592,6 @@
             </p>
           </div>
 
-          <div class="ajuste">
-            <span class="ajuste__rotulo">Sua foto</span>
-            <div class="foto-escolha">
-              <button class="botao botao--sutil" type="button" id="perfil-escolher-foto">Escolher foto ou GIF…</button>
-              <button class="botao botao--sutil botao--perigo oculto" type="button" id="perfil-remover-foto">Remover</button>
-            </div>
-            <p class="portal__erro" id="perfil-foto-erro" hidden></p>
-            <p class="ajuste__dica">
-              Um GIF anima normalmente. Fica só neste computador — os outros
-              ainda veem seu mascote, aqui embaixo.
-            </p>
-            <input type="file" id="perfil-foto-arquivo" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
-          </div>
-
-          <div class="ajuste">
-            <span class="ajuste__rotulo">Seu mascote</span>
-            <div class="mascotes" id="perfil-mascotes"></div>
-            <p class="ajuste__dica">
-              É o que os outros veem no grupo, com foto ou sem.
-            </p>
-          </div>
-
           <hr class="ajustes__risco" />
 
           <!-- A conta mora aqui, e não numa quarta coluna: ela é o que
@@ -580,6 +609,19 @@
                 <span id="perfil-conta-detalhe">Seu perfil e seus grupos ficam só neste computador.</span>
               </div>
               <button class="botao botao--sutil" type="button" id="perfil-conta-acao">Criar conta</button>
+            </div>
+            <!-- Só existe com conta: é o mesmo id que o cartão de membro já
+                 usa por trás, aqui exposto pra quem quer ser adicionado por
+                 alguém que não está em nenhum grupo em comum. -->
+            <div class="conta-linha conta-linha--codigo oculto" id="perfil-codigo-amigo">
+              <span class="conta-linha__glifo" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><path d="M7 9a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/><path d="M2.5 16c.5-3 2-4.5 4.5-4.5s4 1.5 4.5 4.5"/><path d="M13.5 6a2 2 0 1 1 0 4"/><path d="M13 11.6c1.9.3 3 1.7 3.4 4.1"/></svg>
+              </span>
+              <div class="conta-linha__texto">
+                <strong>Seu código de amigo</strong>
+                <span id="perfil-codigo-amigo-valor">—</span>
+              </div>
+              <button class="botao botao--sutil" type="button" id="perfil-codigo-amigo-copiar">Copiar</button>
             </div>
           </div>
         </div>
@@ -1256,6 +1298,18 @@
     <!-- ══ Seletor de emoji ═════════════════════════════════════════ -->
     <div class="seletor-emoji oculto" id="seletor-emoji" role="menu"></div>
 
+    <!-- ══ Seletor de avatar (foto + mascote) ══════════════════════════ -->
+    <!-- Um só popover para as duas decisões do retrato: a grade de mascotes
+         fica escondida atrás do clique no avatar, e não sempre à vista. -->
+    <div class="seletor-avatar oculto" id="seletor-avatar" role="menu">
+      <div class="mascotes mascotes--fita" id="seletor-avatar-mascotes"></div>
+      <hr class="menu__risco" />
+      <button class="menu__item" type="button" id="seletor-avatar-foto">Escolher foto ou GIF…</button>
+      <button class="menu__item oculto" type="button" data-perigo="sim" id="seletor-avatar-remover">
+        Remover foto
+      </button>
+    </div>
+
     <!-- ══ Atualização disponível ═══════════════════════════════════ -->
     <div class="atualizacao oculto" id="atualizacao" role="status">
       <span class="atualizacao__glifo" aria-hidden="true">
@@ -1301,6 +1355,7 @@
     </div>
 
     <div class="avisos" id="avisos" aria-live="polite"></div>
+    <div class="aviso-central" id="aviso-central" role="alert"></div>
 
     <script type="module" src="app.js"></script>
   </body>

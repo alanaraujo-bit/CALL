@@ -225,6 +225,51 @@ export function montarEscolhaDeMascotes(area, escolhido, aoEscolher) {
 }
 
 /**
+ * O popover que reúne as duas decisões do retrato — mascote e foto — atrás
+ * de um único clique no avatar, em vez de dois cartões sempre visíveis. Mesmo
+ * padrão do seletor de emoji: um elemento fixo, reancorado a cada abertura,
+ * que fecha sozinho no primeiro clique fora dele.
+ */
+function abrirSeletorDeAvatar(ancora, escolhido, temFoto, aoEscolherMascote, aoEscolherFoto, aoRemoverFoto) {
+  const seletor = $("seletor-avatar");
+  const botaoRemover = $("seletor-avatar-remover");
+
+  montarEscolhaDeMascotes($("seletor-avatar-mascotes"), escolhido, (id) => {
+    fecharSeletorDeAvatar();
+    aoEscolherMascote(id);
+  });
+  botaoRemover.classList.toggle("oculto", !temFoto);
+  botaoRemover.onclick = () => {
+    fecharSeletorDeAvatar();
+    aoRemoverFoto();
+  };
+  $("seletor-avatar-foto").onclick = () => {
+    fecharSeletorDeAvatar();
+    aoEscolherFoto();
+  };
+
+  seletor.classList.remove("oculto");
+
+  const caixa = ancora.getBoundingClientRect();
+  const minha = seletor.getBoundingClientRect();
+  const x = Math.min(caixa.left, window.innerWidth - minha.width - 8);
+  const y =
+    caixa.bottom + minha.height + 8 > window.innerHeight
+      ? caixa.top - minha.height - 6
+      : caixa.bottom + 6;
+  seletor.style.left = `${Math.max(8, x)}px`;
+  seletor.style.top = `${Math.max(8, y)}px`;
+
+  setTimeout(() => {
+    document.addEventListener("click", fecharSeletorDeAvatar, { once: true });
+  }, 0);
+}
+
+function fecharSeletorDeAvatar() {
+  $("seletor-avatar").classList.add("oculto");
+}
+
+/**
  * Editor do próprio perfil. Resolve com o perfil novo, ou `null` se a pessoa
  * desistir — e desistir devolve tudo como estava, inclusive o mascote clicado
  * na prévia.
@@ -234,7 +279,7 @@ export function editarPerfil(atual) {
     const cortina = $("perfil-dialogo");
     const campoApelido = $("perfil-apelido");
     const campoBio = $("perfil-bio");
-    const botaoRemoverFoto = $("perfil-remover-foto");
+    const botaoAvatar = $("perfil-avatar-botao");
     const rascunho = saneado(atual);
 
     campoApelido.value = rascunho.apelido;
@@ -264,32 +309,43 @@ export function editarPerfil(atual) {
       // pessoa veria "159/160" com um caractere digitado.
       $("perfil-bio-conta").textContent = `${[...campoBio.value].length}/${BIO_MAX}`;
       $("perfil-salvar").disabled = !campoApelido.value.trim();
-      botaoRemoverFoto.classList.toggle("oculto", !rascunho.foto);
     };
 
-    montarEscolhaDeMascotes($("perfil-mascotes"), rascunho.avatar, (id) => {
-      rascunho.avatar = id;
-      refletir();
-    });
-
     const erroFoto = $("perfil-foto-erro");
-    prepararEscolhaDeFoto(
-      $("perfil-escolher-foto"),
-      $("perfil-foto-arquivo"),
-      (foto) => {
+    const inputFoto = $("perfil-foto-arquivo");
+    inputFoto.onchange = async () => {
+      const arquivo = inputFoto.files?.[0];
+      // Zera na hora: sem isto, escolher o mesmo arquivo de novo (depois de
+      // remover a foto, por exemplo) não dispara `change` de novo.
+      inputFoto.value = "";
+      if (!arquivo) return;
+      try {
+        rascunho.foto = await lerFotoDeArquivo(arquivo);
         erroFoto.hidden = true;
-        rascunho.foto = foto;
         refletir();
-      },
-      (erro) => {
+      } catch (erro) {
         erroFoto.textContent = erro.message;
         erroFoto.hidden = false;
       }
-    );
-    botaoRemoverFoto.onclick = () => {
-      erroFoto.hidden = true;
-      rascunho.foto = "";
-      refletir();
+    };
+
+    botaoAvatar.onclick = (evento) => {
+      evento.stopPropagation();
+      abrirSeletorDeAvatar(
+        botaoAvatar,
+        rascunho.avatar,
+        Boolean(rascunho.foto),
+        (id) => {
+          rascunho.avatar = id;
+          refletir();
+        },
+        () => inputFoto.click(),
+        () => {
+          erroFoto.hidden = true;
+          rascunho.foto = "";
+          refletir();
+        }
+      );
     };
 
     const fechar = (valor) => {
@@ -299,10 +355,10 @@ export function editarPerfil(atual) {
       $("perfil-salvar").onclick = null;
       $("perfil-cancelar").onclick = null;
       $("perfil-fechar").onclick = null;
-      $("perfil-escolher-foto").onclick = null;
-      $("perfil-foto-arquivo").onchange = null;
-      botaoRemoverFoto.onclick = null;
+      botaoAvatar.onclick = null;
+      inputFoto.onchange = null;
       cortina.onclick = null;
+      fecharSeletorDeAvatar();
       document.removeEventListener("keydown", aoTeclar);
       resolver(valor);
     };

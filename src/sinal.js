@@ -83,6 +83,51 @@ export class Sinal extends EventTarget {
     });
   }
 
+  /**
+   * Conexão sem saudação de grupo e sem promessa de "bem-vindo" — usada pelo
+   * socket social (amigos e mensagem privada), que não pertence a nenhum
+   * grupo e por isso não tem handshake nenhum para esperar: quem quiser
+   * alguma coisa manda o próprio token junto do pedido, do jeito que
+   * cadastro e login já fazem.
+   *
+   * Dispara `"aberto"` quando o socket abre e `"queda"` quando cai — quem
+   * chama decide sozinho se e quando tenta de novo.
+   */
+  conectarLivre(endereco) {
+    this.desconectar();
+
+    let ws;
+    try {
+      ws = new WebSocket(endereco);
+    } catch {
+      return false;
+    }
+    this.#ws = ws;
+
+    ws.onopen = () => this.dispatchEvent(new CustomEvent("aberto"));
+
+    ws.onmessage = (evento) => {
+      let msg;
+      try {
+        msg = JSON.parse(evento.data);
+      } catch {
+        return;
+      }
+      this.dispatchEvent(new CustomEvent(msg.tipo, { detail: msg }));
+    };
+
+    ws.onerror = () => {};
+
+    ws.onclose = () => {
+      if (this.#ws === ws) {
+        this.#ws = null;
+        this.dispatchEvent(new CustomEvent("queda"));
+      }
+    };
+
+    return true;
+  }
+
   enviar(objeto) {
     if (this.conectado) this.#ws.send(JSON.stringify(objeto));
   }

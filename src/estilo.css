@@ -1673,6 +1673,166 @@ svg {
   background: var(--acento);
 }
 
+/* ─── Amigos ───────────────────────────────────────────────────── */
+/* Ocupa o mesmo lugar da árvore de canais, na mesma coluna — nunca as duas
+   ao mesmo tempo. `#amigos-secao` é o que a régua alterna com `#arvore-canais`. */
+
+#amigos-secao {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#vista-amigos {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.vista-amigos__corpo {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 8px;
+}
+
+.vista-amigos__sem-conta {
+  padding: 16px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--texto-3);
+}
+
+.vista-amigos__pedidos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.vista-amigos__pedidos:empty {
+  display: none;
+}
+
+.vista-amigos__lista {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vista-amigos__vazio {
+  padding: 14px 8px;
+  font-size: 12px;
+  color: var(--texto-3);
+  line-height: 1.5;
+}
+
+.amigo-pedido {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 8px;
+}
+
+.amigo-pedido .avatar {
+  flex: none;
+}
+
+.amigo-pedido__nome {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--texto);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.amigo-linha {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 4px 6px 8px;
+  border: none;
+  border-radius: var(--raio-p);
+  background: transparent;
+  color: var(--texto-2);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transicao), color var(--transicao);
+}
+
+.amigo-linha:hover {
+  background: var(--superficie-3);
+  color: var(--texto);
+}
+
+.amigo-linha--ativa {
+  background: var(--superficie-3);
+  color: var(--texto);
+}
+
+.amigo-linha .avatar {
+  flex: none;
+}
+
+.amigo-linha__nome {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* O botão fixo de Amigos, acima da lista rolável de grupos — reaproveita
+   `.grupo`/`.grupo__marca`, só troca a marca de iniciais por um glifo. */
+.grupo--amigos {
+  margin-bottom: 4px;
+}
+
+.grupo--amigos .grupo__marca {
+  color: var(--texto-3);
+}
+
+.grupo--amigos.grupo--ativo .grupo__marca {
+  color: #a8b0f2;
+  border-color: rgba(95, 106, 217, 0.45);
+  background: var(--acento-suave);
+}
+
+.grupo--amigos .grupo__marca svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* Pedido de amizade esperando resposta — o mesmo ponto que marca canal com
+   mensagem nova, só que no botão fixo, porque não há linha de canal aqui
+   pra carregar o ponto sozinha. */
+.grupo--amigos-pendente .grupo__marca {
+  position: relative;
+}
+
+.grupo--amigos-pendente .grupo__marca::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--acento);
+  border: 2px solid var(--superficie-1);
+}
+
+.conta-linha--codigo {
+  margin-top: 8px;
+}
+
 .vozinho {
   display: flex;
   align-items: center;
@@ -2370,6 +2530,44 @@ svg {
   height: 27px;
 }
 
+/* ─── Seletor de avatar ────────────────────────────────────────── */
+
+.seletor-avatar {
+  position: fixed;
+  z-index: 50;
+  /* Largura de conteúdo, não fixa: a grade de mascotes abaixo é que define o
+     tamanho certo, em vez de um número chutado que corta o último item. */
+  width: max-content;
+  max-width: min(92vw, 260px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-m);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  animation: surgir 130ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+/* As seis colunas ganham largura fixa em vez de `1fr`: numa grade elástica
+   dentro de um `width: max-content`, `1fr` não tem o que dividir e o
+   navegador improvisa — foi isso que empurrou o sexto mascote pra fora. */
+.seletor-avatar .mascotes--fita {
+  grid-template-columns: repeat(6, 30px);
+  justify-content: center;
+  gap: 5px;
+}
+
+.seletor-avatar .mascote-opcao {
+  padding: 3px 1px;
+}
+
+.seletor-avatar .mascote-opcao .avatar {
+  width: 24px;
+  height: 24px;
+}
+
 /* ─── Redator ──────────────────────────────────────────────────── */
 
 .redator {
@@ -2393,6 +2591,7 @@ svg {
   flex: 1;
   min-width: 0;
   max-height: 160px;
+  overflow-y: auto;
   padding: 7px 0;
   border: none;
   background: transparent;
@@ -2400,11 +2599,13 @@ svg {
   font-family: inherit;
   font-size: 13.5px;
   line-height: 1.45;
-  resize: none;
   outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.redator__campo::placeholder {
+.redator__campo:empty::before {
+  content: attr(data-placeholder);
   color: var(--texto-3);
 }
 
@@ -2768,6 +2969,41 @@ svg {
     opacity: 0;
     transform: translateY(4px);
   }
+}
+
+/* ─── Aviso central ────────────────────────────────────────────── */
+
+/* Reservado para o que não pode passar batido no canto da tela — hoje, só o
+ * bloqueio de quem abusa de entrar e sair da voz. Por isso mora no centro,
+ * perto do topo, longe do canto onde os avisos comuns já vivem: dois avisos
+ * no mesmo lugar disputando atenção anulariam a urgência de ambos. */
+.aviso-central {
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  translate: -50% -6px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(90vw, 420px);
+  padding: 11px 18px;
+  background: var(--superficie-3);
+  border: 1px solid rgba(226, 100, 93, 0.4);
+  border-radius: var(--raio-m);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  color: #f0928c;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms ease, translate 160ms ease;
+}
+
+.aviso-central--visivel {
+  opacity: 1;
+  translate: -50% 0;
 }
 
 /* ─── Aviso de atualização ─────────────────────────────────────── */
@@ -4325,6 +4561,56 @@ select.campo__entrada {
   border: 1px solid var(--borda);
   border-radius: var(--raio-m);
   background: var(--superficie-2);
+}
+
+/* O avatar é a ação: clicar nele é como se troca foto e mascote. O selo de
+   lápis fica invisível até o hover/foco — a mesma regra do resto do CALL de
+   nada ficar exposto sem um motivo para olhar ali. */
+.previa__avatar-botao {
+  position: relative;
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.previa__avatar-botao .avatar {
+  transition: filter var(--transicao);
+}
+
+.previa__avatar-botao:hover .avatar,
+.previa__avatar-botao:focus-visible .avatar {
+  filter: brightness(0.78);
+}
+
+.previa__avatar-editar {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--acento);
+  border: 2px solid var(--superficie-2);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity var(--transicao), transform var(--transicao);
+}
+
+.previa__avatar-editar svg {
+  width: 11px;
+  height: 11px;
+  fill: #fff;
+}
+
+.previa__avatar-botao:hover .previa__avatar-editar,
+.previa__avatar-botao:focus-visible .previa__avatar-editar {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .previa__texto {

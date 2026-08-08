@@ -95,6 +95,25 @@ pub struct Atalho {
     pub nome: String,
 }
 
+/// Quantos pedidos de amizade pendentes cabem numa conta. Generoso para uso
+/// normal, apertado o bastante para que ninguem consiga inundar o convite de
+/// alguem com pedidos.
+pub const PEDIDOS_AMIGO_MAX: usize = 60;
+
+/// Pedido de amizade pendente, guardado em quem ainda nao respondeu.
+/// `apelido`/`avatar` sao uma copia de quando o pedido foi mandado — o mesmo
+/// principio de `modelo::Mensagem::avatar`: o pedido mostra quem pediu como
+/// ela era naquele momento, e nao muda sozinho se a pessoa trocar de mascote
+/// antes de alguem responder.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PedidoAmigo {
+    pub de: String,
+    pub apelido: String,
+    #[serde(default)]
+    pub avatar: String,
+    pub em: u64,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Conta {
     /// Identificador que viaja como `usuario` no protocolo. Prefixado para
@@ -120,6 +139,13 @@ pub struct Conta {
     pub atalhos: Vec<Atalho>,
     #[serde(default)]
     pub som_entrada: Option<PreferenciaSom>,
+    /// Ids de conta dos amigos — simetrico, cada lado guarda o id do outro
+    /// depois que o pedido e aceito.
+    #[serde(default)]
+    pub amigos: Vec<String>,
+    /// Pedidos de amizade recebidos e ainda nao respondidos.
+    #[serde(default)]
+    pub pedidos_amigo: Vec<PedidoAmigo>,
     pub criada_em: u64,
 }
 
@@ -302,6 +328,8 @@ impl Cofre {
                     bio,
                     atalhos: Vec::new(),
                     som_entrada: None,
+                    amigos: Vec::new(),
+                    pedidos_amigo: Vec::new(),
                     criada_em: agora_ms(),
                 };
                 let id = conta.id.clone();
@@ -348,6 +376,8 @@ impl Cofre {
                     bio: String::new(),
                     atalhos: Vec::new(),
                     som_entrada: None,
+                    amigos: Vec::new(),
+                    pedidos_amigo: Vec::new(),
                     criada_em: agora_ms(),
                 };
                 let id = conta.id.clone();
@@ -492,6 +522,110 @@ impl Cofre {
             }
             #[cfg(feature = "banco")]
             Armazem::Postgres(pool) => postgres::guardar_som_entrada(pool, conta_id, preferencia).await,
+        }
+    }
+
+    /// Manda um pedido de amizade de `de` para a conta `para_id`. Devolve
+    /// `true` quando os dois ja viraram amigos direto — porque `para_id` ja
+    /// tinha mandado um pedido para `de` antes, e pedir de volta fecha esse
+    /// pedido em vez de abrir um segundo pendurado no sentido contrario.
+    pub async fn pedir_amizade(&self, de: &Conta, para_id: &str) -> Result<bool, &'static str> {
+        if para_id == de.id {
+            return Err("Você não pode adicionar a si mesmo.");
+        }
+        if de.amigos.iter().any(|a| a == para_id) {
+            return Err("Vocês já são amigos.");
+        }
+        if de.pedidos_amigo.iter().any(|p| p.de == para_id) {
+            self.responder_pedido_amigo(&de.id, para_id, true).await?;
+            return Ok(true);
+        }
+
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                let mut e = estado.lock().unwrap();
+                let Some(alvo) = e.contas.get_mut(para_id) else {
+                    return Err("Não existe conta com esse código.");
+                };
+                if alvo.pedidos_amigo.iter().any(|p| p.de == de.id) {
+                    return Ok(false); // ja pedido, nada a fazer de novo
+                }
+                if alvo.pedidos_amigo.len() >= PEDIDOS_AMIGO_MAX {
+                    return Err("Essa pessoa tem pedidos demais pendentes.");
+                }
+                alvo.pedidos_amigo.push(PedidoAmigo {
+                    de: de.id.clone(),
+                    apelido: de.apelido.clone(),
+                    avatar: de.avatar.clone(),
+                    em: agora_ms(),
+                });
+                e.salvar_contas();
+                Ok(false)
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::pedir_amizade(pool, de, para_id).await,
+        }
+    }
+
+    /// Aceita ou recusa um pedido pendente. `id` e quem esta respondendo;
+    /// `de_id` e quem mandou o pedido original.
+    pub async fn responder_pedido_amigo(&self, id: &str, de_id: &str, aceitar: bool) -> Result<(), &'static str> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                let mut e = estado.lock().unwrap();
+                let existia = e
+                    .contas
+                    .get(id)
+                    .map(|c| c.pedidos_amigo.iter().any(|p| p.de == de_id))
+                    .unwrap_or(false);
+                if !existia {
+                    return Err("Esse pedido não existe mais.");
+                }
+                if let Some(minha) = e.contas.get_mut(id) {
+                    minha.pedidos_amigo.retain(|p| p.de != de_id);
+                    if aceitar && !minha.amigos.iter().any(|a| a == de_id) {
+                        minha.amigos.push(de_id.to_string());
+                    }
+                }
+                if aceitar {
+                    if let Some(outra) = e.contas.get_mut(de_id) {
+                        if !outra.amigos.iter().any(|a| a == id) {
+                            outra.amigos.push(id.to_string());
+                        }
+                    }
+                }
+                e.salvar_contas();
+                Ok(())
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::responder_pedido_amigo(pool, id, de_id, aceitar).await,
+        }
+    }
+
+    /// Desfaz uma amizade dos dois lados. `true` quando havia o que desfazer.
+    pub async fn remover_amigo(&self, id: &str, amigo_id: &str) -> bool {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                let mut e = estado.lock().unwrap();
+                let tinha = e
+                    .contas
+                    .get(id)
+                    .map(|c| c.amigos.iter().any(|a| a == amigo_id))
+                    .unwrap_or(false);
+                if !tinha {
+                    return false;
+                }
+                if let Some(minha) = e.contas.get_mut(id) {
+                    minha.amigos.retain(|a| a != amigo_id);
+                }
+                if let Some(outra) = e.contas.get_mut(amigo_id) {
+                    outra.amigos.retain(|a| a != id);
+                }
+                e.salvar_contas();
+                true
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::remover_amigo(pool, id, amigo_id).await,
         }
     }
 
@@ -763,7 +897,7 @@ mod postgres {
     use sqlx::PgPool;
     use std::path::Path;
 
-    use super::{Atalho, Conta, PreferenciaSom, Recusa, SomPessoal};
+    use super::{Atalho, Conta, PedidoAmigo, PreferenciaSom, Recusa, SomPessoal};
     use crate::modelo::{agora_ms, novo_id};
 
     /// (id, email, senha, google, apelido, avatar, bio, criada_em,
@@ -782,7 +916,7 @@ mod postgres {
         Option<String>,
     );
 
-    fn montar(linha: LinhaConta, atalhos: Vec<Atalho>) -> Conta {
+    fn montar(linha: LinhaConta, atalhos: Vec<Atalho>, amigos: Vec<String>, pedidos_amigo: Vec<PedidoAmigo>) -> Conta {
         let (id, email, senha, google, apelido, avatar, bio, criada_em, som_origem, som_grupo, som_id) = linha;
         let som_entrada = som_origem.zip(som_id).map(|(origem, id)| PreferenciaSom {
             origem,
@@ -799,8 +933,140 @@ mod postgres {
             bio,
             atalhos,
             som_entrada,
+            amigos,
+            pedidos_amigo,
             criada_em: criada_em as u64,
         }
+    }
+
+    async fn amigos_de(pool: &PgPool, conta_id: &str) -> Vec<String> {
+        sqlx::query_as::<_, (String,)>("SELECT amigo_id FROM amigos WHERE conta_id = $1 ORDER BY amigo_id")
+            .bind(conta_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id,)| id)
+            .collect()
+    }
+
+    async fn pedidos_amigo_de(pool: &PgPool, conta_id: &str) -> Vec<PedidoAmigo> {
+        sqlx::query_as::<_, (String, String, String, i64)>(
+            "SELECT de_id, apelido, avatar, em FROM pedidos_amigo WHERE conta_id = $1 ORDER BY em",
+        )
+        .bind(conta_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(de, apelido, avatar, em)| PedidoAmigo {
+            de,
+            apelido,
+            avatar,
+            em: em as u64,
+        })
+        .collect()
+    }
+
+    /// Manda um pedido de amizade, ou fecha direto se `para_id` ja tinha
+    /// mandado um antes — mesma logica do backend de arquivo, so que aqui a
+    /// checagem do reciproco e uma consulta em vez de um campo em memoria.
+    pub async fn pedir_amizade(pool: &PgPool, de: &Conta, para_id: &str) -> Result<bool, &'static str> {
+        let reciproco: Option<(String,)> =
+            sqlx::query_as("SELECT de_id FROM pedidos_amigo WHERE conta_id = $1 AND de_id = $2")
+                .bind(&de.id)
+                .bind(para_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap_or(None);
+        if reciproco.is_some() {
+            responder_pedido_amigo(pool, &de.id, para_id, true).await?;
+            return Ok(true);
+        }
+
+        let existe: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM contas WHERE id = $1)")
+            .bind(para_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or((false,));
+        if !existe.0 {
+            return Err("Não existe conta com esse código.");
+        }
+
+        let ja_pedido: (bool,) =
+            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM pedidos_amigo WHERE conta_id = $1 AND de_id = $2)")
+                .bind(para_id)
+                .bind(&de.id)
+                .fetch_one(pool)
+                .await
+                .unwrap_or((false,));
+        if ja_pedido.0 {
+            return Ok(false);
+        }
+
+        let contagem: (i64,) = sqlx::query_as("SELECT count(*) FROM pedidos_amigo WHERE conta_id = $1")
+            .bind(para_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or((0,));
+        if contagem.0 as usize >= super::PEDIDOS_AMIGO_MAX {
+            return Err("Essa pessoa tem pedidos demais pendentes.");
+        }
+
+        let _ = sqlx::query(
+            "INSERT INTO pedidos_amigo (conta_id, de_id, apelido, avatar, em) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (conta_id, de_id) DO NOTHING",
+        )
+        .bind(para_id)
+        .bind(&de.id)
+        .bind(&de.apelido)
+        .bind(&de.avatar)
+        .bind(agora_ms() as i64)
+        .execute(pool)
+        .await;
+
+        Ok(false)
+    }
+
+    pub async fn responder_pedido_amigo(
+        pool: &PgPool,
+        id: &str,
+        de_id: &str,
+        aceitar: bool,
+    ) -> Result<(), &'static str> {
+        let apagado = sqlx::query("DELETE FROM pedidos_amigo WHERE conta_id = $1 AND de_id = $2")
+            .bind(id)
+            .bind(de_id)
+            .execute(pool)
+            .await;
+        let Ok(apagado) = apagado else {
+            return Err("Não foi possível responder agora.");
+        };
+        if apagado.rows_affected() == 0 {
+            return Err("Esse pedido não existe mais.");
+        }
+        if aceitar {
+            let _ = sqlx::query(
+                "INSERT INTO amigos (conta_id, amigo_id) VALUES ($1, $2), ($2, $1)
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(id)
+            .bind(de_id)
+            .execute(pool)
+            .await;
+        }
+        Ok(())
+    }
+
+    pub async fn remover_amigo(pool: &PgPool, id: &str, amigo_id: &str) -> bool {
+        let resultado = sqlx::query(
+            "DELETE FROM amigos WHERE (conta_id = $1 AND amigo_id = $2) OR (conta_id = $2 AND amigo_id = $1)",
+        )
+        .bind(id)
+        .bind(amigo_id)
+        .execute(pool)
+        .await;
+        matches!(resultado, Ok(r) if r.rows_affected() > 0)
     }
 
     const COLUNAS: &str = "id, email, senha, google, apelido, avatar, bio, criada_em, \
@@ -938,7 +1204,9 @@ mod postgres {
             .await
             .ok()??;
         let atalhos = atalhos_de(pool, id).await;
-        Some(montar(linha, atalhos))
+        let amigos = amigos_de(pool, id).await;
+        let pedidos_amigo = pedidos_amigo_de(pool, id).await;
+        Some(montar(linha, atalhos, amigos, pedidos_amigo))
     }
 
     pub async fn hash_de(pool: &PgPool, email: &str) -> Option<(String, String)> {
@@ -1248,7 +1516,9 @@ mod postgres {
         .ok()??;
 
         let atalhos = atalhos_de(pool, &linha.0).await;
-        Some(montar(linha, atalhos))
+        let amigos = amigos_de(pool, &linha.0).await;
+        let pedidos_amigo = pedidos_amigo_de(pool, &linha.0).await;
+        Some(montar(linha, atalhos, amigos, pedidos_amigo))
     }
 }
 

@@ -90,8 +90,18 @@ const estado = {
 
   canalTexto: null,
   canalVoz: null,
-  mensagens: new Map(), // idCanal -> [mensagem]
+  mensagens: new Map(), // idCanal -> [mensagem]; conversa privada usa o id da conta amiga como chave
   naoLidos: new Map(), // idCanal -> quantidade
+
+  /** [{ id, apelido, avatar }] — só quem tem conta tem isto preenchido. */
+  amigos: [],
+  /** Pedidos de amizade recebidos e ainda não respondidos — [{ de, apelido, avatar, em }]. */
+  pedidosAmigo: [],
+  /** Id da conta amiga com quem a conversa privada está aberta, ou `null`. */
+  conversaPrivada: null,
+  /** A coluna de canais está mostrando a lista de amigos em vez da árvore
+   *  do grupo — não fecha o grupo, só troca o que aparece ao lado dele. */
+  vistaAmigos: false,
 
   fluxoMicrofone: null,
   fluxoTela: null,
@@ -164,6 +174,16 @@ let inicioDaCall = 0;
 let relogioDaCall = null;
 
 const sinal = new Sinal();
+
+/**
+ * O socket social: amigos e mensagem privada, vivo por toda a sessão de
+ * quem tem conta — não pelo tempo de um grupo. `sinal` nasce e morre a cada
+ * troca de grupo (ver a nota em `conectar`); amizade não é assunto de
+ * grupo nenhum, então não pode depender do socket que só existe enquanto
+ * se está dentro de um. Ver `conectarSocial`/`desligarSocial`.
+ */
+const social = new Sinal();
+
 const malha = new Malha({
   enviarSinal: (para, dados) => sinal.enviar({ tipo: "sinal", para, dados }),
   aoTrilha: receberTrilha,
@@ -867,6 +887,11 @@ function assumirConta(sessao, { abrir = true } = {}) {
   conta.guardarSessao(sessao.token, estado.servidor);
   salvarPreferencias();
 
+  // Amigos e PV não esperam grupo nenhum: a conta por si só já é o bastante
+  // pra ligar o socket social, esteja a pessoa entrando num grupo agora,
+  // ainda no onboarding, ou só reabrindo o CALL com a sessão de antes.
+  conectarSocial();
+
   if (abrir) abrirAplicacao();
 }
 
@@ -968,6 +993,11 @@ function prepararAplicacao() {
   mostrarMeuPerfil();
 
   $("botao-perfil").addEventListener("click", abrirMeuPerfil);
+  $("botao-amigos").addEventListener("click", abrirVistaAmigos);
+  $("botao-adicionar-amigo").addEventListener("click", adicionarAmigoPorCodigo);
+  $("perfil-codigo-amigo-copiar").addEventListener("click", async () => {
+    if (estado.conta && (await copiar(estado.conta.id))) avisar("Código copiado.", "bom");
+  });
 
   // Clicar num grupo abre; clicar fora de todos, no vazio da coluna, é onde
   // "criar" e "entrar com convite" moram agora — a coluna nunca tem um botão
@@ -1060,6 +1090,8 @@ function prepararAplicacao() {
     const som = estado.sons.find((s) => s.id === e.detail.id);
     if (quem && som) avisar(`🔊 ${quem.apelido} tocou "${som.nome}"`);
   });
+  // Amigos e PV são tratados pelo socket social (`social`, mais abaixo), não
+  // por este — este é só o de grupo, que nasce e morre a cada troca.
   sinal.addEventListener("erro", (e) => avisar(e.detail.motivo, "erro"));
   sinal.addEventListener("queda", () => {
     if (!estado.grupo) return;
@@ -1180,6 +1212,9 @@ function mostrarContaNoPerfil() {
   acao.textContent = ligada ? "Sair da conta" : "Criar conta";
 
   acao.onclick = () => (ligada ? sairDaConta() : voltarAoPortal());
+
+  $("perfil-codigo-amigo").classList.toggle("oculto", !ligada);
+  if (ligada) $("perfil-codigo-amigo-valor").textContent = estado.conta.id;
 }
 
 /**
@@ -1193,6 +1228,7 @@ function mostrarContaNoPerfil() {
  * jeito — `identidade`, em `main.rs` —, e o cliente não deve nem tentá-la.
  */
 function largarIdentidadeDaConta() {
+  desligarSocial();
   estado.token = "";
   estado.conta = null;
   conta.esquecerSessao();
@@ -1272,6 +1308,19 @@ function abrirCartaoDe(membro) {
   if (membro.usuario === estado.grupo?.dono) etiquetas.push("dono");
   if (membro.canalVoz) etiquetas.push("na voz");
 
+  const acoes = [{ rotulo: "Ajustar volume…", fazer: () => ajustarVolumeDe(membro) }];
+  // Amizade e PV exigem conta dos dois lados: sem ela `membro.usuario` é só
+  // um número sorteado que não sobrevive nem à própria sessão de quem o tem,
+  // e a ação some em vez de aparecer desabilitada.
+  if (estado.conta) {
+    if (souAmigoDe(membro.usuario)) {
+      acoes.push({ rotulo: "Mandar mensagem", fazer: () => abrirConversaPrivada(membro.usuario) });
+      acoes.push({ rotulo: "Desfazer amizade", fazer: () => removerAmizade(membro.usuario) });
+    } else if (membro.usuario !== estado.usuario) {
+      acoes.push({ rotulo: "Adicionar amigo", fazer: () => pedirAmizade(membro.usuario) });
+    }
+  }
+
   mostrarCartao({
     apelido: membro.apelido,
     avatar: membro.avatar,
@@ -1279,7 +1328,7 @@ function abrirCartaoDe(membro) {
     atividade: membro.atividade,
     atividadeIcone: membro.atividadeIcone,
     etiquetas,
-    acoes: [{ rotulo: "Ajustar volume…", fazer: () => ajustarVolumeDe(membro) }],
+    acoes,
   });
 }
 
@@ -1299,20 +1348,34 @@ function desenharAtalhos() {
   const lista = $("lista-grupos");
   lista.textContent = "";
 
+  // O botão de Amigos fica fixo acima da lista rolável, não dentro dela —
+  // ele não é um grupo, é uma vista alternativa da mesma coluna.
+  const botaoAmigos = $("botao-amigos");
+  botaoAmigos.classList.toggle("grupo--ativo", estado.vistaAmigos);
+  botaoAmigos.classList.toggle("grupo--amigos-pendente", estado.pedidosAmigo.length > 0);
+
   for (const atalho of estado.atalhos) {
     const item = document.createElement("button");
     item.className = "grupo";
     item.type = "button";
     item.title = atalho.nome;
     item.setAttribute("aria-label", atalho.nome);
-    if (atalho.codigo === estado.grupo?.codigo) item.classList.add("grupo--ativo");
+    if (!estado.vistaAmigos && atalho.codigo === estado.grupo?.codigo) item.classList.add("grupo--ativo");
 
     const marca = document.createElement("span");
     marca.className = "grupo__marca";
     marca.textContent = iniciais(atalho.nome);
 
     item.append(marca);
-    item.addEventListener("click", () => abrirGrupo(atalho.codigo));
+    item.addEventListener("click", () => {
+      // Clicar no grupo já ativo não reconecta — mas, se a vista de amigos
+      // estiver aberta por cima dele, é o único jeito de voltar aos canais.
+      if (atalho.codigo === estado.grupo?.codigo) {
+        if (estado.vistaAmigos) fecharVistaAmigos();
+        return;
+      }
+      abrirGrupo(atalho.codigo);
+    });
     item.addEventListener("contextmenu", (evento) => {
       evento.preventDefault();
       menuDoAtalho(item, atalho);
@@ -1430,6 +1493,13 @@ function assumirGrupo({ eu, grupo, presentes, conta: daConta, sons }) {
   sincronizarConta({ atalhos: estado.atalhos });
   ajustarVigia();
   atualizarConexao(true);
+
+  // Trocar de grupo é sair de qualquer vista de Amigos que estivesse aberta
+  // por cima dele — amizade continua valendo (o socket social nem percebeu a
+  // troca), só a tela volta a mostrar os canais do grupo que se acabou de
+  // entrar, que é o que se pediu ao clicar nele.
+  estado.vistaAmigos = false;
+
   desenharAtalhos();
   desenharCabecalhoDoGrupo();
   redesenhar();
@@ -1454,7 +1524,13 @@ function desligar() {
   estado.membros.clear();
   presentesForcado = null;
   estado.canalTexto = null;
-  estado.mensagens.clear();
+  // Só o histórico de canal sai daqui — o de PV é da conta, mora no socket
+  // social, que nem percebe esta queda, e não deve desaparecer da tela só
+  // porque o grupo caiu. Ids de conta começam sempre com "conta-"; ids de
+  // canal nunca começam — é o que distingue as duas chaves neste mesmo mapa.
+  for (const chave of estado.mensagens.keys()) {
+    if (!chave.startsWith("conta-")) estado.mensagens.delete(chave);
+  }
   estado.naoLidos.clear();
   estado.sons = [];
   fecharSoundboard();
@@ -1652,10 +1728,21 @@ async function confirmarRemocao(alvo, id, nome) {
  * `linhas` elementos que já saíram da tela — e a marca iria para o vazio.
  */
 function redesenhar() {
+  atualizarVistaEsquerda();
   linhas.clear();
   desenharArvore();
   desenharParticipantes();
   desenharPassaram();
+}
+
+/** A coluna 2 mostra a árvore de canais do grupo ou a lista de amigos —
+ *  nunca as duas. É só visibilidade: nenhum dos dois lados perde o que
+ *  tinha desenhado ao ficar escondido. */
+function atualizarVistaEsquerda() {
+  const emAmigos = estado.vistaAmigos;
+  $("canais-topo").classList.toggle("oculto", emAmigos);
+  $("arvore-canais").classList.toggle("oculto", emAmigos);
+  $("amigos-secao").classList.toggle("oculto", !emAmigos);
 }
 
 function desenharArvore() {
@@ -2111,12 +2198,27 @@ function prepararRedator() {
     if (evento.key === "Enter" && !evento.shiftKey) {
       evento.preventDefault();
       enviarMensagem();
+      return;
+    }
+    if (evento.key === "Enter" && evento.shiftKey) {
+      // `insertLineBreak` (e não deixar o navegador decidir) é o que garante
+      // um `<br>` em vez de um `<div>` novo — Chrome e Firefox discordam do
+      // padrão, e só um dos dois lê certo em `textoDoCampo`.
+      evento.preventDefault();
+      document.execCommand("insertLineBreak");
+      limitarCampoDeMensagem(campo);
     }
   });
 
-  campo.addEventListener("input", () => {
-    campo.style.height = "auto";
-    campo.style.height = `${Math.min(campo.scrollHeight, 160)}px`;
+  campo.addEventListener("input", () => limitarCampoDeMensagem(campo));
+
+  // Colar sempre como texto puro — um campo editável aceita HTML colado por
+  // padrão, e isso abriria espaço para marcação estranha vinda de fora.
+  campo.addEventListener("paste", (evento) => {
+    evento.preventDefault();
+    const texto = evento.clipboardData?.getData("text/plain") ?? "";
+    document.execCommand("insertText", false, texto);
+    limitarCampoDeMensagem(campo);
   });
 
   $("redator-emoji").addEventListener("click", (evento) => {
@@ -2125,35 +2227,108 @@ function prepararRedator() {
   });
 }
 
-/** Insere `:id:` no ponto onde o cursor estava, e devolve o foco ao campo —
- *  escolher um emoji não deve tirar a pessoa do fluxo de escrever. */
+/** Lê o campo de mensagem como texto puro, trocando cada emoji desenhado
+ *  pelo `:id:` que ele representa — é o mesmo formato que trafega pela
+ *  rede e que `preencherTextoComEmoji` sabe desenhar de volta. */
+function textoDoCampo(campo) {
+  let texto = "";
+  for (const no of campo.childNodes) {
+    if (no.nodeType === Node.TEXT_NODE) texto += no.textContent;
+    else if (no.dataset?.emojiId) texto += `:${no.dataset.emojiId}:`;
+    else if (no.nodeName === "BR") texto += "\n";
+    else texto += no.textContent;
+  }
+  return texto;
+}
+
+/** O campo tem um teto de 2000 caracteres — o mesmo que o servidor aplica
+ *  em `TEXTO_MAX`. Sem `maxlength` (que só existe em `<textarea>`), o corte
+ *  precisa ser feito à mão sempre que o texto crescer além dele. */
+function limitarCampoDeMensagem(campo) {
+  const texto = textoDoCampo(campo);
+  if (texto.length <= 2000) return;
+  renderizarCampoComEmoji(campo, texto.slice(0, 2000));
+  posicionarCursorNoFim(campo);
+}
+
+/** Um emoji dentro do campo é um bloco atômico: editável no sentido de que
+ *  o backspace o apaga inteiro, mas não em texto — por isso `contentEditable
+ *  = false` dentro de um campo que, no resto, é editável. */
+function elementoDeEmojiNoCampo(id) {
+  const elemento = elementoDeEmoji(id, "emoji emoji--linha");
+  elemento.contentEditable = "false";
+  elemento.dataset.emojiId = id;
+  return elemento;
+}
+
+/** Reconstrói o conteúdo do campo a partir de um texto com tokens `:id:` —
+ *  o inverso de `textoDoCampo`. Usado para truncar e para começar do zero. */
+function renderizarCampoComEmoji(campo, texto) {
+  campo.textContent = "";
+  TOKEN_EMOJI.lastIndex = 0;
+  let ultimo = 0;
+  let m;
+  while ((m = TOKEN_EMOJI.exec(texto))) {
+    if (m.index > ultimo) campo.append(texto.slice(ultimo, m.index));
+    campo.append(elementoDeEmojiNoCampo(m[1]));
+    ultimo = TOKEN_EMOJI.lastIndex;
+  }
+  if (ultimo < texto.length) campo.append(texto.slice(ultimo));
+}
+
+function posicionarCursorNoFim(campo) {
+  const selecao = window.getSelection();
+  const alcance = document.createRange();
+  alcance.selectNodeContents(campo);
+  alcance.collapse(false);
+  selecao?.removeAllRanges();
+  selecao?.addRange(alcance);
+}
+
+/** Insere o desenho do emoji no ponto onde o cursor estava, e devolve o foco
+ *  ao campo — escolher um emoji não deve tirar a pessoa do fluxo de escrever. */
 function inserirEmojiNoCampo(id) {
   const campo = $("campo-mensagem");
-  const inicio = campo.selectionStart ?? campo.value.length;
-  const fim = campo.selectionEnd ?? campo.value.length;
-  const token = `:${id}:`;
-
-  campo.value = campo.value.slice(0, inicio) + token + campo.value.slice(fim);
   campo.focus();
-  const cursor = inicio + token.length;
-  campo.setSelectionRange(cursor, cursor);
-  // O redimensionamento automático do campo mora no ouvinte de "input"; sem
-  // disparar um, o campo não cresceria para caber o texto que acabou de entrar.
-  campo.dispatchEvent(new Event("input"));
+
+  const selecao = window.getSelection();
+  let alcance;
+  if (selecao && selecao.rangeCount > 0 && campo.contains(selecao.anchorNode)) {
+    alcance = selecao.getRangeAt(0);
+  } else {
+    alcance = document.createRange();
+    alcance.selectNodeContents(campo);
+    alcance.collapse(false);
+  }
+
+  alcance.deleteContents();
+  const elemento = elementoDeEmojiNoCampo(id);
+  alcance.insertNode(elemento);
+  alcance.setStartAfter(elemento);
+  alcance.collapse(true);
+  selecao?.removeAllRanges();
+  selecao?.addRange(alcance);
+
+  limitarCampoDeMensagem(campo);
 }
 
 function enviarMensagem() {
   const campo = $("campo-mensagem");
-  const texto = campo.value.trim();
-  if (!texto || !estado.canalTexto) return;
+  const texto = textoDoCampo(campo).trim();
+  if (!texto) return;
 
-  sinal.enviar({ tipo: "mensagem", canal: estado.canalTexto, texto });
-  campo.value = "";
-  campo.style.height = "auto";
+  if (estado.conversaPrivada) {
+    social.enviar({ tipo: "mensagem-privada", token: estado.token, para: estado.conversaPrivada, texto });
+  } else {
+    if (!estado.canalTexto) return;
+    sinal.enviar({ tipo: "mensagem", canal: estado.canalTexto, texto });
+  }
+  campo.textContent = "";
 }
 
 function abrirCanalTexto(id) {
   estado.canalTexto = id;
+  estado.conversaPrivada = null;
   estado.naoLidos.delete(id);
 
   // O histórico é pedido uma vez por canal; daí em diante as mensagens novas
@@ -2184,28 +2359,46 @@ function aoMensagem(mensagem) {
   }
 }
 
+/** O canal de texto aberto, ou o amigo com quem a PV está aberta — a mesma
+ *  coisa para `desenharConversa`, que não precisa saber qual dos dois é. */
+function alvoDaConversa() {
+  if (estado.conversaPrivada) {
+    const amigo = estado.amigos.find((a) => a.id === estado.conversaPrivada);
+    return amigo && { id: amigo.id, nome: amigo.apelido, privado: true };
+  }
+  if (estado.canalTexto) {
+    const canal = acharCanal(estado.canalTexto);
+    return canal && { id: canal.id, nome: canal.nome, privado: false };
+  }
+  return null;
+}
+
 function desenharConversa() {
   const conversa = $("conversa");
   const linhaDoTempo = $("linha-do-tempo");
-  const canal = estado.canalTexto ? acharCanal(estado.canalTexto) : null;
+  const alvo = alvoDaConversa();
 
-  $("titulo-canal").textContent = canal ? canal.nome : "Nenhum canal";
-  $("redator").classList.toggle("oculto", !canal);
+  $("titulo-canal").textContent = alvo ? alvo.nome : "Nenhum canal";
+  $("redator").classList.toggle("oculto", !alvo);
 
-  if (!canal) {
+  if (!alvo) {
     linhaDoTempo.textContent = "";
     $("conversa-vazio").classList.remove("oculto");
     vazio(
       "Nada por aqui ainda",
-      "Escolha um canal de texto para conversar, ou um de voz para falar."
+      estado.vistaAmigos
+        ? "Escolha um amigo para conversar."
+        : "Escolha um canal de texto para conversar, ou um de voz para falar."
     );
-    $("subtitulo-canal").textContent = estado.grupo
-      ? "Escolha um canal"
-      : "Selecione ou crie um grupo para começar";
+    $("subtitulo-canal").textContent = estado.vistaAmigos
+      ? "Selecione um amigo"
+      : estado.grupo
+        ? "Escolha um canal"
+        : "Selecione ou crie um grupo para começar";
     return;
   }
 
-  const mensagens = estado.mensagens.get(canal.id);
+  const mensagens = estado.mensagens.get(alvo.id);
   $("subtitulo-canal").textContent =
     mensagens === undefined
       ? "Carregando…"
@@ -2215,7 +2408,7 @@ function desenharConversa() {
 
   $("conversa-vazio").classList.toggle("oculto", (mensagens?.length ?? 0) > 0);
   vazio(
-    `Ninguém escreveu em ${canal.nome} ainda`,
+    alvo.privado ? `Nada por aqui ainda com ${alvo.nome}` : `Ninguém escreveu em ${alvo.nome} ainda`,
     "A primeira mensagem pode ser a sua."
   );
 
@@ -2410,10 +2603,306 @@ function aoReacao({ canal, mensagem: mensagemId, reacoes }) {
   if (linha) desenharReacoes(linha, mensagemId, reacoes);
 }
 
+/* ═══ Amigos ════════════════════════════════════════════════════ */
+//
+// Amizade e PV moram na conta, não no grupo — funcionam com quem já se
+// conhece de um grupo em comum ou por um código digitado a mão, sobrevivem à
+// troca de grupo e não exigem estar em nenhum. Por isso viajam por um socket
+// próprio (`social`), independente do que entra e sai de grupos — ver
+// `conectarSocial` logo abaixo.
+
+/**
+ * Backoff exponencial simples, com teto de 30s — rápido pra reconectar de um
+ * soluço de rede, sem virar um martelo em cima de um servidor fora do ar.
+ */
+const ESPERA_RECONEXAO_SOCIAL = [1000, 2000, 5000, 10000, 20000, 30000];
+let tentativasSocial = 0;
+let reconexaoSocialPendente = null;
+
+function socialDeveEstarLigada() {
+  return Boolean(estado.conta && estado.token);
+}
+
+/** Abre (ou reabre) o socket social. Chamado sempre que a conta assume uma
+ *  identidade — login, cadastro, sessão retomada — e de novo sozinho a cada
+ *  queda, enquanto ainda houver conta. */
+function conectarSocial() {
+  clearTimeout(reconexaoSocialPendente);
+  if (!socialDeveEstarLigada()) return;
+  if (!social.conectarLivre(estado.servidor)) {
+    agendarReconexaoSocial();
+  }
+}
+
+function agendarReconexaoSocial() {
+  if (!socialDeveEstarLigada()) return;
+  clearTimeout(reconexaoSocialPendente);
+  const espera = ESPERA_RECONEXAO_SOCIAL[Math.min(tentativasSocial, ESPERA_RECONEXAO_SOCIAL.length - 1)];
+  tentativasSocial++;
+  reconexaoSocialPendente = setTimeout(conectarSocial, espera);
+}
+
+/** Sair da conta é o único jeito de não precisar mais dela — trocar de grupo
+ *  ou cair da voz não tem nada a ver com isto. */
+function desligarSocial() {
+  clearTimeout(reconexaoSocialPendente);
+  tentativasSocial = 0;
+  social.desconectar();
+  estado.amigos = [];
+  estado.pedidosAmigo = [];
+  estado.conversaPrivada = null;
+  if (estado.vistaAmigos) fecharVistaAmigos();
+}
+
+social.addEventListener("aberto", () => {
+  tentativasSocial = 0;
+  // O "alô" que registra a presença no servidor e já traz a lista — ver
+  // `listar_amigos` em main.rs.
+  social.enviar({ tipo: "amigos", token: estado.token });
+});
+social.addEventListener("queda", () => agendarReconexaoSocial());
+social.addEventListener("amigo-pedido", (e) => aoPedidoDeAmizade(e.detail));
+social.addEventListener("amigo-atualizado", () => pedirListaDeAmigos());
+social.addEventListener("amigos", (e) => aoListaDeAmigos(e.detail));
+social.addEventListener("mensagem-privada", (e) => aoMensagemPrivada(e.detail));
+social.addEventListener("historico-privado", (e) => aoHistoricoPrivado(e.detail));
+
+function souAmigoDe(contaId) {
+  return estado.amigos.some((a) => a.id === contaId);
+}
+
+function pedirListaDeAmigos() {
+  if (!estado.conta) return;
+  social.enviar({ tipo: "amigos", token: estado.token });
+}
+
+function pedirAmizade(paraId) {
+  if (!estado.conta || !paraId) return;
+  social.enviar({ tipo: "amigo-pedido", token: estado.token, para: paraId });
+}
+
+function responderAmizade(deId, aceitar) {
+  social.enviar({ tipo: "amigo-responder", token: estado.token, de: deId, aceitar });
+}
+
+function removerAmizade(amigoId) {
+  social.enviar({ tipo: "amigo-remover", token: estado.token, id: amigoId });
+  if (estado.conversaPrivada === amigoId) {
+    estado.conversaPrivada = null;
+    desenharConversa();
+  }
+}
+
+async function adicionarAmigoPorCodigo() {
+  const valores = await perguntar({
+    titulo: "Adicionar amigo",
+    texto: 'A pessoa encontra o próprio código em "Meu perfil", perto da conta.',
+    campos: [{ rotulo: "Código de amigo", dica: "conta-xxxxxxxxxxxx", maximo: 40 }],
+    confirmar: "Adicionar",
+  });
+  if (!valores) return;
+  pedirAmizade(valores[0].trim());
+}
+
+/** Troca a coluna de canais pela lista de amigos — não fecha o grupo, só o
+ *  que aparece ao lado dele. Só pede uma conta; não pede grupo nenhum. */
+function abrirVistaAmigos() {
+  if (!estado.conta) {
+    avisar("Crie uma conta para adicionar amigos.", "erro");
+    return;
+  }
+  estado.vistaAmigos = true;
+  estado.canalTexto = null;
+  desenharAtalhos();
+  redesenhar();
+  redesenharAmigos();
+  desenharConversa();
+}
+
+function fecharVistaAmigos() {
+  estado.vistaAmigos = false;
+  desenharAtalhos();
+  redesenhar();
+  desenharConversa();
+}
+
+function abrirConversaPrivada(amigoId) {
+  if (!estado.conta || !amigoId) return;
+  estado.canalTexto = null;
+  estado.conversaPrivada = amigoId;
+
+  if (!estado.mensagens.has(amigoId)) {
+    social.enviar({ tipo: "historico-privado", token: estado.token, com: amigoId });
+  }
+
+  if (!estado.vistaAmigos) abrirVistaAmigos();
+  else {
+    redesenharAmigos();
+    desenharConversa();
+  }
+  $("campo-mensagem").focus();
+}
+
+function redesenharAmigos() {
+  const semConta = $("amigos-sem-conta");
+  const painel = $("vista-amigos");
+  if (!estado.conta) {
+    semConta.classList.remove("oculto");
+    painel.classList.add("oculto");
+    return;
+  }
+  semConta.classList.add("oculto");
+  painel.classList.remove("oculto");
+
+  const pedidos = $("pedidos-amigo");
+  pedidos.textContent = "";
+  for (const pedido of estado.pedidosAmigo) pedidos.append(linhaDePedidoDeAmizade(pedido));
+  pedidos.hidden = estado.pedidosAmigo.length === 0;
+
+  const lista = $("lista-amigos");
+  lista.textContent = "";
+  for (const amigo of estado.amigos) lista.append(linhaDeAmigo(amigo));
+
+  $("amigos-vazio").classList.toggle("oculto", estado.amigos.length > 0 || estado.pedidosAmigo.length > 0);
+}
+
+function linhaDePedidoDeAmizade(pedido) {
+  const linha = document.createElement("div");
+  linha.className = "amigo-pedido";
+
+  const avatar = document.createElement("span");
+  avatar.className = "avatar";
+  pintarAvatar(avatar, pedido);
+
+  const nome = document.createElement("span");
+  nome.className = "amigo-pedido__nome";
+  nome.textContent = pedido.apelido;
+  nome.title = pedido.apelido;
+
+  const aceitar = document.createElement("button");
+  aceitar.type = "button";
+  aceitar.className = "botao botao--sutil";
+  aceitar.textContent = "Aceitar";
+  aceitar.addEventListener("click", () => responderAmizade(pedido.de, true));
+
+  const recusar = botaoDeIcone("Recusar", '<path d="M6 6l8 8M14 6l-8 8"/>');
+  recusar.addEventListener("click", () => responderAmizade(pedido.de, false));
+
+  linha.append(avatar, nome, aceitar, recusar);
+  return linha;
+}
+
+function linhaDeAmigo(amigo) {
+  const linha = document.createElement("button");
+  linha.type = "button";
+  linha.className = "amigo-linha";
+  linha.classList.toggle("amigo-linha--ativa", amigo.id === estado.conversaPrivada);
+
+  const avatar = document.createElement("span");
+  avatar.className = "avatar";
+  pintarAvatar(avatar, amigo);
+
+  const nome = document.createElement("span");
+  nome.className = "amigo-linha__nome";
+  nome.textContent = amigo.apelido;
+
+  linha.append(avatar, nome);
+  linha.addEventListener("click", () => abrirConversaPrivada(amigo.id));
+  return linha;
+}
+
+function aoListaDeAmigos({ amigos, pedidos }) {
+  estado.amigos = amigos;
+  estado.pedidosAmigo = pedidos;
+  redesenharAmigos();
+  // O ponto de pedido pendente fica no botão fixo, fora do que
+  // `redesenharAmigos` cuida — só `desenharAtalhos` sabe atualizá-lo.
+  desenharAtalhos();
+}
+
+function aoPedidoDeAmizade({ de }) {
+  avisar(`${de.apelido} quer ser seu amigo.`);
+  pedirListaDeAmigos();
+}
+
+function aoMensagemPrivada({ mensagem, para }) {
+  // `autor` é sempre quem escreveu; a outra ponta da conversa é `para`
+  // quando o eco é da própria mensagem, e o próprio `autor` quando é o
+  // amigo quem escreveu.
+  const outraParte = mensagem.autor === estado.usuario ? para : mensagem.autor;
+  estado.mensagens.get(outraParte)?.push(mensagem);
+
+  if (outraParte === estado.conversaPrivada) {
+    desenharConversa();
+  } else if (mensagem.autor !== estado.usuario) {
+    avisar(`${mensagem.apelido} mandou uma mensagem.`);
+  }
+}
+
+function aoHistoricoPrivado({ com, mensagens }) {
+  estado.mensagens.set(com, mensagens);
+  if (com === estado.conversaPrivada) desenharConversa();
+}
+
 /* ═══ Voz ═══════════════════════════════════════════════════════ */
+
+// Contra quem fica entrando e saindo da voz só para incomodar o grupo: mais
+// de `LIMITE_TENTATIVAS_VOZ` entradas em `JANELA_TENTATIVAS_VOZ` e a próxima
+// tentativa é recusada — não pelo servidor, aqui mesmo, antes de abrir o
+// microfone ou mandar qualquer coisa pela rede — por `BLOQUEIO_TENTATIVAS_VOZ`.
+// Relógio de parede, e não o do `AudioContext`: essa contagem tem que
+// sobreviver ao motor de áudio fechando e reabrindo a cada ciclo.
+const JANELA_TENTATIVAS_VOZ = 10_000;
+const LIMITE_TENTATIVAS_VOZ = 5;
+const BLOQUEIO_TENTATIVAS_VOZ = 10_000;
+
+let tentativasVoz = 0;
+let inicioJanelaVoz = -Infinity;
+let bloqueadaVozAte = 0;
+let intervaloBloqueioVoz = null;
+
+/** O aviso comum (`avisar`) mora no canto e é para quem quer ler — este é
+ *  para quem não teve escolha. Fica parado no centro, no topo, contando os
+ *  segundos que faltam, e some sozinho quando o bloqueio acaba. */
+function mostrarBloqueioDeVoz(ate) {
+  const caixa = $("aviso-central");
+  clearInterval(intervaloBloqueioVoz);
+
+  const atualizar = () => {
+    const restante = Math.ceil((ate - Date.now()) / 1000);
+    if (restante <= 0) {
+      caixa.classList.remove("aviso-central--visivel");
+      clearInterval(intervaloBloqueioVoz);
+      return;
+    }
+    caixa.textContent = `O sino já tocou o bastante por agora. Mais ${restante}s de silêncio.`;
+  };
+
+  atualizar();
+  caixa.classList.add("aviso-central--visivel");
+  intervaloBloqueioVoz = setInterval(atualizar, 250);
+}
 
 async function entrarNaVoz(canal) {
   if (estado.canalVoz === canal || estado.ocupado) return;
+
+  const agora = Date.now();
+  if (agora < bloqueadaVozAte) {
+    mostrarBloqueioDeVoz(bloqueadaVozAte);
+    return;
+  }
+
+  if (agora - inicioJanelaVoz > JANELA_TENTATIVAS_VOZ) {
+    inicioJanelaVoz = agora;
+    tentativasVoz = 0;
+  }
+  tentativasVoz++;
+  if (tentativasVoz > LIMITE_TENTATIVAS_VOZ) {
+    bloqueadaVozAte = agora + BLOQUEIO_TENTATIVAS_VOZ;
+    mostrarBloqueioDeVoz(bloqueadaVozAte);
+    return;
+  }
+
   estado.ocupado = true;
 
   try {
@@ -4063,6 +4552,10 @@ function prepararAjustes() {
     desligar();
     estado.servidor = servidor;
     salvarPreferencias();
+    // A conta também é o de lá — amigos e PV de um servidor não existem no
+    // outro, então o socket social precisa apontar pro endereço novo, não
+    // continuar conversando com o antigo.
+    conectarSocial();
     avisar("Servidor trocado.");
     if (codigo) await conectar({ tipo: "entrar", codigo });
   });

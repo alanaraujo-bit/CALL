@@ -89,6 +89,16 @@ const CORTE_GRAVES = 85;
  *  enfileirados, porque um aviso atrasado já não avisa nada. */
 const ESPACO_ENTRE_AVISOS = 0.09;
 
+/** Contra quem fica entrando e saindo da voz só para martelar o sino nos
+ *  ouvidos de todo mundo. Mais de `LIMITE_AVISOS` avisos em `JANELA_AVISOS`
+ *  segundos e o som para — não a entrada nem a saída em si, só o aviso —
+ *  pelos `SILENCIO_APOS_ABUSO` seguintes. Contado em relógio de parede, e não
+ *  no do `AudioContext`: o contexto fecha e reabre a cada ciclo de voz, e um
+ *  relógio que zera a cada reabertura nunca perceberia repetição nenhuma. */
+const JANELA_AVISOS = 6000;
+const LIMITE_AVISOS = 4;
+const SILENCIO_APOS_ABUSO = 8000;
+
 export class MotorDeAudio {
   #contexto = null;
   #worklet = null; // AudioWorkletNode da porta de ruído
@@ -106,10 +116,14 @@ export class MotorDeAudio {
   // nos primeiros 90 ms de vida do contexto seria descartado como repetido.
   #ultimoAviso = -Infinity; // instante do último aviso, no relógio do contexto
   #avisoAte = 0; // instante em que o último aviso se cala
+  #avisosNaJanela = 0; // contagem da janela anti-abuso, em relógio de parede
+  #inicioJanelaMs = -Infinity;
+  #mudoAteMs = 0; // Date.now() até quando o aviso fica suprimido
   #saidas = new Map(); // id -> { fonte, ganho }
   #config = { ...AUDIO_PADRAO };
   #ouvinteDeNivel = null;
   #moduloCarregado = false;
+  #encerrando = null; // promessa do `encerrar()` em andamento, se houver
 
   get config() {
     return { ...this.#config };
@@ -138,8 +152,21 @@ export class MotorDeAudio {
   /** O contexto é compartilhado com a detecção de fala; criá-lo sob demanda
    *  evita abrir um dispositivo de áudio para quem só lê mensagens. */
   async contexto() {
+    // Entrar de novo enquanto a saída anterior ainda está fechando o contexto
+    // (a cauda do "sai" pode levar até 1s) não pode seguir em paralelo: sem
+    // esperar aqui, `encerrar` reaproveitaria e depois fecharia por baixo o
+    // contexto novo que esta chamada acabou de criar — daí o "às vezes some".
+    if (this.#encerrando) await this.#encerrando;
+
     if (!this.#contexto) {
       this.#contexto = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
+      // O relógio de um contexto novo começa do zero. `#ultimoAviso` e
+      // `#avisoAte` guardavam instantes do contexto anterior — sem zerar
+      // aqui, `agora - #ultimoAviso` dava negativo e todo aviso era
+      // descartado como "repetido" até o relógio novo alcançar o valor
+      // antigo por conta própria.
+      this.#ultimoAviso = -Infinity;
+      this.#avisoAte = 0;
       this.#geral = this.#contexto.createGain();
       this.#geral.gain.value = this.#config.volumeGeral;
       this.#geral.connect(this.#contexto.destination);
@@ -303,6 +330,19 @@ export class MotorDeAudio {
   tocarAviso(nome) {
     if (!this.#config.sons || !this.#contexto || !this.#avisos) return false;
 
+    const agoraMs = Date.now();
+    if (agoraMs < this.#mudoAteMs) return false;
+
+    if (agoraMs - this.#inicioJanelaMs > JANELA_AVISOS) {
+      this.#inicioJanelaMs = agoraMs;
+      this.#avisosNaJanela = 0;
+    }
+    this.#avisosNaJanela++;
+    if (this.#avisosNaJanela > LIMITE_AVISOS) {
+      this.#mudoAteMs = agoraMs + SILENCIO_APOS_ABUSO;
+      return false;
+    }
+
     const agora = this.#contexto.currentTime;
     if (agora - this.#ultimoAviso < ESPACO_ENTRE_AVISOS) return false;
     this.#ultimoAviso = agora;
@@ -426,7 +466,16 @@ export class MotorDeAudio {
     this.#fluxoBruto = null;
   }
 
-  async encerrar() {
+  encerrar() {
+    const tarefa = this.#encerrarAgora();
+    this.#encerrando = tarefa;
+    tarefa.finally(() => {
+      if (this.#encerrando === tarefa) this.#encerrando = null;
+    });
+    return tarefa;
+  }
+
+  async #encerrarAgora() {
     this.soltarMicrofone();
     for (const id of [...this.#saidas.keys()]) this.desligarSaida(id);
     this.medir(null);

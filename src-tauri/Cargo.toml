@@ -1,6 +1,6 @@
 [package]
 name = "call"
-version = "0.9.1"
+version = "0.9.2"
 description = "Comunicacao em grupo com voz e transmissao de tela"
 authors = ["CALL"]
 edition = "2021"
@@ -53,4 +53,3 @@ webview2-com = "0.38"
 # `webview2-com` ja traz — duas versoes do mesmo `windows` seriam duas copias
 # das mesmas ligacoes dentro do executavel.
 windows = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-

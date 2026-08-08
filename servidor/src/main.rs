@@ -173,6 +173,15 @@ impl Conexao {
 struct Estado {
     conexoes: HashMap<u64, Conexao>,
     acervo: Acervo,
+    /// conta_id -> (id de conexao -> fila), so para quem esta logado. Mais de
+    /// uma conexao por conta e o caso normal, e nao a excecao: o socket de
+    /// grupo (voz e canais) e o socket social (amigos e PV) da mesma pessoa
+    /// costumam estar vivos ao mesmo tempo, e cada um deve receber o que
+    /// chegar — nenhum dos dois e "mais dono" da presenca da conta que o
+    /// outro. E o que permite entregar pedido de amizade e mensagem privada
+    /// pra alguem que nao esta no mesmo grupo, em grupo nenhum, ou nem
+    /// conectado a um grupo — so logado.
+    online: HashMap<String, HashMap<u64, Fila>>,
 }
 
 impl Estado {
@@ -200,6 +209,28 @@ impl Estado {
                 let _ = c.fila.send(texto_json(aviso));
             }
         }
+    }
+
+    /// Entrega ponto a ponto pela conta, e não pelo grupo — o par de
+    /// `difundir` para tudo que é amizade/PV, que por definição pode
+    /// atravessar grupos diferentes ou não estar em grupo nenhum. Manda para
+    /// **todas** as conexões vivas da conta (grupo e social podem coexistir),
+    /// e não faz nada quando nenhuma está conectada agora — quem chama não
+    /// precisa checar isso antes.
+    fn enviar_a_conta(&self, conta_id: &str, aviso: &Value) {
+        if let Some(conexoes) = self.online.get(conta_id) {
+            for fila in conexoes.values() {
+                let _ = fila.send(texto_json(aviso));
+            }
+        }
+    }
+
+    /// Registra esta conexão como presença de `conta_id` — chamado tanto por
+    /// quem entra num grupo quanto por qualquer pedido do socket social
+    /// (amigos, PV) autenticado por token: os dois são formas igualmente
+    /// válidas de "estar por aqui", e nenhuma delas exige a outra.
+    fn registrar_online(&mut self, conta_id: &str, id: u64, fila: &Fila) {
+        self.online.entry(conta_id.to_string()).or_default().insert(id, fila.clone());
     }
 }
 
@@ -240,6 +271,7 @@ async fn main() {
     let estado = Arc::new(Mutex::new(Estado {
         conexoes: HashMap::new(),
         acervo: Acervo::carregar(pasta),
+        online: HashMap::new(),
     }));
 
     loop {
@@ -379,7 +411,7 @@ async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Co
         // repetitiva de quem esta no grupo, e o teto existe para o mesmo
         // motivo — um cliente com defeito nao deve conseguir encher o disco
         // de quem hospeda.
-        if matches!(tipo, "mensagem" | "adicionar-som" | "adicionar-som-pessoal") {
+        if matches!(tipo, "mensagem" | "mensagem-privada" | "adicionar-som" | "adicionar-som-pessoal") {
             enviadas_na_janela += 1;
             if enviadas_na_janela > MENSAGENS_POR_JANELA {
                 let _ = fila.send(erro("Muitas mensagens em pouco tempo."));
@@ -437,6 +469,12 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "pedir-som-pessoal" => pedir_som_pessoal(v, fila, cofre).await,
         "listar-sons-pessoais" => listar_sons_pessoais(v, fila, cofre).await,
         "escolher-som-entrada" => escolher_som_entrada(v, fila, cofre).await,
+        "amigo-pedido" => amigo_pedido(v, id, fila, estado, cofre).await,
+        "amigo-responder" => amigo_responder(v, id, fila, estado, cofre).await,
+        "amigo-remover" => amigo_remover(v, id, fila, estado, cofre).await,
+        "amigos" => listar_amigos(v, id, fila, estado, cofre).await,
+        "mensagem-privada" => mensagem_privada(v, id, fila, estado, cofre).await,
+        "historico-privado" => historico_privado(v, id, fila, estado, cofre).await,
         _ => {}
     }
 }
@@ -834,6 +872,12 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, c
         atividade_icone: None,
     };
 
+    // O socket social da mesma conta pode ja estar registrado, ou registrar
+    // depois — os dois convivem em `online`, ver a nota do campo.
+    if let Some(conta_id) = &nova.conta {
+        e.registrar_online(conta_id, id, fila);
+    }
+
     let presentes: Vec<Value> = e.do_grupo(codigo).iter().map(Conexao::resumo).collect();
     let grupo = e.acervo.grupos.get(codigo).cloned();
     let sons = e.acervo.sons_do_grupo(codigo);
@@ -855,9 +899,21 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, c
 
 fn despedir(id: u64, estado: &Arc<Mutex<Estado>>) {
     let mut e = estado.lock().unwrap();
+
+    // Tira esta conexao de qualquer conta que a tenha registrado como
+    // presenca — social ou de grupo, tanto faz: nenhuma das duas passa por
+    // `e.conexoes`, entao isto tem que rodar antes (e independente) do
+    // `conexoes.remove` logo abaixo, ou uma conexao so-social nunca seria
+    // limpa daqui.
+    e.online.retain(|_, conexoes| {
+        conexoes.remove(&id);
+        !conexoes.is_empty()
+    });
+
     let Some(saindo) = e.conexoes.remove(&id) else {
         return;
     };
+
     let Some(codigo) = saindo.grupo.clone() else {
         return;
     };
@@ -1534,6 +1590,186 @@ fn remover(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         }
         _ => Err("Alvo desconhecido.".into()),
     });
+}
+
+// ---------------------------------------------------------------- amigos
+//
+// Amizade e mensagem privada vivem na conta, nao na conexao — ao contrario
+// de voz e canal de texto, nao exigem estar no mesmo grupo, nem em grupo
+// nenhum, nem sequer numa conexao "de grupo": o socket social (ver
+// `Sinal.conectarLivre` no cliente) manda os mesmos tipos aqui, e cada um
+// destes handlers se registra em `Estado.online` assim que resolve o token —
+// e assim que fica alcancavel para o resto desta secao, e para `admitir`.
+
+async fn amigo_pedido(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    estado.lock().unwrap().registrar_online(&minha.id, id, fila);
+    let para = texto_de(v, "para").trim().to_string();
+    if para.is_empty() {
+        return;
+    }
+
+    match cofre.pedir_amizade(&minha, &para).await {
+        Ok(ja_amigos) => {
+            let _ = fila.send(texto_json(&json!({ "tipo": "amigo-atualizado" })));
+            let e = estado.lock().unwrap();
+            if ja_amigos {
+                e.enviar_a_conta(&para, &json!({ "tipo": "amigo-atualizado" }));
+            } else {
+                e.enviar_a_conta(
+                    &para,
+                    &json!({
+                        "tipo": "amigo-pedido",
+                        "de": { "id": minha.id, "apelido": minha.apelido, "avatar": minha.avatar }
+                    }),
+                );
+            }
+        }
+        Err(motivo) => {
+            let _ = fila.send(erro(motivo));
+        }
+    }
+}
+
+async fn amigo_responder(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    estado.lock().unwrap().registrar_online(&minha.id, id, fila);
+    let de = texto_de(v, "de");
+    let aceitar = v.get("aceitar").and_then(Value::as_bool).unwrap_or(false);
+
+    match cofre.responder_pedido_amigo(&minha.id, &de, aceitar).await {
+        Ok(()) => {
+            let _ = fila.send(texto_json(&json!({ "tipo": "amigo-atualizado" })));
+            let e = estado.lock().unwrap();
+            e.enviar_a_conta(&de, &json!({ "tipo": "amigo-atualizado" }));
+        }
+        Err(motivo) => {
+            let _ = fila.send(erro(motivo));
+        }
+    }
+}
+
+async fn amigo_remover(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    estado.lock().unwrap().registrar_online(&minha.id, id, fila);
+    let amigo_id = texto_de(v, "id");
+    if cofre.remover_amigo(&minha.id, &amigo_id).await {
+        let _ = fila.send(texto_json(&json!({ "tipo": "amigo-atualizado" })));
+        let e = estado.lock().unwrap();
+        e.enviar_a_conta(&amigo_id, &json!({ "tipo": "amigo-atualizado" }));
+    }
+}
+
+/// Lista completa — amigos (com apelido/avatar resolvidos na hora, e nao
+/// numa copia que envelheceria) e pedidos pendentes. Chamada ao abrir a
+/// view de Amigos e sempre que um `"amigo-atualizado"`/`"amigo-pedido"`
+/// chega, em vez de o servidor tentar montar o delta exato de cada aviso.
+async fn listar_amigos(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(conta) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    // O socket social manda isto assim que abre — e o "alo" que registra a
+    // presenca da conta, do mesmo jeito que `admitir` registra a do socket
+    // de grupo.
+    estado.lock().unwrap().registrar_online(&conta.id, id, fila);
+
+    let mut amigos = Vec::new();
+    for amigo_id in &conta.amigos {
+        if let Some(c) = cofre.por_id(amigo_id).await {
+            amigos.push(json!({ "id": c.id, "apelido": c.apelido, "avatar": c.avatar }));
+        }
+    }
+
+    let _ = fila.send(texto_json(&json!({
+        "tipo": "amigos",
+        "amigos": amigos,
+        "pedidos": conta.pedidos_amigo
+    })));
+}
+
+/// Id sintetico da conversa entre duas contas: os dois ids em ordem fixa,
+/// para que a conversa entre A e B seja sempre a mesma chave dos dois lados,
+/// nao importa quem escreveu primeiro. Entra no lugar do id de canal em
+/// `Acervo.mensagens` — a mesma `HashMap<String, _>` guarda os dois sem
+/// precisar mudar `Mensagem` nem `Acervo`.
+fn id_da_conversa(a: &str, b: &str) -> String {
+    if a < b {
+        format!("pv:{a}:{b}")
+    } else {
+        format!("pv:{b}:{a}")
+    }
+}
+
+async fn mensagem_privada(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    estado.lock().unwrap().registrar_online(&minha.id, id, fila);
+    let para = texto_de(v, "para");
+    let texto: String = texto_de(v, "texto").trim().chars().take(TEXTO_MAX).collect();
+    if texto.is_empty() || para.is_empty() {
+        return;
+    }
+    if !minha.amigos.iter().any(|a| a == &para) {
+        let _ = fila.send(erro("Vocês precisam ser amigos para conversar."));
+        return;
+    }
+
+    let conversa = id_da_conversa(&minha.id, &para);
+    let m = modelo::Mensagem {
+        id: novo_id(),
+        canal: conversa.clone(),
+        autor: minha.id.clone(),
+        apelido: minha.apelido.clone(),
+        avatar: minha.avatar.clone(),
+        texto,
+        em: agora_ms(),
+        reacoes: HashMap::new(),
+    };
+
+    let mut e = estado.lock().unwrap();
+    e.acervo.registrar_mensagem(m.clone());
+
+    // `para` viaja explicito porque `m.autor` sozinho nao basta: quem recebe
+    // o eco da propria mensagem enviada precisa saber com quem estava
+    // falando, e `autor` ali e a propria pessoa, nao a outra ponta.
+    let aviso = json!({ "tipo": "mensagem-privada", "conversa": conversa, "para": para, "mensagem": m });
+    // Direto pra quem escreveu, e nao via `online`: e a mesma garantia que
+    // `mensagem` (de grupo) ja da — a propria mensagem so aparece depois de
+    // aceita pelo servidor, entregue de volta pela conexao que a mandou.
+    let _ = fila.send(texto_json(&aviso));
+    e.enviar_a_conta(&para, &aviso);
+}
+
+async fn historico_privado(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    let com = texto_de(v, "com");
+    if !minha.amigos.iter().any(|a| a == &com) {
+        return;
+    }
+
+    let conversa = id_da_conversa(&minha.id, &com);
+    let mut e = estado.lock().unwrap();
+    e.registrar_online(&minha.id, id, fila);
+    let _ = fila.send(texto_json(&json!({
+        "tipo": "historico-privado",
+        "com": com,
+        "mensagens": e.acervo.historico(&conversa)
+    })));
 }
 
 // ------------------------------------------------------------------ apoio
