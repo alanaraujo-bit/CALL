@@ -1064,6 +1064,16 @@ code {
 .cartao-att__texto strong { font-size: 13px; }
 .cartao-att__texto span { font-size: 12px; color: var(--texto-3); }
 
+/* O "ver o que há de novo" é o menor elemento do cartão: é convite à leitura,
+   e a cor de acento já diz "clique aqui" sem precisar de moldura. */
+.cartao-att__novidades {
+  align-self: flex-start;
+  margin-top: 3px;
+  font-size: 11px !important;
+  font-weight: 600;
+  color: var(--acento) !important;
+}
+
 .cartao-att__botao {
   flex: none;
   padding: 7px 13px;

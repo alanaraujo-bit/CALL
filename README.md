@@ -11,8 +11,10 @@ empacotador e sem Electron. O instalador tem 1,90 MB e o executável ocupa
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
 instala com um clique, sem sair da tela. Quem responder "Depois" continua
 vendo uma marca discreta no alto da janela, que fica lá até a atualização ser
-feita — dispensar o aviso não faz a versão nova ser esquecida. Página do
-projeto:
+feita — dispensar o aviso não faz a versão nova ser esquecida. Antes de
+atualizar, "Ver o que há de novo" mostra o que a versão traz, escrito para
+gente e organizado por blocos — o aviso deixa de ser uma ordem e vira uma
+escolha informada. Página do projeto:
 **https://alanaraujo-bit.github.io/CALL/**
 
 > A publicação espelhada na Vercel (`call-rho-dusky.vercel.app`) está fora do
@@ -102,6 +104,13 @@ no rodapé, quem **esteve na call e já saiu**, com quanto tempo ficou. De quem
 já estava na sala quando você chegou não dá para saber desde quando, e essas
 linhas levam um `+` de "pelo menos" — o número é um piso, e não um total.
 
+As mensagens aceitam **reação com emoji** — cinco, desenhados para o CALL —
+num clique, e todo mundo no canal vê a contagem na hora. O aplicativo também
+tem **soundboard de grupo**: uma biblioteca de sons que qualquer um na call
+adiciona e toca para todos. Os clipes ficam no servidor, mas o áudio em si vai
+direto pela sua conexão — quem toca mistura o som no próprio áudio de saída, e
+o servidor nem vê um byte no caminho de quem ouve.
+
 Quem cria o grupo é o dono, e só ele cria, renomeia e remove categorias e
 canais. O convite dá acesso à conversa, não à estrutura.
 
@@ -131,7 +140,13 @@ Gerenciador de Tarefas mostra, sem consultar serviço nenhum. Um programa só é
 anunciado depois de ficar em foco por duas leituras seguidas, então passar
 pelo navegador durante uma partida não vira anúncio; sair é imediato. O painel
 mostra ao vivo a frase que está no ar, para conferir em vez de confiar. A área
-de trabalho vazia não conta, e o recurso se desliga num clique.
+de trabalho vazia não conta, e o recurso se desliga num clique. Um programa
+cadastrado à mão pode ganhar um ícone junto do nome.
+
+Em **Sons**: escolher o que toca quando você entra num canal de voz — o sino
+sintetizado de sempre, um som da biblioteca do grupo atual (que só toca
+naquele grupo), ou um clipe da sua biblioteca pessoal. Quem tem conta guarda
+até três sons pessoais, que funcionam como som de entrada em qualquer grupo.
 
 ### 5. Deixe o perfil com a sua cara
 
@@ -248,8 +263,10 @@ KB viaja no instalador do CALL: o sidecar continua nos 599 KB de sempre.
 | `src/avatares.js` | Os seis mascotes, desenhados em SVG |
 | `src/perfil.js` | Painel do próprio perfil e cartão de outra pessoa |
 | `src/sons.js` | O sino de entrada e saída, sintetizado |
+| `src/audio.js` | Motor de áudio: voz, soundboard e saídas por pessoa |
 | `src/tempo.js` | Tempo em call e histórico de quem passou por ela |
 | `src/atividade.js` | O que mostrar do programa em uso, e com que calma |
+| `src/emojis.js` | Os cinco emoji de reação, desenhados em SVG |
 | `src-tauri/src/atividade.rs` | Qual programa está em primeiro plano |
 | `src-tauri/src/google.rs` | PKCE, navegador do sistema e porta de retorno |
 | `src-tauri/src/lib.rs` | Comandos nativos, permissões e ajuste de memória |

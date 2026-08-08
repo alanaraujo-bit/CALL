@@ -1524,6 +1524,76 @@ ligado para ele.
 
 ---
 
+## Iteração 19 — Soundboard, reações com emoji e sons pessoais (0.9.0)
+
+**Motivo:** a conversa tinha texto, voz e tela, mas faltava o que faz um chat
+virar lugar: jeito de reagir a uma mensagem sem escrever uma linha, e jeito de
+deixar o ambiente com a cara de quem usa. O sino de entrada e saída da
+iteração 15 era o único som que existia; um grupo de amigos não tem por que
+viver só com ele.
+
+### Soundboard de grupo
+
+Cada grupo tem uma biblioteca de sons — efeitos, bordões, risadas — que
+qualquer pessoa na call adiciona e toca para todo mundo. O áudio em si nunca
+passa pelo servidor no caminho de quem ouve: quem toca decodifica o clipe e
+mistura no próprio áudio de saída do WebRTC (um ramo novo no grafo de
+`audio.js`, com volume próprio), e o servidor só guarda o clipe e entrega os
+bytes a quem pede para tocar. `som-tocado` é apenas o aviso de interface
+— "fulano tocou buzina" — para quem não está ouvindo.
+
+Os bytes trafegam dentro de uma mensagem JSON do próprio WebSocket, em
+base64 — o servidor não ganhou um framework HTTP com upload multipart só
+para isto. Teto de 300 KB por clipe, nome de até 40 caracteres, e só quem
+enviou (ou o dono do grupo) remove.
+
+### Reações com emoji
+
+Cinco emoji, desenhados em `emojis.js` (sem arquivo de imagem, como os
+mascotes), para reagir a uma mensagem — um clique alterna, e a contagem se
+difunde para o grupo inteiro na hora. O servidor de propósito **não** conhece
+a lista de emoji: uma sexta reação no aplicativo não pode depender de o
+servidor hospedado ser atualizado junto. Ele só garante a forma (minúsculas,
+sem separador, teto de 24 caracteres) e repassa.
+
+### Sons pessoais e som de entrada
+
+Quem tem conta pode guardar uma biblioteca pessoal de até três clipes, e
+usá-los como som de entrada em qualquer grupo — ou escolher um som da
+biblioteca do grupo atual, que só toca dentro dele. Sem escolha, o sino
+sintetizado de sempre continua sendo o padrão. Sons pessoais moram ao lado da
+conta: no Postgres quando existe (`sons_pessoais`, a migração `0002`), no
+arquivo quando não. Os bytes de um som pessoal só são devolvidos ao dono da
+conta — o áudio chega aos outros pela própria trilha WebRTC de quem toca, e
+ninguém além do dono precisa buscá-lo.
+
+### O que veio junto
+
+- **Foto no perfil**: um retrato local, só para a própria pessoa, no lugar do
+  mascote — nunca viaja pelo servidor, que só entende o mascote.
+- **Ícone na atividade**: programas cadastrados à mão podem ganhar uma imagem
+  junto do nome (data URL pequeno, teto de 40 KB), exibida na lista de
+  presentes e no cartão de perfil.
+- **"Ver o que há de novo"**: o cartão da atualização ganhou um botão que
+  mostra as notas da versão — o texto que o publicador escreveu no
+  `latest.json` — em leitura organizada por blocos, antes de a pessoa decidir
+  atualizar. É o que transforma o aviso de "versão nova" em "o que mudou".
+
+### Verificado
+
+A suíte de sinalização ganhou os cenários do soundboard (adicionar, pedir
+bytes, recusar o que passa do teto, regra de remoção, aviso de `som-tocado` e
+persistência entre reinícios do servidor) e as reações (alternar, difundir e a
+forma recortada pelo servidor); a de atividade, os programas cadastrados com
+ícone. Todos passam, junto com o restante da suíte e os testes Rust de
+contas, que agora cobrem também a biblioteca pessoal e a preferência de som de
+entrada nos dois backends.
+
+O número da versão foi para 0.9.0 — a primeira release cujo aviso de
+atualização explica o que ela traz.
+
+---
+
 ## Testes automatizados
 
 | Suíte | Comando | Cobertura |
