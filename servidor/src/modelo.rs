@@ -54,6 +54,10 @@ pub struct Categoria {
 pub struct Grupo {
     pub codigo: String,
     pub nome: String,
+    #[serde(default)]
+    pub foto: String,
+    #[serde(default)]
+    pub descricao: String,
     pub dono: String,
     pub categorias: Vec<Categoria>,
 }
@@ -62,10 +66,12 @@ impl Grupo {
     /// Estrutura inicial de um grupo novo: uma categoria com um canal de cada
     /// tipo. Um grupo vazio nao teria onde falar nem onde escrever, e a
     /// primeira coisa que a pessoa faz depois de criar e convidar alguem.
-    pub fn novo(codigo: String, nome: String, dono: String) -> Self {
+    pub fn novo(codigo: String, nome: String, foto: String, descricao: String, dono: String) -> Self {
         Grupo {
             codigo,
             nome,
+            foto,
+            descricao,
             dono,
             categorias: vec![Categoria {
                 id: novo_id(),

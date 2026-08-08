@@ -250,6 +250,135 @@ export function iniciais(nome) {
   );
 }
 
+const FOTO_ENQUADRADA_VERSAO = 1;
+
+const limitarNumero = (valor, minimo, maximo, padrao) => {
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? Math.min(maximo, Math.max(minimo, numero)) : padrao;
+};
+
+export function lerFotoEnquadrada(foto) {
+  if (typeof foto !== "string" || !foto) return null;
+  if (foto.startsWith("data:image/")) {
+    return { src: foto, w: 0, h: 0, panX: 0, panY: 0, zoom: 1, antiga: true };
+  }
+
+  try {
+    const bruto = JSON.parse(foto);
+    const dados =
+      typeof bruto === "string"
+        ? JSON.parse(bruto)
+        : bruto;
+    if (
+      dados?.tipo !== "foto-enquadrada" ||
+      dados?.versao !== FOTO_ENQUADRADA_VERSAO ||
+      typeof dados.src !== "string" ||
+      !dados.src.startsWith("data:image/")
+    ) {
+      return null;
+    }
+    return {
+      src: dados.src,
+      w: limitarNumero(dados.w, 1, 10_000, 0),
+      h: limitarNumero(dados.h, 1, 10_000, 0),
+      panX: limitarNumero(dados.panX, -1, 1, 0),
+      panY: limitarNumero(dados.panY, -1, 1, 0),
+      zoom: limitarNumero(dados.zoom, 1, 4, 1),
+      antiga: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function gravarFotoEnquadrada({ src, w, h, panX = 0, panY = 0, zoom = 1 }) {
+  return JSON.stringify({
+    tipo: "foto-enquadrada",
+    versao: FOTO_ENQUADRADA_VERSAO,
+    src,
+    w: limitarNumero(w, 1, 10_000, 0),
+    h: limitarNumero(h, 1, 10_000, 0),
+    panX: limitarNumero(panX, -1, 1, 0),
+    panY: limitarNumero(panY, -1, 1, 0),
+    zoom: limitarNumero(zoom, 1, 4, 1),
+  });
+}
+
+function pintarImagemEnquadrada(elemento, foto) {
+  const dados = lerFotoEnquadrada(foto);
+  if (!dados?.src) return false;
+
+  elemento.textContent = "";
+  const imagem = document.createElement("img");
+  imagem.src = dados.src;
+  imagem.alt = "";
+
+  if (!dados.antiga && dados.w > 0 && dados.h > 0) {
+    const proporcao = dados.w / dados.h;
+    const baseLargura = proporcao >= 1 ? proporcao * 100 : 100;
+    const baseAltura = proporcao >= 1 ? 100 : (100 / proporcao);
+    const largura = baseLargura * dados.zoom;
+    const altura = baseAltura * dados.zoom;
+    const extraX = Math.max(0, largura - 100);
+    const extraY = Math.max(0, altura - 100);
+
+    imagem.style.position = "absolute";
+    imagem.style.left = `${50 + (dados.panX * extraX) / 2}%`;
+    imagem.style.top = `${50 + (dados.panY * extraY) / 2}%`;
+    imagem.style.width = `${largura}%`;
+    imagem.style.height = `${altura}%`;
+    imagem.style.maxWidth = "none";
+    imagem.style.maxHeight = "none";
+    imagem.style.transform = "translate(-50%, -50%)";
+    imagem.style.objectFit = "fill";
+  }
+
+  elemento.append(imagem);
+  return true;
+}
+
+function aplicarFundoEnquadrado(elemento, foto) {
+  const dados = lerFotoEnquadrada(foto);
+  if (!dados?.src) return false;
+
+  elemento.textContent = "";
+  elemento.replaceChildren();
+  elemento.style.backgroundImage = `url("${dados.src}")`;
+  elemento.style.backgroundRepeat = "no-repeat";
+
+  if (!dados.antiga && dados.w > 0 && dados.h > 0) {
+    const proporcao = dados.w / dados.h;
+    const baseLargura = proporcao >= 1 ? proporcao * 100 : 100;
+    const baseAltura = proporcao >= 1 ? 100 : (100 / proporcao);
+    const largura = baseLargura * dados.zoom;
+    const altura = baseAltura * dados.zoom;
+    const extraX = Math.max(0, largura - 100);
+    const extraY = Math.max(0, altura - 100);
+
+    elemento.style.backgroundSize = `${largura}% ${altura}%`;
+    elemento.style.backgroundPosition = `${50 + (dados.panX * extraX) / 2}% ${50 + (dados.panY * extraY) / 2}%`;
+  } else {
+    elemento.style.backgroundSize = "cover";
+    elemento.style.backgroundPosition = "center";
+  }
+
+  return true;
+}
+
+export function pintarMarcaDeGrupo(elemento, { nome, foto } = {}) {
+  elemento.classList.toggle("retrato-de-foto", Boolean(foto));
+  elemento.style.backgroundImage = "";
+  elemento.style.backgroundPosition = "";
+  elemento.style.backgroundRepeat = "";
+  elemento.style.backgroundSize = "";
+
+  if (foto) {
+    if (aplicarFundoEnquadrado(elemento, foto)) return;
+  }
+
+  elemento.textContent = iniciais(nome);
+}
+
 /**
  * Desenha o avatar de alguém dentro de um elemento `.avatar`.
  *
@@ -270,12 +399,7 @@ export function pintarAvatar(elemento, { avatar, apelido, foto } = {}) {
 
   if (foto) {
     elemento.classList.remove("avatar--mascote");
-    elemento.textContent = "";
-    const imagem = document.createElement("img");
-    imagem.src = foto;
-    imagem.alt = "";
-    elemento.append(imagem);
-    return;
+    if (pintarImagemEnquadrada(elemento, foto)) return;
   }
 
   const escolhido = acharAvatar(avatar);

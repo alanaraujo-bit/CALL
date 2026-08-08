@@ -58,6 +58,8 @@ const ATIVIDADE_MAX: usize = 40;
 /// adulterado de empurrar uma imagem grande para a rede de todo mundo no
 /// grupo a cada troca de programa.
 const ATIVIDADE_ICONE_MAX: usize = 40_000;
+const FOTO_GRUPO_MAX_CARACTERES: usize = 900_000;
+const DESCRICAO_GRUPO_MAX: usize = 160;
 /// Id do emoji de uma reacao — "feliz", "coracao"... O servidor de proposito
 /// **nao** conhece a lista dos cinco, pelo mesmo motivo do mascote: emoji e
 /// assunto da interface, e uma sexta reacao no aplicativo nao pode depender
@@ -457,6 +459,7 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "historico" => historico(v, id, fila, estado),
         "criar-categoria" => criar_categoria(v, id, fila, estado),
         "criar-canal" => criar_canal(v, id, fila, estado),
+        "editar-grupo" => editar_grupo(v, id, fila, estado),
         "renomear" => renomear(v, id, fila, estado),
         "remover" => remover(v, id, fila, estado),
         "guardar" => guardar(v, fila, cofre).await,
@@ -694,6 +697,7 @@ async fn guardar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
                     || contas::Atalho {
                         codigo,
                         nome: limitar(texto_de(a, "nome"), NOME_MAX, "Grupo"),
+                        foto: foto_serializada_aceita(texto_de(a, "foto"), FOTO_GRUPO_MAX_CARACTERES),
                     },
                 )
             })
@@ -746,10 +750,43 @@ fn recusa(campo: &str, motivo: &str) -> Message {
     texto_json(&json!({ "tipo": "recusa", "campo": campo, "motivo": motivo }))
 }
 
+fn foto_serializada_aceita(foto: String, maximo: usize) -> String {
+    if foto.is_empty() || foto.len() > maximo {
+        return String::new();
+    }
+    if foto.starts_with("data:image/") {
+        return foto;
+    }
+    let Ok(v) = serde_json::from_str::<Value>(&foto) else {
+        return String::new();
+    };
+    let Some(src) = v.get("src").and_then(Value::as_str) else {
+        return String::new();
+    };
+    if !src.starts_with("data:image/") {
+        return String::new();
+    }
+    foto
+}
+
+fn foto_de_grupo(v: &Value) -> String {
+    foto_serializada_aceita(texto_de(v, "foto"), FOTO_GRUPO_MAX_CARACTERES)
+}
+
+fn descricao_de_grupo(v: &Value) -> String {
+    texto_de(v, "descricao")
+        .trim()
+        .chars()
+        .take(DESCRICAO_GRUPO_MAX)
+        .collect()
+}
+
 // ---------------------------------------------------------------- entrada
 
 async fn criar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
     let nome = limitar(texto_de(v, "nome"), NOME_MAX, "Meu grupo");
+    let foto = foto_de_grupo(v);
+    let descricao = descricao_de_grupo(v);
 
     // O token e resolvido antes de tocar em `Estado`: com Postgres isto pode
     // esperar a rede, e essa espera nao pode acontecer com a tranca de todo
@@ -768,7 +805,7 @@ async fn criar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>
     // permite gravar o grupo na conta e ja ter o resumo atualizado em maos
     // quando o "bem-vindo" for montado, sem uma segunda volta ao cofre.
     let codigo = novo_codigo();
-    let conta_resumo = sincronizar_conta_e_buscar_resumo(cofre, &cartao, &codigo, &nome).await;
+    let conta_resumo = sincronizar_conta_e_buscar_resumo(cofre, &cartao, &codigo, &nome, &foto).await;
 
     let mut e = estado.lock().unwrap();
     if e.conexoes.contains_key(&id) {
@@ -776,7 +813,7 @@ async fn criar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>
         return;
     }
 
-    let grupo = Grupo::novo(codigo.clone(), nome, cartao.usuario.clone());
+    let grupo = Grupo::novo(codigo.clone(), nome, foto, descricao, cartao.usuario.clone());
     e.acervo.grupos.insert(codigo.clone(), grupo);
     e.acervo.salvar_grupos();
 
@@ -791,14 +828,14 @@ async fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, co
     // sem alterar nada ainda. A checagem que vale acontece de novo depois,
     // ja com a conta atualizada — o grupo poderia, em tese, ter sido
     // removido nesse meio tempo.
-    let nome_do_grupo = {
+    let (nome_do_grupo, foto_do_grupo) = {
         let e = estado.lock().unwrap();
         if e.conexoes.contains_key(&id) {
             let _ = fila.send(erro("Esta conexao ja esta em um grupo."));
             return;
         }
         match e.acervo.grupos.get(&codigo) {
-            Some(g) => g.nome.clone(),
+            Some(g) => (g.nome.clone(), g.foto.clone()),
             None => {
                 let _ = fila.send(erro("Convite invalido ou grupo removido."));
                 return;
@@ -806,7 +843,8 @@ async fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, co
         }
     };
 
-    let conta_resumo = sincronizar_conta_e_buscar_resumo(cofre, &cartao, &codigo, &nome_do_grupo).await;
+    let conta_resumo =
+        sincronizar_conta_e_buscar_resumo(cofre, &cartao, &codigo, &nome_do_grupo, &foto_do_grupo).await;
 
     let mut e = estado.lock().unwrap();
     if e.conexoes.contains_key(&id) {
@@ -833,9 +871,10 @@ async fn sincronizar_conta_e_buscar_resumo(
     cartao: &Cartao,
     codigo: &str,
     nome_do_grupo: &str,
+    foto_do_grupo: &str,
 ) -> Option<Value> {
     let conta = cartao.conta.as_ref()?;
-    cofre.lembrar_grupo(conta, codigo, nome_do_grupo).await;
+    cofre.lembrar_grupo(conta, codigo, nome_do_grupo, foto_do_grupo).await;
     cofre
         .guardar_perfil(
             conta,
@@ -1523,6 +1562,23 @@ fn criar_canal(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
             nome,
             tipo,
         });
+        Ok(Vec::new())
+    });
+}
+
+fn editar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+    let nome = texto_de(v, "nome").trim().chars().take(NOME_MAX).collect::<String>();
+    let foto = foto_de_grupo(v);
+    let descricao = descricao_de_grupo(v);
+    if nome.is_empty() {
+        let _ = fila.send(recusa("nome", "Dê um nome ao grupo."));
+        return;
+    }
+
+    alterar_estrutura(id, fila, estado, move |g| {
+        g.nome = nome;
+        g.foto = foto;
+        g.descricao = descricao;
         Ok(Vec::new())
     });
 }

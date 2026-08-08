@@ -12,13 +12,22 @@
  * a interface não prometa o contrário.
  */
 
-import { AVATARES, acharAvatar, pintarAvatar } from "./avatares.js";
+import {
+  AVATARES,
+  acharAvatar,
+  gravarFotoEnquadrada,
+  lerFotoEnquadrada,
+  pintarAvatar,
+  pintarMarcaDeGrupo,
+} from "./avatares.js";
 
 const $ = (id) => document.getElementById(id);
 
 export const APELIDO_MAX = 24;
 /** Uma linha, não uma página. O cartão tem largura fixa e a lista, não. */
 export const BIO_MAX = 160;
+export const GRUPO_NOME_MAX = 40;
+export const GRUPO_DESCRICAO_MAX = 160;
 /** Lado do quadrado final, em pixels — grande o bastante para o cartão de
  *  88 px, pequeno o bastante para a `localStorage` nem sentir. */
 const FOTO_LADO = 256;
@@ -32,6 +41,10 @@ const FOTO_MAX_CARACTERES = 2_200_000;
  *  a animação é o ponto todo de escolher um. Sem a compressão dos outros
  *  formatos, o teto mora no arquivo original, e por isso é bem mais apertado. */
 const GIF_MAX_BYTES = 1_500_000;
+const FOTO_GRUPO_LADO = 160;
+const FOTO_GRUPO_MAX_CARACTERES = 900_000;
+const FOTO_PREPARO_LADO = 384;
+const FOTO_GRUPO_PREPARO_LADO = 256;
 
 /** Lado do ícone de uma atividade cadastrada a mão — um selo, não um retrato:
  *  pequeno o bastante para trafegar a cada troca de programa sem pesar na
@@ -61,13 +74,20 @@ export function saneado({ apelido, avatar, bio, foto } = {}) {
     // um sétimo mascote — vira "sem mascote", que cai nas iniciais.
     avatar: acharAvatar(avatar)?.id ?? "",
     bio: cortar(bio, BIO_MAX).trim(),
-    foto:
-      typeof foto === "string" &&
-      foto.startsWith("data:image/") &&
-      foto.length <= FOTO_MAX_CARACTERES
-        ? foto
-        : "",
+    foto: fotoValida(foto, FOTO_MAX_CARACTERES),
   };
+}
+
+export function saneadoGrupo({ nome, foto, descricao } = {}) {
+  return {
+    nome: cortar(nome, GRUPO_NOME_MAX).trim(),
+    descricao: cortar(descricao, GRUPO_DESCRICAO_MAX).trim(),
+    foto: fotoValida(foto, FOTO_GRUPO_MAX_CARACTERES),
+  };
+}
+
+function fotoValida(foto, maxCaracteres) {
+  return typeof foto === "string" && foto.length <= maxCaracteres && lerFotoEnquadrada(foto) ? foto : "";
 }
 
 /**
@@ -121,34 +141,265 @@ function imagemQuadradaDeArquivo(arquivo, { lado, qualidade, maxCaracteres, mens
   });
 }
 
+function lerArquivoComoDataURL(arquivo) {
+  return new Promise((resolver, rejeitar) => {
+    const leitor = new FileReader();
+    leitor.onerror = () => rejeitar(new Error("Não foi possível ler o arquivo."));
+    leitor.onload = () => resolver(String(leitor.result ?? ""));
+    leitor.readAsDataURL(arquivo);
+  });
+}
+
+function carregarImagem(src) {
+  return new Promise((resolver, rejeitar) => {
+    const imagem = new Image();
+    imagem.onerror = () => rejeitar(new Error("Esse arquivo não parece ser uma imagem válida."));
+    imagem.onload = () => resolver(imagem);
+    imagem.src = src;
+  });
+}
+
+async function imagemRedimensionadaParaEnquadrar(arquivo, { ladoMax, qualidadeBase, maxCaracteres, mensagemGrande }) {
+  if (!arquivo.type.startsWith("image/")) {
+    throw new Error("Escolha um arquivo de imagem.");
+  }
+
+  const original = await carregarImagem(await lerArquivoComoDataURL(arquivo));
+  const maiorLado = Math.max(original.naturalWidth, original.naturalHeight);
+  const escalaBase = Math.min(1, ladoMax / maiorLado);
+
+  for (let tentativa = 0; tentativa < 5; tentativa += 1) {
+    const escala = escalaBase * Math.pow(0.86, tentativa);
+    const largura = Math.max(1, Math.round(original.naturalWidth * escala));
+    const altura = Math.max(1, Math.round(original.naturalHeight * escala));
+    const tela = document.createElement("canvas");
+    tela.width = largura;
+    tela.height = altura;
+    tela.getContext("2d").drawImage(original, 0, 0, largura, altura);
+
+    const qualidade = Math.max(0.58, qualidadeBase - tentativa * 0.08);
+    const dados = tela.toDataURL("image/jpeg", qualidade);
+    if (dados.length <= maxCaracteres - 200) {
+      return { src: dados, w: largura, h: altura, panX: 0, panY: 0, zoom: 1 };
+    }
+  }
+
+  throw new Error(mensagemGrande);
+}
+
+function pintarMidiaEnquadrada(area, foto) {
+  const dados = typeof foto === "string" ? lerFotoEnquadrada(foto) : foto;
+  area.textContent = "";
+  if (!dados?.src) return;
+
+  const imagem = document.createElement("img");
+  imagem.src = dados.src;
+  imagem.alt = "";
+
+  const proporcao = dados.w > 0 && dados.h > 0 ? dados.w / dados.h : 1;
+  const baseLargura = proporcao >= 1 ? proporcao * 100 : 100;
+  const baseAltura = proporcao >= 1 ? 100 : (100 / proporcao);
+  const largura = baseLargura * (dados.zoom ?? 1);
+  const altura = baseAltura * (dados.zoom ?? 1);
+  const extraX = Math.max(0, largura - 100);
+  const extraY = Math.max(0, altura - 100);
+
+  imagem.style.left = `${50 + ((dados.panX ?? 0) * extraX) / 2}%`;
+  imagem.style.top = `${50 + ((dados.panY ?? 0) * extraY) / 2}%`;
+  imagem.style.width = `${largura}%`;
+  imagem.style.height = `${altura}%`;
+  area.append(imagem);
+}
+
+function excessoEmPixels(dados, quadro) {
+  const larguraQuadro = quadro.clientWidth || 1;
+  const alturaQuadro = quadro.clientHeight || larguraQuadro;
+  const proporcao = dados.w > 0 && dados.h > 0 ? dados.w / dados.h : 1;
+  const baseLargura = proporcao >= 1 ? proporcao * larguraQuadro : larguraQuadro;
+  const baseAltura = proporcao >= 1 ? alturaQuadro : alturaQuadro / proporcao;
+  return {
+    x: Math.max(0, baseLargura * dados.zoom - larguraQuadro),
+    y: Math.max(0, baseAltura * dados.zoom - alturaQuadro),
+  };
+}
+
+function limitarPan(dados, quadro) {
+  const excesso = excessoEmPixels(dados, quadro);
+  if (excesso.x <= 0) dados.panX = 0;
+  else dados.panX = Math.max(-1, Math.min(1, dados.panX));
+  if (excesso.y <= 0) dados.panY = 0;
+  else dados.panY = Math.max(-1, Math.min(1, dados.panY));
+}
+
+function abrirEditorDeFoto(midia, { titulo, ajuda, confirmar, maxCaracteres, mensagemGrande }) {
+  return new Promise((resolver) => {
+    const cortina = $("foto-dialogo");
+    const quadro = $("foto-quadro");
+    const area = $("foto-imagem");
+    const zoom = $("foto-zoom");
+    const ajudaEl = $("foto-ajuda");
+    const zoomValor = $("foto-zoom-valor");
+    const estado = {
+      ...midia,
+      panX: Number(midia.panX ?? 0),
+      panY: Number(midia.panY ?? 0),
+      zoom: Number(midia.zoom ?? 1),
+    };
+
+    $("foto-titulo").textContent = titulo;
+    ajudaEl.textContent = ajuda;
+    $("foto-confirmar").textContent = confirmar;
+    zoom.value = String(estado.zoom);
+
+    const refletir = () => {
+      limitarPan(estado, quadro);
+      zoomValor.textContent = `${Math.round(estado.zoom * 100)}%`;
+      pintarMidiaEnquadrada(area, estado);
+    };
+
+    let arrasto = null;
+    const aoPointerDown = (evento) => {
+      const excesso = excessoEmPixels(estado, quadro);
+      arrasto = {
+        x: evento.clientX,
+        y: evento.clientY,
+        panX: estado.panX,
+        panY: estado.panY,
+        excesso,
+      };
+      quadro.setPointerCapture?.(evento.pointerId);
+    };
+
+    const aoPointerMove = (evento) => {
+      if (!arrasto) return;
+      if (arrasto.excesso.x > 0) {
+        estado.panX = arrasto.panX + (evento.clientX - arrasto.x) / (arrasto.excesso.x / 2);
+      }
+      if (arrasto.excesso.y > 0) {
+        estado.panY = arrasto.panY + (evento.clientY - arrasto.y) / (arrasto.excesso.y / 2);
+      }
+      refletir();
+    };
+
+    const aoPointerUp = () => {
+      arrasto = null;
+    };
+
+    const aoWheel = (evento) => {
+      evento.preventDefault();
+      estado.zoom = Math.max(1, Math.min(4, estado.zoom - Math.sign(evento.deltaY) * 0.08));
+      zoom.value = String(estado.zoom);
+      refletir();
+    };
+
+    const fechar = (valor) => {
+      cortina.classList.add("oculto");
+      zoom.oninput = null;
+      $("foto-confirmar").onclick = null;
+      $("foto-cancelar").onclick = null;
+      $("foto-fechar").onclick = null;
+      cortina.onclick = null;
+      quadro.onpointerdown = null;
+      quadro.onpointermove = null;
+      quadro.onpointerup = null;
+      quadro.onpointercancel = null;
+      quadro.onwheel = null;
+      document.removeEventListener("keydown", aoTeclar);
+      resolver(valor);
+    };
+
+    const confirmarEscolha = () => {
+      const serializada = gravarFotoEnquadrada(estado);
+      if (serializada.length > maxCaracteres) {
+        ajudaEl.textContent = mensagemGrande;
+        return;
+      }
+      fechar(serializada);
+    };
+
+    const aoTeclar = (evento) => {
+      if (evento.key === "Escape") fechar(null);
+    };
+
+    zoom.oninput = () => {
+      estado.zoom = Number(zoom.value);
+      refletir();
+    };
+    $("foto-confirmar").onclick = confirmarEscolha;
+    $("foto-cancelar").onclick = () => fechar(null);
+    $("foto-fechar").onclick = () => fechar(null);
+    cortina.onclick = (evento) => {
+      if (evento.target === cortina) fechar(null);
+    };
+    quadro.onpointerdown = aoPointerDown;
+    quadro.onpointermove = aoPointerMove;
+    quadro.onpointerup = aoPointerUp;
+    quadro.onpointercancel = aoPointerUp;
+    quadro.onwheel = aoWheel;
+    document.addEventListener("keydown", aoTeclar);
+
+    refletir();
+    cortina.classList.remove("oculto");
+  });
+}
+
+async function ajustarFotoDeArquivo(
+  arquivo,
+  { titulo, ajuda, confirmar, ladoMax, qualidadeBase, maxCaracteres, mensagemGrande, gifMaxBytes = GIF_MAX_BYTES }
+) {
+  if (!arquivo.type.startsWith("image/")) {
+    throw new Error("Escolha um arquivo de imagem.");
+  }
+
+  let midia;
+  if (arquivo.type === "image/gif") {
+    if (arquivo.size > gifMaxBytes) {
+      throw new Error(`Esse GIF passa de ${(gifMaxBytes / 1_000_000).toFixed(1)} MB. Tente um menor.`);
+    }
+    const src = await lerArquivoComoDataURL(arquivo);
+    if (src.length > maxCaracteres - 200) {
+      throw new Error(mensagemGrande);
+    }
+    const imagem = await carregarImagem(src);
+    midia = { src, w: imagem.naturalWidth, h: imagem.naturalHeight, panX: 0, panY: 0, zoom: 1 };
+  } else {
+    midia = await imagemRedimensionadaParaEnquadrar(arquivo, {
+      ladoMax,
+      qualidadeBase,
+      maxCaracteres,
+      mensagemGrande,
+    });
+  }
+
+  return abrirEditorDeFoto(midia, { titulo, ajuda, confirmar, maxCaracteres, mensagemGrande });
+}
+
 /**
  * Lê um arquivo de imagem e devolve um data URL quadrado, pequeno o bastante
  * para viver na `localStorage` sem drama.
  */
 export function lerFotoDeArquivo(arquivo) {
-  // Sem recorte nem compressão: qualquer um dos dois passaria pelo canvas,
-  // que só enxerga o primeiro quadro. O GIF viaja do jeito que foi escolhido,
-  // e quem o desenha depois (o `<img>` do avatar) já anima sozinho.
-  if (arquivo.type === "image/gif") {
-    return new Promise((resolver, rejeitar) => {
-      if (arquivo.size > GIF_MAX_BYTES) {
-        rejeitar(
-          new Error(`Esse GIF passa de ${(GIF_MAX_BYTES / 1_000_000).toFixed(1)} MB. Tente um menor.`)
-        );
-        return;
-      }
-      const leitorGif = new FileReader();
-      leitorGif.onerror = () => rejeitar(new Error("Não foi possível ler o arquivo."));
-      leitorGif.onload = () => resolver(leitorGif.result);
-      leitorGif.readAsDataURL(arquivo);
-    });
-  }
-
-  return imagemQuadradaDeArquivo(arquivo, {
-    lado: FOTO_LADO,
-    qualidade: 0.86,
+  return ajustarFotoDeArquivo(arquivo, {
+    titulo: "Ajustar foto",
+    ajuda: "Arraste para posicionar e use o zoom para aproximar. GIF continua animado.",
+    confirmar: "Usar esta foto",
+    ladoMax: FOTO_PREPARO_LADO,
+    qualidadeBase: 0.82,
     maxCaracteres: FOTO_MAX_CARACTERES,
-    mensagemGrande: "Essa imagem é grande demais, mesmo depois de comprimida.",
+    mensagemGrande: "Essa imagem é grande demais, mesmo depois do ajuste.",
+  });
+}
+
+export function lerFotoDoGrupoDeArquivo(arquivo) {
+  return ajustarFotoDeArquivo(arquivo, {
+    titulo: "Ajustar foto do grupo",
+    ajuda: "Arraste para posicionar e use o zoom para aproximar. A prévia vale para lista e cabeçalho.",
+    confirmar: "Usar esta foto",
+    ladoMax: FOTO_GRUPO_PREPARO_LADO,
+    qualidadeBase: 0.8,
+    maxCaracteres: FOTO_GRUPO_MAX_CARACTERES,
+    mensagemGrande: "Essa imagem do grupo ficou grande demais.",
+    gifMaxBytes: 500_000,
   });
 }
 
@@ -267,6 +518,41 @@ function abrirSeletorDeAvatar(ancora, escolhido, temFoto, aoEscolherMascote, aoE
 
 function fecharSeletorDeAvatar() {
   $("seletor-avatar").classList.add("oculto");
+}
+
+function abrirSeletorDeFotoDeGrupo(ancora, temFoto, aoEscolherFoto, aoRemoverFoto) {
+  const seletor = $("seletor-foto-grupo");
+  const botaoRemover = $("seletor-foto-grupo-remover");
+
+  botaoRemover.classList.toggle("oculto", !temFoto);
+  botaoRemover.onclick = () => {
+    fecharSeletorDeFotoDeGrupo();
+    aoRemoverFoto();
+  };
+  $("seletor-foto-grupo-escolher").onclick = () => {
+    fecharSeletorDeFotoDeGrupo();
+    aoEscolherFoto();
+  };
+
+  seletor.classList.remove("oculto");
+
+  const caixa = ancora.getBoundingClientRect();
+  const minha = seletor.getBoundingClientRect();
+  const x = Math.min(caixa.left, window.innerWidth - minha.width - 8);
+  const y =
+    caixa.bottom + minha.height + 8 > window.innerHeight
+      ? caixa.top - minha.height - 6
+      : caixa.bottom + 6;
+  seletor.style.left = `${Math.max(8, x)}px`;
+  seletor.style.top = `${Math.max(8, y)}px`;
+
+  setTimeout(() => {
+    document.addEventListener("click", fecharSeletorDeFotoDeGrupo, { once: true });
+  }, 0);
+}
+
+function fecharSeletorDeFotoDeGrupo() {
+  $("seletor-foto-grupo").classList.add("oculto");
 }
 
 /**
@@ -613,4 +899,115 @@ export function mostrarCartao({ apelido, avatar, bio, atividade, atividadeIcone,
   $("cartao-fechar").onclick = fechar;
   document.addEventListener("keydown", aoTeclar);
   cortina.classList.remove("oculto");
+}
+
+export function editarGrupo(atual, { titulo = "Editar grupo", confirmar = "Salvar", texto = "" } = {}) {
+  return new Promise((resolver) => {
+    const cortina = $("grupo-dialogo");
+    const campoNome = $("grupo-nome");
+    const campoDescricao = $("grupo-descricao");
+    const botaoAvatar = $("grupo-avatar-botao");
+    const rascunho = saneadoGrupo(atual);
+
+    campoNome.value = rascunho.nome;
+    campoDescricao.value = rascunho.descricao;
+    $("grupo-titulo").textContent = titulo;
+    $("grupo-texto").textContent = texto;
+    $("grupo-texto").hidden = !texto;
+    $("grupo-foto-erro").hidden = true;
+    $("grupo-confirmar").textContent = confirmar;
+
+    const refletir = () => {
+      const nome = campoNome.value.trim() || rascunho.nome;
+      const descricao = campoDescricao.value.trim();
+      const previa = $("grupo-previa-avatar");
+      pintarMarcaDeGrupo(previa, { nome, foto: rascunho.foto });
+
+      $("grupo-previa-nome").textContent = nome || "Sem nome";
+      $("grupo-previa-lema").textContent =
+        descricao || (rascunho.foto ? "A foto aparece para todo mundo no grupo." : "Sem foto, o CALL usa as iniciais do nome.");
+      $("grupo-descricao-conta").textContent = `${[...campoDescricao.value].length}/${GRUPO_DESCRICAO_MAX}`;
+      $("grupo-confirmar").disabled = !campoNome.value.trim();
+    };
+
+    const inputFoto = $("grupo-foto-arquivo");
+    inputFoto.onchange = async () => {
+      const arquivo = inputFoto.files?.[0];
+      inputFoto.value = "";
+      if (!arquivo) return;
+      try {
+        const foto = await lerFotoDoGrupoDeArquivo(arquivo);
+        $("grupo-foto-erro").hidden = true;
+        rascunho.foto = foto;
+        refletir();
+      } catch (erro) {
+        $("grupo-foto-erro").textContent = erro.message;
+        $("grupo-foto-erro").hidden = false;
+      }
+    };
+
+    botaoAvatar.onclick = (evento) => {
+      evento.stopPropagation();
+      abrirSeletorDeFotoDeGrupo(
+        botaoAvatar,
+        Boolean(rascunho.foto),
+        () => inputFoto.click(),
+        () => {
+          $("grupo-foto-erro").hidden = true;
+          rascunho.foto = "";
+          refletir();
+        }
+      );
+    };
+
+    const fechar = (valor) => {
+      cortina.classList.add("oculto");
+      campoNome.oninput = null;
+      campoDescricao.oninput = null;
+      $("grupo-confirmar").onclick = null;
+      $("grupo-cancelar").onclick = null;
+      $("grupo-fechar").onclick = null;
+      botaoAvatar.onclick = null;
+      inputFoto.onchange = null;
+      cortina.onclick = null;
+      fecharSeletorDeFotoDeGrupo();
+      document.removeEventListener("keydown", aoTeclar);
+      resolver(valor);
+    };
+
+    const salvar = () => {
+      const escolhido = saneadoGrupo({
+        nome: campoNome.value,
+        descricao: campoDescricao.value,
+        foto: rascunho.foto,
+      });
+      if (!escolhido.nome) {
+        campoNome.focus();
+        return;
+      }
+      fechar(escolhido);
+    };
+
+    const aoTeclar = (evento) => {
+      if (evento.key === "Escape") fechar(null);
+      else if (evento.key === "Enter" && document.activeElement === campoNome) {
+        evento.preventDefault();
+        salvar();
+      }
+    };
+
+    campoNome.oninput = refletir;
+    campoDescricao.oninput = refletir;
+    $("grupo-confirmar").onclick = salvar;
+    $("grupo-cancelar").onclick = () => fechar(null);
+    $("grupo-fechar").onclick = () => fechar(null);
+    cortina.onclick = (evento) => {
+      if (evento.target === cortina) fechar(null);
+    };
+    document.addEventListener("keydown", aoTeclar);
+
+    refletir();
+    cortina.classList.remove("oculto");
+    campoNome.focus();
+  });
 }

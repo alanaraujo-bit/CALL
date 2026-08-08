@@ -3,15 +3,17 @@ import { Malha, PERFIS_TELA, PERFIL_TELA_PADRAO, acharPerfilDeTela } from "./rtc
 import { MotorDeAudio, AUDIO_PADRAO, BITRATES_AUDIO, listarDispositivos } from "./audio.js";
 import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
 import { Vigia } from "./atividade.js";
-import { avatarSugerido, iniciais, pintarAvatar } from "./avatares.js";
+import { avatarSugerido, pintarAvatar, pintarMarcaDeGrupo } from "./avatares.js";
 import { EMOJIS, TOKEN_EMOJI, elementoDeEmoji } from "./emojis.js";
 import {
+  editarGrupo,
   editarPerfil,
   iniciarOnboarding,
   lerIconeDeArquivo,
   mostrarCartao,
   prepararEscolhaDeFoto,
   saneado,
+  saneadoGrupo,
 } from "./perfil.js";
 import * as conta from "./conta.js";
 
@@ -72,11 +74,11 @@ const estado = {
    *  abrir o CALL na aba "Entrar" com o campo pronto, e abrir num formulário
    *  em branco perguntando quem você é. */
   ultimoEmail: "",
-  /** Grupos que este computador conhece — [{ codigo, nome }]. O servidor é a
+  /** Grupos que este computador conhece — [{ codigo, nome, foto }]. O servidor é a
    *  fonte da verdade; isto é só a lista de atalhos da coluna da esquerda. */
   atalhos: [],
 
-  grupo: null, // { codigo, nome, dono, categorias } vindo do servidor
+  grupo: null, // { codigo, nome, foto, descricao, dono, categorias } vindo do servidor
   meuId: null,
   membros: new Map(), // id -> { id, usuario, apelido, canalVoz, mudo, transmitindo }
 
@@ -141,6 +143,11 @@ const audiosRemotos = new Map(); // id -> HTMLAudioElement de sustentação
 const telas = new Map(); // id -> HTMLElement do palco
 const linhas = new Map(); // id -> [HTMLElement] que recebem a marca de fala
 const medidores = new Map(); // id -> { no, analisador, dados, ateQuando, falando }
+const saneadoAtalho = (atalho) => ({
+  codigo: String(atalho?.codigo ?? ""),
+  nome: saneadoGrupo({ nome: atalho?.nome }).nome,
+  foto: saneadoGrupo({ foto: atalho?.foto }).foto,
+});
 
 const motor = new MotorDeAudio();
 let cronometroVoz = null;
@@ -215,7 +222,9 @@ function carregarPreferencias() {
     estado.bio = perfil.bio;
     estado.foto = perfil.foto;
     estado.atalhos = Array.isArray(bruto.atalhos)
-      ? bruto.atalhos.filter((a) => a && typeof a.codigo === "string")
+      ? bruto.atalhos
+          .filter((a) => a && typeof a.codigo === "string")
+          .map(saneadoAtalho)
       : [];
 
     // Só as chaves conhecidas entram: uma preferência gravada por uma versão
@@ -255,32 +264,40 @@ function carregarPreferencias() {
 }
 
 function salvarPreferencias() {
-  localStorage.setItem(
-    CHAVE,
-    JSON.stringify({
-      apelido: estado.apelido,
-      servidor: estado.servidor,
-      usuario: estado.usuario,
-      ultimoEmail: estado.ultimoEmail,
-      avatar: estado.avatar,
-      bio: estado.bio,
-      foto: estado.foto,
-      atalhos: estado.atalhos,
-      audio: estado.audio,
-      perfilTela: estado.perfilTela,
-      audioDaTela: estado.audioDaTela,
-      mostrarAtividade: estado.mostrarAtividade,
-      atalhoMudo: estado.atalhoMudo,
-      volumes: [...estado.volumes],
-      programasPersonalizados: [...estado.programasPersonalizados],
-    })
-  );
+  try {
+    localStorage.setItem(
+      CHAVE,
+      JSON.stringify({
+        apelido: estado.apelido,
+        servidor: estado.servidor,
+        usuario: estado.usuario,
+        ultimoEmail: estado.ultimoEmail,
+        avatar: estado.avatar,
+        bio: estado.bio,
+        foto: estado.foto,
+        atalhos: estado.atalhos,
+        audio: estado.audio,
+        perfilTela: estado.perfilTela,
+        audioDaTela: estado.audioDaTela,
+        mostrarAtividade: estado.mostrarAtividade,
+        atalhoMudo: estado.atalhoMudo,
+        volumes: [...estado.volumes],
+        programasPersonalizados: [...estado.programasPersonalizados],
+      })
+    );
+    return true;
+  } catch (erro) {
+    console.warn("[preferencias] falha ao salvar", erro);
+    avisar("Não deu para salvar tudo neste navegador. Tente uma imagem menor.", "erro");
+    return false;
+  }
 }
 
-function lembrarGrupo(codigo, nome) {
+function lembrarGrupo(codigo, nome, foto = "") {
   const existente = estado.atalhos.find((a) => a.codigo === codigo);
-  if (existente) existente.nome = nome;
-  else estado.atalhos.push({ codigo, nome });
+  const saneado = saneadoAtalho({ codigo, nome, foto });
+  if (existente) Object.assign(existente, saneado);
+  else estado.atalhos.push(saneado);
   salvarPreferencias();
 }
 
@@ -908,7 +925,7 @@ function fundirAtalhos(daConta) {
 
   const juntos = new Map(estado.atalhos.map((a) => [a.codigo, a]));
   for (const atalho of daConta) {
-    if (atalho?.codigo) juntos.set(atalho.codigo, { ...atalho });
+    if (atalho?.codigo) juntos.set(atalho.codigo, saneadoAtalho(atalho));
   }
   estado.atalhos = [...juntos.values()];
 }
@@ -1364,7 +1381,7 @@ function desenharAtalhos() {
 
     const marca = document.createElement("span");
     marca.className = "grupo__marca";
-    marca.textContent = iniciais(atalho.nome);
+    pintarMarcaDeGrupo(marca, atalho);
 
     item.append(marca);
     item.addEventListener("click", () => {
@@ -1398,14 +1415,48 @@ function desenharAtalhos() {
 }
 
 async function criarGrupo() {
-  const valores = await perguntar({
-    titulo: "Criar grupo",
-    texto: "O servidor devolve um código de convite para você compartilhar.",
-    campos: [{ rotulo: "Nome do grupo", dica: "Equipe de produto", maximo: 40 }],
-    confirmar: "Criar",
+  const grupo = await editarGrupo(
+    { nome: "", foto: "", descricao: "" },
+    {
+      titulo: "Criar grupo",
+      confirmar: "Criar",
+      texto: "O servidor devolve um código de convite para você compartilhar.",
+    }
+  );
+  if (!grupo) return;
+  await conectar({
+    tipo: "criar-grupo",
+    nome: grupo.nome,
+    foto: grupo.foto,
+    descricao: grupo.descricao,
   });
-  if (!valores) return;
-  await conectar({ tipo: "criar-grupo", nome: valores[0] });
+}
+
+async function editarGrupoAtual() {
+  if (!estado.grupo || !souDono()) return;
+  const grupo = await editarGrupo(estado.grupo, {
+    titulo: "Editar grupo",
+    confirmar: "Salvar",
+  });
+  if (!grupo) return;
+  sinal.enviar({
+    tipo: "editar-grupo",
+    nome: grupo.nome,
+    foto: grupo.foto,
+    descricao: grupo.descricao,
+  });
+}
+
+async function editarGrupoDoAtalho(atalho) {
+  if (atalho.codigo !== estado.grupo?.codigo) {
+    await abrirGrupo(atalho.codigo);
+  }
+  if (!estado.grupo || estado.grupo.codigo !== atalho.codigo) return;
+  if (!souDono()) {
+    avisar("Só quem criou o grupo pode editá-lo.", "erro");
+    return;
+  }
+  await editarGrupoAtual();
 }
 
 async function entrarPorConvite() {
@@ -1434,6 +1485,8 @@ async function conectar(saudacao) {
   desligar();
 
   $("nome-grupo").textContent = "Conectando…";
+  $("descricao-grupo").hidden = true;
+  $("descricao-grupo").textContent = "";
 
   try {
     const boasVindas = await sinal.conectar(estado.servidor, {
@@ -1489,7 +1542,7 @@ function assumirGrupo({ eu, grupo, presentes, conta: daConta, sons }) {
   desenharSoundboard();
   preencherSeletorSomEntrada();
 
-  lembrarGrupo(grupo.codigo, grupo.nome);
+  lembrarGrupo(grupo.codigo, grupo.nome, grupo.foto);
   sincronizarConta({ atalhos: estado.atalhos });
   ajustarVigia();
   atualizarConexao(true);
@@ -1554,6 +1607,10 @@ function esquecerGrupo(codigo) {
 
 function desenharCabecalhoDoGrupo() {
   $("nome-grupo").textContent = estado.grupo?.nome ?? "Nenhum grupo";
+  pintarMarcaDeGrupo($("avatar-grupo"), estado.grupo ?? { nome: "Nenhum grupo", foto: "" });
+  const descricao = (estado.grupo?.descricao ?? "").trim();
+  $("descricao-grupo").textContent = descricao;
+  $("descricao-grupo").hidden = !descricao;
 }
 
 /**
@@ -1610,6 +1667,10 @@ function menuDoAtalho(ancora, atalho) {
     { rotulo: "Copiar código do convite", acao: () => copiarCodigoDoConvite(atalho) },
   ];
 
+  if (ehAtivo ? souDono() : true) {
+    itens.unshift("-", { rotulo: "Editar grupo", acao: () => editarGrupoDoAtalho(atalho) });
+  }
+
   if (ehAtivo) itens.push({ rotulo: "Sair do grupo", acao: () => desligar() });
 
   itens.push("-", {
@@ -1620,7 +1681,6 @@ function menuDoAtalho(ancora, atalho) {
 
   if (ehAtivo && souDono()) {
     itens.unshift(
-      { rotulo: "Renomear grupo", acao: renomearGrupo },
       { rotulo: "Nova categoria", acao: criarCategoria },
       "-"
     );
@@ -1641,7 +1701,8 @@ function acharCanal(id) {
 
 function aoEstrutura(grupo) {
   estado.grupo = grupo;
-  lembrarGrupo(grupo.codigo, grupo.nome);
+  lembrarGrupo(grupo.codigo, grupo.nome, grupo.foto);
+  sincronizarConta({ atalhos: estado.atalhos });
 
   // O servidor tira da voz quem estava num canal removido, mas não avisa a
   // própria pessoa — para ela, o aviso é este.
@@ -1660,12 +1721,6 @@ function aoEstrutura(grupo) {
   desenharCabecalhoDoGrupo();
   redesenhar();
   desenharConversa();
-}
-
-function renomearGrupo() {
-  pedirNome("Renomear grupo", estado.grupo.nome, (nome) =>
-    sinal.enviar({ tipo: "renomear", alvo: "grupo", nome })
-  );
 }
 
 function criarCategoria() {

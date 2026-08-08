@@ -332,7 +332,13 @@
            nome. -->
       <aside class="canais">
         <header class="canais__topo" id="canais-topo">
-          <span class="canais__nome" id="nome-grupo">Nenhum grupo</span>
+          <div class="canais__grupo">
+            <span class="grupo__marca canais__grupo-marca" id="avatar-grupo" aria-hidden="true">?</span>
+            <div class="canais__grupo-texto">
+              <span class="canais__nome" id="nome-grupo">Nenhum grupo</span>
+              <span class="canais__descricao" id="descricao-grupo" hidden></span>
+            </div>
+          </div>
         </header>
 
         <nav class="canais__arvore" id="arvore-canais"></nav>
@@ -533,6 +539,106 @@
     </div>
 
     <!-- ══ Meu perfil ═══════════════════════════════════════════════ -->
+    <div class="cortina oculto" id="grupo-dialogo">
+      <div class="painel-perfil" role="dialog" aria-modal="true" aria-labelledby="grupo-titulo">
+        <header class="ajustes__topo">
+          <div>
+            <h3 class="ajustes__titulo" id="grupo-titulo">Editar grupo</h3>
+            <p class="dialogo__texto" id="grupo-texto" hidden></p>
+          </div>
+          <button class="icone" type="button" id="grupo-fechar" title="Fechar" aria-label="Fechar">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+          </button>
+        </header>
+
+        <div class="painel-perfil__corpo">
+          <div class="previa">
+            <button class="previa__avatar-botao" type="button" id="grupo-avatar-botao" title="Escolher foto do grupo">
+              <span class="grupo-avatar grupo-avatar--grande" id="grupo-previa-avatar"></span>
+              <span class="previa__avatar-editar" aria-hidden="true">
+                <svg viewBox="0 0 20 20"><path d="M4 13.5V16h2.5L14.8 7.7l-2.5-2.5z" /><path d="M13.4 4.1l2.5 2.5" /></svg>
+              </span>
+            </button>
+            <div class="previa__texto">
+              <span class="previa__nome" id="grupo-previa-nome">—</span>
+              <span class="previa__lema" id="grupo-previa-lema">—</span>
+            </div>
+          </div>
+
+          <p class="portal__erro" id="grupo-foto-erro" hidden></p>
+          <input type="file" id="grupo-foto-arquivo" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+
+          <div class="ajuste">
+            <label class="ajuste__rotulo" for="grupo-nome">Nome do grupo</label>
+            <input class="campo__entrada" id="grupo-nome" maxlength="40" placeholder="Equipe de produto" />
+            <p class="ajuste__dica">
+              A foto aparece na lista de grupos e no topo do canal. Sem foto, o CALL usa as iniciais.
+            </p>
+          </div>
+
+          <div class="ajuste">
+            <div class="campo__cabecalho">
+              <label class="ajuste__rotulo" for="grupo-descricao">Descrição</label>
+              <span class="campo__aviso" id="grupo-descricao-conta">0/160</span>
+            </div>
+            <textarea
+              class="campo__entrada campo__area"
+              id="grupo-descricao"
+              maxlength="160"
+              rows="3"
+              placeholder="Sobre o que é este grupo?"
+            ></textarea>
+            <p class="ajuste__dica">
+              Ajuda quem entra a entender o contexto do grupo antes de sair falando.
+            </p>
+          </div>
+        </div>
+
+        <footer class="painel-perfil__rodape">
+          <button class="botao botao--sutil" type="button" id="grupo-cancelar">Cancelar</button>
+          <button class="botao botao--primario" type="button" id="grupo-confirmar">Salvar</button>
+        </footer>
+      </div>
+    </div>
+
+    <div class="cortina oculto" id="foto-dialogo">
+      <div class="painel-perfil foto-editor" role="dialog" aria-modal="true" aria-labelledby="foto-titulo">
+        <header class="ajustes__topo">
+          <div>
+            <h3 class="ajustes__titulo" id="foto-titulo">Ajustar foto</h3>
+            <p class="dialogo__texto" id="foto-texto">Arraste para posicionar e use o zoom para aproximar.</p>
+          </div>
+          <button class="icone" type="button" id="foto-fechar" title="Fechar" aria-label="Fechar">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+          </button>
+        </header>
+
+        <div class="painel-perfil__corpo foto-editor__corpo">
+          <div class="foto-editor__palco">
+            <div class="foto-editor__quadro" id="foto-quadro">
+              <div class="foto-editor__imagem" id="foto-imagem"></div>
+            </div>
+          </div>
+
+          <div class="ajuste">
+            <div class="campo__cabecalho">
+              <label class="ajuste__rotulo" for="foto-zoom">Zoom</label>
+              <span class="campo__aviso" id="foto-zoom-valor">100%</span>
+            </div>
+            <input class="deslizante" id="foto-zoom" type="range" min="1" max="4" step="0.01" value="1" />
+            <p class="ajuste__dica" id="foto-ajuda">
+              O recorte final segue o círculo/quadrado do avatar em todo o CALL.
+            </p>
+          </div>
+        </div>
+
+        <footer class="painel-perfil__rodape">
+          <button class="botao botao--sutil" type="button" id="foto-cancelar">Cancelar</button>
+          <button class="botao botao--primario" type="button" id="foto-confirmar">Usar esta foto</button>
+        </footer>
+      </div>
+    </div>
+
     <div class="cortina oculto" id="perfil-dialogo">
       <div class="painel-perfil" role="dialog" aria-modal="true" aria-labelledby="perfil-titulo">
         <header class="ajustes__topo">
@@ -1306,6 +1412,13 @@
       <hr class="menu__risco" />
       <button class="menu__item" type="button" id="seletor-avatar-foto">Escolher foto ou GIF…</button>
       <button class="menu__item oculto" type="button" data-perigo="sim" id="seletor-avatar-remover">
+        Remover foto
+      </button>
+    </div>
+
+    <div class="seletor-avatar seletor-avatar--grupo oculto" id="seletor-foto-grupo" role="menu">
+      <button class="menu__item" type="button" id="seletor-foto-grupo-escolher">Escolher foto ou GIF…</button>
+      <button class="menu__item oculto" type="button" data-perigo="sim" id="seletor-foto-grupo-remover">
         Remover foto
       </button>
     </div>

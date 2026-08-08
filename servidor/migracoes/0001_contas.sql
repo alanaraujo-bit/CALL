@@ -25,6 +25,7 @@ CREATE TABLE atalhos (
     conta_id  TEXT NOT NULL REFERENCES contas(id) ON DELETE CASCADE,
     codigo    TEXT NOT NULL,
     nome      TEXT NOT NULL,
+    foto      TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (conta_id, codigo)
 );
 

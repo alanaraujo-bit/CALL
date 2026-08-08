@@ -93,6 +93,8 @@ pub const SENHA_MAX: usize = 128;
 pub struct Atalho {
     pub codigo: String,
     pub nome: String,
+    #[serde(default)]
+    pub foto: String,
 }
 
 /// Quantos pedidos de amizade pendentes cabem numa conta. Generoso para uso
@@ -430,7 +432,7 @@ impl Cofre {
 
     /// Anota o grupo na conta de quem acabou de entrar nele. Devolve `true`
     /// quando algo mudou, para nao regravar a vista toa.
-    pub async fn lembrar_grupo(&self, id: &str, codigo: &str, nome: &str) -> bool {
+    pub async fn lembrar_grupo(&self, id: &str, codigo: &str, nome: &str, foto: &str) -> bool {
         match &self.armazem {
             Armazem::Arquivo(estado) => {
                 let mut e = estado.lock().unwrap();
@@ -438,18 +440,22 @@ impl Cofre {
                     return false;
                 };
                 match conta.atalhos.iter_mut().find(|a| a.codigo == codigo) {
-                    Some(existente) if existente.nome == nome => return false,
-                    Some(existente) => existente.nome = nome.to_string(),
+                    Some(existente) if existente.nome == nome && existente.foto == foto => return false,
+                    Some(existente) => {
+                        existente.nome = nome.to_string();
+                        existente.foto = foto.to_string();
+                    }
                     None => conta.atalhos.push(Atalho {
                         codigo: codigo.to_string(),
                         nome: nome.to_string(),
+                        foto: foto.to_string(),
                     }),
                 }
                 e.salvar_contas();
                 true
             }
             #[cfg(feature = "banco")]
-            Armazem::Postgres(pool) => postgres::lembrar_grupo(pool, id, codigo, nome).await,
+            Armazem::Postgres(pool) => postgres::lembrar_grupo(pool, id, codigo, nome, foto).await,
         }
     }
 
@@ -1073,13 +1079,15 @@ mod postgres {
         som_entrada_origem, som_entrada_grupo, som_entrada_id";
 
     async fn atalhos_de(pool: &PgPool, conta_id: &str) -> Vec<Atalho> {
-        sqlx::query_as::<_, (String, String)>("SELECT codigo, nome FROM atalhos WHERE conta_id = $1 ORDER BY codigo")
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT codigo, nome, foto FROM atalhos WHERE conta_id = $1 ORDER BY codigo",
+        )
             .bind(conta_id)
             .fetch_all(pool)
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|(codigo, nome)| Atalho { codigo, nome })
+            .map(|(codigo, nome, foto)| Atalho { codigo, nome, foto })
             .collect()
     }
 
@@ -1150,12 +1158,13 @@ mod postgres {
             }
             for atalho in &conta.atalhos {
                 let _ = sqlx::query(
-                    "INSERT INTO atalhos (conta_id, codigo, nome) VALUES ($1, $2, $3)
+                    "INSERT INTO atalhos (conta_id, codigo, nome, foto) VALUES ($1, $2, $3, $4)
                      ON CONFLICT (conta_id, codigo) DO NOTHING",
                 )
                 .bind(&conta.id)
                 .bind(&atalho.codigo)
                 .bind(&atalho.nome)
+                .bind(&atalho.foto)
                 .execute(pool)
                 .await;
             }
@@ -1346,12 +1355,14 @@ mod postgres {
             let _ = sqlx::query("DELETE FROM atalhos WHERE conta_id = $1").bind(id).execute(pool).await;
             for a in &lista {
                 let _ = sqlx::query(
-                    "INSERT INTO atalhos (conta_id, codigo, nome) VALUES ($1, $2, $3)
-                     ON CONFLICT (conta_id, codigo) DO UPDATE SET nome = EXCLUDED.nome",
+                    "INSERT INTO atalhos (conta_id, codigo, nome, foto) VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (conta_id, codigo) DO UPDATE
+                     SET nome = EXCLUDED.nome, foto = EXCLUDED.foto",
                 )
                 .bind(id)
                 .bind(&a.codigo)
                 .bind(&a.nome)
+                .bind(&a.foto)
                 .execute(pool)
                 .await;
             }
@@ -1359,15 +1370,18 @@ mod postgres {
         true
     }
 
-    pub async fn lembrar_grupo(pool: &PgPool, id: &str, codigo: &str, nome: &str) -> bool {
+    pub async fn lembrar_grupo(pool: &PgPool, id: &str, codigo: &str, nome: &str, foto: &str) -> bool {
         let resultado = sqlx::query(
-            "INSERT INTO atalhos (conta_id, codigo, nome) VALUES ($1, $2, $3)
-             ON CONFLICT (conta_id, codigo) DO UPDATE SET nome = EXCLUDED.nome
-             WHERE atalhos.nome IS DISTINCT FROM EXCLUDED.nome",
+            "INSERT INTO atalhos (conta_id, codigo, nome, foto) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (conta_id, codigo) DO UPDATE
+             SET nome = EXCLUDED.nome, foto = EXCLUDED.foto
+             WHERE atalhos.nome IS DISTINCT FROM EXCLUDED.nome
+                OR atalhos.foto IS DISTINCT FROM EXCLUDED.foto",
         )
         .bind(id)
         .bind(codigo)
         .bind(nome)
+        .bind(foto)
         .execute(pool)
         .await;
 
