@@ -76,6 +76,33 @@ conferir(
 
 conferir(OCULTOS.has("explorer"), "a lista de ocultos está montada");
 
+/* ─── Programas cadastrados a mão ────────────────────────────────── */
+
+console.log("\nQuando a pessoa cadastrou o programa a mão");
+
+const cadastrados = new Map([["meujogo", { nome: "Meu Jogo Preferido" }]]);
+
+igual(
+  nomeVisivel({ exe: "meujogo", nome: "MeuJogo" }, cadastrados),
+  "Meu Jogo Preferido",
+  "o nome cadastrado substitui o nome bruto"
+);
+igual(
+  nomeVisivel({ exe: "outrojogo", nome: "Outro" }, cadastrados),
+  "Outro",
+  "um exe sem cadastro segue a política normal"
+);
+igual(
+  nomeVisivel({ exe: "explorer", nome: "Windows Explorer" }, new Map([["explorer", { nome: "Área de trabalho" }]])),
+  "Área de trabalho",
+  "um cadastro vale mesmo para um exe da lista de ocultos"
+);
+igual(
+  nomeVisivel({ exe: "jogo", nome: "x" }, new Map([["jogo", { nome: "N".repeat(200) }]])).length,
+  ATIVIDADE_MAX,
+  "o nome cadastrado também é cortado no teto"
+);
+
 /* ─── A calma do anúncio ─────────────────────────────────────────── */
 
 console.log("\nQuando o anúncio acontece");
@@ -184,6 +211,31 @@ const nave = { exe: "nave", nome: "Navegador" };
   await vigia.olhar();
   vigia.desligar(false);
   igual(anunciado.length, 1, "desligar sem anunciar não fala na rede");
+}
+
+/* ─── O que alimenta o cadastro manual ───────────────────────────── */
+
+console.log("\nO que a Vigia expõe para o cadastro manual");
+
+{
+  // O mapa de cadastrados é lido de novo a cada leitura: cadastrar um
+  // programa novo com a Vigia já ligada tem efeito na próxima leitura, sem
+  // precisar religar nada.
+  const cadastrados = new Map();
+  const anunciado = [];
+  const vigia = new Vigia({
+    ler: async () => ({ exe: "explorer", nome: "Windows Explorer" }),
+    aoMudar: (v) => anunciado.push(v),
+    personalizados: () => cadastrados,
+  });
+  await vigia.olhar();
+  await vigia.olhar();
+  igual(anunciado.length, 0, "sem cadastro, a área de trabalho continua oculta");
+
+  cadastrados.set("explorer", { nome: "Área de trabalho" });
+  await vigia.olhar(); // candidato
+  await vigia.olhar(); // confirma, como qualquer outro programa
+  igual(anunciado.join(""), "Área de trabalho", "o cadastro feito depois já vale, seguindo a mesma calma de sempre");
 }
 
 console.log("");

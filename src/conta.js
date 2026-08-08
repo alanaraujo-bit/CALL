@@ -188,6 +188,48 @@ export async function guardar(servidor, token, campos, enviar = null) {
   }
 }
 
+/* ═══ Biblioteca pessoal de sons ════════════════════════════════ */
+//
+// Presos à conta, e não a um grupo — ver a nota em `contas.rs`. Cada chamada
+// abre a própria transação, do mesmo jeito que `guardar`: é uma ação rara
+// (adicionar um som, trocar o som de entrada), não algo que precise de um
+// socket já aberto.
+
+export async function listarSonsPessoais(servidor, token) {
+  if (!token) return [];
+  try {
+    const resposta = await transacao(servidor, { tipo: "listar-sons-pessoais", token }, [
+      "sons-pessoais",
+      "sem-sessao",
+    ]);
+    return resposta.tipo === "sons-pessoais" ? resposta.sons : [];
+  } catch {
+    return [];
+  }
+}
+
+export const adicionarSomPessoal = (servidor, token, nome, mime, dados) =>
+  transacao(servidor, { tipo: "adicionar-som-pessoal", token, nome, mime, dados }, [
+    "som-pessoal-adicionado",
+  ]);
+
+export const removerSomPessoal = (servidor, token, id) =>
+  transacao(servidor, { tipo: "remover-som-pessoal", token, id }, ["som-pessoal-removido"]);
+
+export const pedirSomPessoal = (servidor, token, id) =>
+  transacao(servidor, { tipo: "pedir-som-pessoal", token, id }, ["som"]);
+
+/** `preferencia` é `{ origem: "grupo" | "pessoal", grupo, id }`, ou `null`
+ *  para voltar ao sino sintetizado padrão. Devolve a conta atualizada. */
+export async function escolherSomEntrada(servidor, token, preferencia) {
+  const resposta = await transacao(
+    servidor,
+    { tipo: "escolher-som-entrada", token, preferencia },
+    ["conta", "sem-sessao"]
+  );
+  return resposta.tipo === "conta" ? resposta.conta : null;
+}
+
 /* ═══ Força da senha ════════════════════════════════════════════ */
 
 const RUINS = [

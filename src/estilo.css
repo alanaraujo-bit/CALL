@@ -71,7 +71,6 @@ textarea {
    texto que a pessoa escreveu, e o código do convite, existem para ser
    copiados. */
 .mensagem__texto,
-.convite__codigo,
 .redator__campo {
   user-select: text;
   cursor: text;
@@ -114,6 +113,158 @@ svg {
 :focus-visible {
   outline: 2px solid var(--acento);
   outline-offset: 2px;
+}
+
+/* ─── Brilho do cursor ─────────────────────────────────────────── */
+
+/* Uma mancha de luz roxa presa ao cursor, por cima de toda a janela — entra
+   e sai de cada tela sem precisar ser recriada, porque vive uma vez só no
+   corpo. `screen` só clareia o que está embaixo, nunca escurece, e por isso
+   nunca derruba o contraste do texto por baixo, por mais que o mouse pare em
+   cima de uma frase. Fica abaixo dos diálogos (`.cortina`, z-index 40): uma
+   janela de confirmação não deveria ganhar um tom roxo por causa de onde o
+   mouse estava um instante antes dela abrir. */
+.brilho-cursor {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 0;
+  transition: opacity 480ms ease;
+  background: radial-gradient(
+    460px circle at var(--brilho-x, 50%) var(--brilho-y, 50%),
+    rgba(139, 148, 255, 0.2),
+    rgba(124, 131, 230, 0.08) 34%,
+    transparent 68%
+  );
+}
+
+.brilho-cursor--ativo {
+  opacity: 1;
+}
+
+/* Sem cursor de verdade não há o que seguir, e num dedo sobre o vidro a
+   mancha só ficaria presa onde o último toque foi. */
+@media (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .brilho-cursor {
+    display: none;
+  }
+}
+
+/* ─── Tela de carregando ───────────────────────────────────────── */
+
+.carregando {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--fundo);
+  opacity: 1;
+  transition: opacity 380ms ease;
+}
+
+/* O JS acrescenta esta classe quando a decisão — abrir a aplicação ou
+   mostrar o portal — já foi tomada e a tela de baixo já está montada. A
+   camada só desaparece, nunca é removida por baixo dos dedos de quem talvez
+   ainda esteja lendo a marca. */
+.carregando--saindo {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.carregando__mancha {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: radial-gradient(
+      60% 52% at 50% 42%,
+      rgba(95, 106, 217, 0.14),
+      transparent 62%
+    ),
+    var(--fundo);
+}
+
+.carregando__conteudo {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  animation: carregando-surgir 560ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes carregando-surgir {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.carregando__glifo {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 44px;
+}
+
+.carregando__glifo i {
+  width: 6px;
+  border-radius: 999px;
+  background: var(--texto-2);
+  animation: carregando-pulsar 1100ms cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.carregando__glifo i:nth-child(1),
+.carregando__glifo i:nth-child(5) {
+  background: #7b84e6;
+  animation-delay: 0ms;
+}
+.carregando__glifo i:nth-child(2),
+.carregando__glifo i:nth-child(4) {
+  background: #a8b0f2;
+  animation-delay: 120ms;
+}
+.carregando__glifo i:nth-child(3) {
+  background: var(--acento);
+  animation-delay: 240ms;
+}
+
+@keyframes carregando-pulsar {
+  0%,
+  100% {
+    height: 10px;
+    opacity: 0.5;
+  }
+  50% {
+    height: 44px;
+    opacity: 1;
+  }
+}
+
+.carregando__nome {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--texto-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .carregando__glifo i {
+    animation: none;
+    height: 26px;
+    opacity: 0.85;
+  }
+  .carregando__conteudo {
+    animation: none;
+  }
 }
 
 /* ─── Tela de entrada ──────────────────────────────────────────── */
@@ -893,6 +1044,7 @@ svg {
 .campo__entrada {
   width: 100%;
   background: var(--superficie-2);
+  color: var(--texto);
   border: 1px solid var(--borda);
   border-radius: var(--raio-p);
   padding: 9px 11px;
@@ -1125,29 +1277,51 @@ svg {
 .aplicacao {
   height: 100%;
   display: grid;
-  grid-template-columns: 190px 212px 1fr 208px;
+  /* Variáveis, e não valores soltos no template: `data-presentes` e as faixas
+     de largura mais adiante mexem só na coluna que interessa, sem repetir as
+     outras três em cada regra. */
+  --largura-grupos: 64px;
+  --largura-canais: 212px;
+  --largura-presentes: 208px;
+  grid-template-columns: var(--largura-grupos) var(--largura-canais) 1fr var(--largura-presentes);
   /* Uma linha só. Sem isto, uma coluna a mais do que o template declara não
      estoura o layout de forma visível: ela desce para uma segunda linha, e as
      colunas de cima encolhem para caber. */
   grid-template-rows: 100%;
+  transition: grid-template-columns 220ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+/* Fechada, a coluna não reserva espaço nenhum — e não só fica vazia com uma
+   borda solta no meio da tela. `min-width: 941px` é de propósito: abaixo
+   disso a faixa de 940px logo adiante já decide sozinha, e as duas brigando
+   pela mesma variável só bagunçaria uma janela pequena. */
+@media (min-width: 941px) {
+  .aplicacao[data-presentes="fechado"] {
+    --largura-presentes: 0px;
+  }
 }
 
 /* ─── Coluna: grupos ───────────────────────────────────────────── */
 
+/* Um trilho de ícones, não uma lista com nome — o nome de cada grupo mora no
+   `title` do próprio botão, e aparece no balão nativo do navegador ao passar
+   o mouse. Uma coluna com texto sempre reservava 190 px mesmo sem grupo
+   nenhum; esta reserva 64, e o resto da tela é o que a pessoa veio ver. */
 .grupos {
   display: flex;
   flex-direction: column;
+  align-items: center;
   background: var(--superficie-1);
   border-right: 1px solid var(--borda);
 }
 
 .grupos__topo {
   height: 48px;
+  width: 100%;
   flex: none;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 0 12px 0 16px;
+  justify-content: center;
   border-bottom: 1px solid var(--borda);
 }
 
@@ -1171,63 +1345,52 @@ svg {
   background: var(--acento);
 }
 
-.grupos__titulo {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--texto-3);
-}
-
 .grupos__lista {
   flex: 1;
+  width: 100%;
   overflow-y: auto;
-  padding: 8px;
+  overflow-x: hidden;
+  padding: 8px 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
 }
 
 .grupo {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 9px;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  padding: 0;
   border: none;
   background: transparent;
-  border-radius: var(--raio-p);
-  color: var(--texto-2);
-  font-size: 13.5px;
-  text-align: left;
+  border-radius: var(--raio-m);
   cursor: pointer;
-  transition: background var(--transicao), color var(--transicao);
+  transition: background var(--transicao);
 }
 
 .grupo:hover {
   background: var(--superficie-2);
-  color: var(--texto);
-}
-
-.grupo--ativo {
-  background: var(--superficie-3);
-  color: var(--texto);
-  box-shadow: inset 2px 0 0 0 var(--acento);
 }
 
 .grupo__marca {
-  width: 24px;
-  height: 24px;
+  width: 34px;
+  height: 34px;
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--raio-m);
   background: var(--superficie-3);
   border: 1px solid var(--borda);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--texto-3);
   text-transform: uppercase;
-  transition: color var(--transicao), border-color var(--transicao);
+  transition: color var(--transicao), border-color var(--transicao),
+    background var(--transicao);
 }
 
 .grupo--ativo .grupo__marca {
@@ -1236,45 +1399,37 @@ svg {
   background: var(--acento-suave);
 }
 
-.grupo__nome {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.grupos__vazio {
-  padding: 14px 10px;
-  font-size: 12px;
+/* O "+" fica sempre no fim do trilho, mesmo sem grupo nenhum ainda — é a
+   única ação que precisa ser óbvia sem depender do botão direito. */
+.grupo__marca--novo {
+  background: transparent;
+  border-style: dashed;
   color: var(--texto-3);
-  line-height: 1.5;
 }
 
-.grupos__acoes {
-  flex: none;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid var(--borda);
+.grupo__marca--novo svg {
+  width: 16px;
+  height: 16px;
 }
 
-.grupos__acoes .botao {
-  height: 30px;
-  font-size: 12.5px;
+.grupo--novo:hover .grupo__marca--novo {
+  border-style: solid;
+  border-color: var(--acento);
+  color: var(--acento);
 }
 
 .grupos__rodape {
   flex: none;
-  padding: 10px 12px;
+  width: 100%;
+  padding: 10px 0 12px;
   border-top: 1px solid var(--borda);
 }
 
 .perfil {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 9px;
-  min-width: 0;
+  gap: 8px;
 }
 
 .perfil__texto {
@@ -1323,6 +1478,21 @@ svg {
   overflow: hidden;
 }
 
+/* Mesma ideia da arte do mascote: a foto ocupa o disco inteiro, sem anel de
+   fundo por trás. */
+.avatar--foto {
+  background: none;
+  border-color: transparent;
+  overflow: hidden;
+}
+
+.avatar--foto img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .mascote {
   display: block;
   width: 100%;
@@ -1338,6 +1508,7 @@ svg {
 /* ─── Coluna: canais ───────────────────────────────────────────── */
 
 .canais {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1363,62 +1534,6 @@ svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Rótulo e ação em cima, código embaixo. Numa coluna de 212 px, os três lado
-   a lado truncavam justamente o código — que é a única parte que se copia. */
-.convite {
-  flex: none;
-  margin: 8px 8px 0;
-  padding: 7px 10px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  background: var(--superficie-1);
-  border: 1px solid var(--borda);
-  border-radius: var(--raio-p);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color var(--transicao), background var(--transicao);
-}
-
-.convite:hover {
-  border-color: var(--borda-forte);
-  background: var(--superficie-3);
-}
-
-.convite__topo {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.convite__rotulo {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--texto-3);
-}
-
-.convite__codigo {
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  font-size: 14px;
-  letter-spacing: 0.1em;
-  color: var(--texto);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.convite__acao {
-  font-size: 11px;
-  color: var(--texto-3);
-}
-
-.convite:hover .convite__acao {
-  color: #a8b0f2;
 }
 
 .canais__arvore {
@@ -1642,6 +1757,114 @@ svg {
   justify-content: center;
 }
 
+/* ─── Soundboard ───────────────────────────────────────────────── */
+
+.soundboard {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 128px;
+  z-index: 20;
+  max-height: min(360px, 60vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-m);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.soundboard__topo {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--borda);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.soundboard__adicionar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: var(--acento);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.soundboard__lista {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.soundboard__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--raio-p);
+}
+
+.soundboard__item:hover {
+  background: var(--superficie-3);
+}
+
+.soundboard__nome {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.soundboard__tocar,
+.soundboard__remover {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--superficie-3);
+  color: var(--texto-2);
+  cursor: pointer;
+}
+
+.soundboard__tocar:hover {
+  background: var(--acento-suave);
+  color: var(--acento);
+}
+
+.soundboard__remover:hover {
+  color: var(--perigo, #e5484d);
+}
+
+.soundboard__vazio {
+  margin: 0;
+  padding: 16px 12px;
+  font-size: 11.5px;
+  color: var(--texto-3);
+  text-align: center;
+}
+
+.soundboard__lista--ajustes {
+  max-height: 160px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-p);
+  margin-top: 8px;
+}
+
 /* ─── Coluna: sala ─────────────────────────────────────────────── */
 
 .sala {
@@ -1660,6 +1883,44 @@ svg {
   gap: 16px;
   padding: 0 18px;
   border-bottom: 1px solid var(--borda);
+}
+
+.sala__acoes {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icone--presentes {
+  position: relative;
+}
+
+/* Aceso quando a coluna está aberta — a mesma cor de fundo que qualquer outro
+   controle "ligado" do aplicativo, para não inventar uma segunda linguagem só
+   para este botão. */
+.icone--presentes[aria-pressed="true"] {
+  background: var(--superficie-3);
+  color: var(--texto);
+}
+
+.icone--presentes .contador {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 9.5px;
+  background: var(--acento);
+  color: #fff;
+  border: 2px solid var(--fundo);
+}
+
+/* Com a coluna já aberta o número reaparece lá dentro (`#contador-participantes`);
+   repeti-lo aqui em cima seria a mesma contagem duas vezes na mesma tela. */
+.icone--presentes[aria-pressed="true"] .contador {
+  display: none;
 }
 
 .sala__identidade {
@@ -1941,11 +2202,154 @@ svg {
   white-space: pre-wrap;
 }
 
+/* ─── Emoji, reações e a linha que os carrega ─────────────────────
+   Cada mensagem virou uma `.mensagem__linha`: o texto, a fileira de
+   reações (só existe com pelo menos uma) e o botão de reagir, que só
+   aparece no hover — a mesma regra de "nada exposto sem uma ação" que o
+   resto do CALL segue. */
+
+.mensagem__linha {
+  position: relative;
+}
+
 /* Mensagem seguida da mesma pessoa: alinhada sob o texto anterior, sem
    repetir avatar e nome. */
-.mensagem__texto--seguida {
+.mensagem__linha--seguida {
   padding-left: 39px;
   margin-top: 2px;
+}
+
+.emoji {
+  display: inline-flex;
+  vertical-align: -4px;
+}
+
+.emoji svg {
+  width: 18px;
+  height: 18px;
+}
+
+.emoji--linha svg {
+  width: 19px;
+  height: 19px;
+  vertical-align: -1px;
+}
+
+.emoji--pilula svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mensagem__acoes {
+  position: absolute;
+  top: -15px;
+  right: 6px;
+  display: flex;
+  padding: 2px;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-p);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transicao);
+}
+
+.mensagem__linha:hover .mensagem__acoes,
+.mensagem__linha:focus-within .mensagem__acoes {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mensagem__reagir {
+  width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  border-radius: var(--raio-p);
+  color: var(--texto-3);
+  cursor: pointer;
+  transition: background var(--transicao), color var(--transicao);
+}
+
+.mensagem__reagir svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mensagem__reagir:hover {
+  background: var(--superficie-2);
+  color: var(--texto);
+}
+
+.mensagem__reacoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.reacao-pilula {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 5px;
+  border: 1px solid var(--borda);
+  background: var(--superficie-2);
+  border-radius: 999px;
+  color: var(--texto-2);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color var(--transicao), background var(--transicao), color var(--transicao);
+}
+
+.reacao-pilula:hover {
+  border-color: var(--borda-forte);
+}
+
+.reacao-pilula[data-minha="sim"] {
+  border-color: rgba(95, 106, 217, 0.55);
+  background: var(--acento-suave);
+  color: var(--texto);
+}
+
+/* ─── Seletor de emoji ─────────────────────────────────────────── */
+
+.seletor-emoji {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  gap: 2px;
+  padding: 5px;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-m);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  animation: surgir 130ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.seletor-emoji__item {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  border-radius: var(--raio-p);
+  cursor: pointer;
+  transition: background var(--transicao), transform var(--transicao);
+}
+
+.seletor-emoji__item:hover {
+  background: var(--superficie-2);
+  transform: translateY(-2px);
+}
+
+.seletor-emoji__item .emoji svg {
+  width: 27px;
+  height: 27px;
 }
 
 /* ─── Redator ──────────────────────────────────────────────────── */
@@ -1954,9 +2358,9 @@ svg {
   flex: none;
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 4px;
   margin: 0 18px 16px;
-  padding: 7px 7px 7px 13px;
+  padding: 6px;
   background: var(--superficie-2);
   border: 1px solid var(--borda);
   border-radius: var(--raio-m);
@@ -2146,11 +2550,26 @@ svg {
 }
 
 .participante__atividade {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   font-size: 11px;
   color: var(--texto-3);
+}
+
+.participante__atividade span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.participante__atividade-icone {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  object-fit: cover;
 }
 
 .participante[data-falando="sim"] .avatar {
@@ -2432,6 +2851,170 @@ svg {
   flex: none;
 }
 
+/* Ler o que mudou antes de decidir: o botão é o menor elemento do cartão, e
+   o texto dele não compete com os dois botões de decisão — é convite à
+   leitura, não ação. A cor de acento já diz "clique aqui" sem precisar de
+   moldura. */
+.atualizacao__novidades {
+  align-self: flex-start;
+  margin-top: 1px;
+  padding: 1px 0;
+  border: none;
+  background: none;
+  color: var(--acento);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--transicao);
+}
+
+.atualizacao__novidades:hover {
+  color: #a8b0f2;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ─── Novidades da versão nova ────────────────────────────────── */
+
+/* O cartão do que mudou. Mais largo que o diálogo comum porque o corpo é
+   texto de leitura — e um cartão estreito faria cada frase dobrarem em três
+   linhas. O corpo rola sozinho quando as notas de uma versão são longas. */
+.novidades {
+  width: min(480px, calc(100vw - 40px));
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-g);
+  overflow: hidden;
+  animation: surgir 180ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.novidades__topo {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.novidades__cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.novidades__etiqueta {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--raio-m);
+  background: var(--acento-suave);
+  border: 1px solid rgba(95, 106, 217, 0.22);
+  color: #a8b0f2;
+}
+
+.novidades__etiqueta svg {
+  width: 17px;
+  height: 17px;
+}
+
+.novidades__dizeres {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.novidades__titulo {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.novidades__versao {
+  font-size: 11.5px;
+  color: var(--texto-3);
+}
+
+.novidades__corpo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--texto-2);
+  user-select: text;
+  cursor: text;
+}
+
+/* Uma versão sem notas ainda mostra por que ela existe — o "só isso?" tem
+   resposta. */
+.novidades__vazio {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--texto-3);
+  line-height: 1.6;
+}
+
+.novidades__secao {
+  margin: 4px 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+
+.novidades__secao:first-child {
+  margin-top: 0;
+}
+
+.novidades__lista {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+}
+
+.novidades__item {
+  position: relative;
+  padding-left: 16px;
+  margin-bottom: 7px;
+}
+
+/* O ponto do item é a mesma marca do texto selecionável de sempre — um
+   círculo pequeno de acento, discreto e suficiente para hierarquia. */
+.novidades__item::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--acento);
+}
+
+.novidades__item strong {
+  color: var(--texto);
+  font-weight: 600;
+}
+
+.novidades__rodape {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--borda);
+}
+
 /* ─── Menu suspenso ────────────────────────────────────────────── */
 
 .menu {
@@ -2558,14 +3141,14 @@ svg {
 /* ═══ Ajustes de voz e vídeo ══════════════════════════════════════ */
 
 .perfil .icone {
-  /* Empurrado para a borda: o nome do meio pode ser longo, e o botão não deve
-     ser o que encolhe. */
-  margin-left: auto;
+  /* `.perfil` virou coluna no trilho estreito — não sobra nome nenhum ao
+     lado que justifique empurrar isto para uma borda. Sem `margin-left:
+     auto`, `align-items: center` do pai já centraliza os dois botões. */
   flex: none;
 }
 
 .ajustes {
-  width: 460px;
+  width: 500px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 48px);
   display: flex;
@@ -2621,10 +3204,130 @@ svg {
   overflow-y: auto;
 }
 
+/* Endereço de servidor e "hospedar" — real, mas raramente usado. Fora da
+   fileira de abas, discreto, para quem nunca precisa nem notar que existe. */
+.ajustes__avancado {
+  align-self: center;
+  margin: 0 0 14px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.ajustes__avancado:hover {
+  background: var(--superficie-2);
+}
+
+.ajustes__avancado[aria-selected="true"] {
+  color: var(--acento);
+}
+
 .ajustes__risco {
   border: 0;
   border-top: 1px solid var(--borda);
   margin: 16px 0;
+}
+
+/* ── Seções: cada painel virou um agrupado de cartões, um por assunto, em
+   vez de uma coluna só de controles separados por traços. E cada cartão
+   começa fechado — só o título e o ícone dizem do que se trata; o resto só
+   aparece para quem clica. Uma tela com cinco cartões abertos ao mesmo tempo
+   ainda é uma tela cheia de tudo de uma vez, só que com mais bordas no meio;
+   fechados, ela mostra cinco assuntos, e a pessoa escolhe qual quer olhar. ── */
+
+.ajustes__secao {
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+}
+
+.ajustes__secao + .ajustes__secao {
+  margin-top: 14px;
+}
+
+.ajustes__secao-topo {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--raio-m);
+}
+
+.ajustes__secao-topo:hover {
+  background: var(--superficie-3);
+}
+
+.ajustes__secao-glifo {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: var(--texto-3);
+}
+
+.ajustes__secao-glifo svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ajustes__secao-titulo {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--texto);
+}
+
+.ajustes__secao-seta {
+  margin-left: auto;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--texto-3);
+  transition: transform 160ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+/* Fechado é o padrão visual — a seta aponta para o lado, "tem mais aqui" — e
+   gira para baixo só quando o cartão já mostrou o que tinha. */
+.ajustes__secao[data-aberto="nao"] .ajustes__secao-seta {
+  transform: rotate(-90deg);
+}
+
+.ajustes__secao-corpo {
+  padding: 0 14px 14px;
+  animation: surgir 140ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.ajustes__secao[data-aberto="nao"] .ajustes__secao-corpo {
+  display: none;
+}
+
+/* O primeiro controle do cartão não precisa do respiro que separa um
+   `.ajuste` do anterior — o corpo já começa direto no primeiro. */
+.ajustes__secao-corpo > .ajuste:first-of-type,
+.ajustes__secao-corpo > .chave:first-of-type {
+  margin-top: 0;
+}
+
+/* O selo diz, sem precisar abrir o seletor, que o CALL já escolheu por
+   conta própria — e que a escolha segue o sistema, não fica presa a um
+   fone que foi desconectado. Some assim que a pessoa escolhe um
+   dispositivo à mão. */
+.ajuste__selo {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--acento-suave);
+  border: 1px solid rgba(95, 106, 217, 0.3);
+  font-size: 10.5px;
+  color: #a8b0f2;
+  white-space: nowrap;
 }
 
 .ajuste + .ajuste,
@@ -2638,6 +3341,147 @@ svg {
   margin-left: 30px;
   padding-left: 12px;
   border-left: 1px solid var(--borda);
+}
+
+/* ── Cadastro manual de atividade ────────────────────────────────── */
+
+.atividade-manual {
+  margin-top: 10px;
+}
+
+#atividade-sugestao {
+  margin-bottom: 8px;
+}
+
+#atividade-cadastrar-botao {
+  width: 100%;
+}
+
+.atividade-form {
+  margin-top: 8px;
+}
+
+.atividade-form__executavel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.atividade-form__executavel-nome {
+  font-size: 12.5px;
+  color: var(--texto-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atividade-form__linha {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.atividade-form__icone {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--raio-p);
+  border: 1px dashed var(--borda-forte);
+  background: var(--superficie-2);
+  color: var(--texto-3);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color var(--transicao), color var(--transicao);
+}
+
+.atividade-form__icone:hover {
+  border-color: var(--acento);
+  color: var(--texto-2);
+}
+
+.atividade-form__icone svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.atividade-form__icone img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.atividade-form__acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.atividade-lista {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.atividade-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--raio-p);
+  background: var(--superficie-2);
+}
+
+.atividade-item__icone {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--superficie-3);
+}
+
+.atividade-item__icone img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.atividade-item__nome {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atividade-item__acao {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+.atividade-item__acao svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
 }
 
 .ajuste__cabecalho {
@@ -2674,6 +3518,16 @@ svg {
 
 .ajuste__dica--solta {
   margin-top: 16px;
+}
+
+/* O `color` do `.campo__entrada` chega até o texto do seletor fechado por
+   herança, mas a lista aberta é desenhada pelo sistema operacional, fora do
+   alcance normal do CSS — sem cor e fundo declarados aqui, direto no
+   `<option>`, ela cai no padrão do Windows: texto escuro sobre um fundo que
+   também herdava escuro, ilegível. */
+select.campo__entrada option {
+  color: var(--texto);
+  background: var(--superficie-2);
 }
 
 select.campo__entrada {
@@ -3267,6 +4121,40 @@ select.campo__entrada {
   background: var(--superficie-2);
 }
 
+/* No trilho estreito não sobra lugar para nome e estado por extenso — o
+   `title` do botão continua dizendo quem é, e um pontinho no avatar diz se
+   está ligado, do mesmo jeito que o resto do aplicativo já sinaliza presença
+   em voz. */
+.grupos__rodape .perfil__eu {
+  flex: none;
+  margin: 0;
+  padding: 0;
+}
+
+.grupos__rodape .perfil__texto {
+  display: none;
+}
+
+.grupos__rodape .avatar {
+  position: relative;
+}
+
+.grupos__rodape .avatar::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--texto-3);
+  border: 2px solid var(--superficie-1);
+}
+
+.grupos__rodape .avatar[data-ligado="sim"]::after {
+  background: var(--vivo);
+}
+
 .avatar--grande {
   width: 88px;
   height: 88px;
@@ -3342,6 +4230,44 @@ select.campo__entrada {
 
 .mascote-opcao[aria-pressed="true"] .mascote-opcao__nome {
   color: var(--texto-2);
+}
+
+.foto-escolha {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Onboarding ── */
+
+/* Dois tracinhos, não bolinhas com número — a etapa em que se está importa
+   menos que quanto falta, e isso qualquer largura de traço já diz. */
+.onboarding__passos {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.onboarding__passos i {
+  width: 16px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--borda-forte);
+  transition: background var(--transicao);
+}
+
+.onboarding__passos i[data-atual="sim"] {
+  background: var(--acento);
+}
+
+.onboarding__passos i[data-feito="sim"] {
+  background: var(--texto-3);
+}
+
+.onboarding__etapa {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: surgir 160ms cubic-bezier(0.32, 0.72, 0.28, 1);
 }
 
 /* ── Painel do próprio perfil ── */
@@ -3469,11 +4395,22 @@ textarea.campo__area {
 
 .cartao__atividade {
   margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: var(--texto-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cartao__atividade-icone {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: cover;
 }
 
 .cartao__bio {
@@ -3531,15 +4468,21 @@ textarea.campo__area {
    da conversa deixaria de caber. */
 @media (max-width: 1120px) {
   .aplicacao {
-    grid-template-columns: 190px 212px 1fr 190px;
+    --largura-presentes: 190px;
   }
 }
 
 @media (max-width: 940px) {
   .aplicacao {
-    grid-template-columns: 152px 186px 1fr;
+    --largura-canais: 186px;
+    --largura-presentes: 0px;
   }
   .participantes {
+    display: none;
+  }
+  /* Sem coluna para abrir, o botão não teria o que fazer — melhor sumir do
+     que ficar parecendo quebrado. */
+  #botao-presentes {
     display: none;
   }
 }

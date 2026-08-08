@@ -4,7 +4,15 @@ import { MotorDeAudio, AUDIO_PADRAO, BITRATES_AUDIO, listarDispositivos } from "
 import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
 import { Vigia } from "./atividade.js";
 import { avatarSugerido, iniciais, pintarAvatar } from "./avatares.js";
-import { editarPerfil, montarEscolhaDeMascotes, mostrarCartao, saneado } from "./perfil.js";
+import { EMOJIS, TOKEN_EMOJI, elementoDeEmoji } from "./emojis.js";
+import {
+  editarPerfil,
+  iniciarOnboarding,
+  lerIconeDeArquivo,
+  mostrarCartao,
+  prepararEscolhaDeFoto,
+  saneado,
+} from "./perfil.js";
 import * as conta from "./conta.js";
 
 /* ═══ Atalhos ═══════════════════════════════════════════════════ */
@@ -48,6 +56,10 @@ const estado = {
   /** Uma linha sobre você, mostrada no cartão para quem está no mesmo grupo.
    *  Viaja na saudação; quem tem conta a encontra de volta em outra máquina. */
   bio: "",
+  /** Um data URL quadrado, escolhido no onboarding ou no perfil. Nunca viaja
+   *  para o servidor — ele só entende o mascote de `avatar` —, e por isso só
+   *  aparece para a própria pessoa, neste computador. */
+  foto: "",
 
   /** A conta em que se entrou — `{ id, email, apelido, avatar, bio, atalhos,
    *  google }` —, ou `null` para quem entrou sem conta. Quem está aqui tem o
@@ -67,6 +79,14 @@ const estado = {
   grupo: null, // { codigo, nome, dono, categorias } vindo do servidor
   meuId: null,
   membros: new Map(), // id -> { id, usuario, apelido, canalVoz, mudo, transmitindo }
+
+  /** Soundboard do grupo atual — [{ id, dono, nome, mime, bytes, criadoEm }],
+   *  só metadado. Os bytes de cada um chegam sob demanda, na primeira vez
+   *  que alguém pede para tocar. */
+  sons: [],
+  /** Biblioteca pessoal de quem tem conta — carregada sob demanda, ao abrir
+   *  a aba "Sons" dos ajustes. */
+  sonsPessoais: [],
 
   canalTexto: null,
   canalVoz: null,
@@ -90,6 +110,13 @@ const estado = {
   mostrarAtividade: true,
   /** O que já foi anunciado ao grupo. Não é preferência: é o que está no ar. */
   minhaAtividade: null,
+  /** Ícone da atividade no ar, quando ela veio de um programa cadastrado a
+   *  mão com imagem. `null` para uma atividade sem ícone, ou nenhuma. */
+  minhaAtividadeIcone: null,
+  /** Programas cadastrados a mão porque o CALL não reconheceu sozinho, ou
+   *  reconheceu com um nome feio: exe em minúsculas → `{ nome, icone }`.
+   *  `icone` é um data URL pequeno, ou `null` para um cadastro só de nome. */
+  programasPersonalizados: new Map(),
   /** Volume por pessoa, guardado pelo identificador estável e não pelo `id`
    *  da sessão — quem sobe o volume de alguém quer isso amanhã também. */
   volumes: new Map(), // usuario -> 0 a 2
@@ -117,10 +144,15 @@ const historicoDaCall = new HistoricoDaCall();
  */
 const vigia = new Vigia({
   ler: () => invocar("atividade_em_foco"),
-  aoMudar: (atividade) => {
-    estado.minhaAtividade = atividade;
+  personalizados: () => estado.programasPersonalizados,
+  aoMudar: (nome) => {
+    estado.minhaAtividade = nome;
+    estado.minhaAtividadeIcone = nome ? iconeDoNomeAtivo(nome) : null;
     const eu = estado.membros.get(estado.meuId);
-    if (eu) eu.atividade = atividade;
+    if (eu) {
+      eu.atividade = nome;
+      eu.atividadeIcone = estado.minhaAtividadeIcone;
+    }
     anunciarEstado();
     redesenhar();
     mostrarAtividadeAtual();
@@ -158,9 +190,10 @@ function carregarPreferencias() {
         : bruto.servidor;
     estado.usuario = bruto.usuario || "";
     estado.ultimoEmail = typeof bruto.ultimoEmail === "string" ? bruto.ultimoEmail : "";
-    const perfil = saneado({ avatar: bruto.avatar, bio: bruto.bio });
+    const perfil = saneado({ avatar: bruto.avatar, bio: bruto.bio, foto: bruto.foto });
     estado.avatar = perfil.avatar;
     estado.bio = perfil.bio;
+    estado.foto = perfil.foto;
     estado.atalhos = Array.isArray(bruto.atalhos)
       ? bruto.atalhos.filter((a) => a && typeof a.codigo === "string")
       : [];
@@ -177,6 +210,13 @@ function carregarPreferencias() {
     }
     if (typeof bruto.atalhoMudo === "string") estado.atalhoMudo = bruto.atalhoMudo;
     estado.volumes = new Map(Array.isArray(bruto.volumes) ? bruto.volumes : []);
+    estado.programasPersonalizados = new Map(
+      Array.isArray(bruto.programasPersonalizados)
+        ? bruto.programasPersonalizados.filter(
+            ([exe, dados]) => typeof exe === "string" && exe && dados && typeof dados.nome === "string"
+          )
+        : []
+    );
   } catch {
     /* preferências ilegíveis: segue com os padrões */
   }
@@ -204,6 +244,7 @@ function salvarPreferencias() {
       ultimoEmail: estado.ultimoEmail,
       avatar: estado.avatar,
       bio: estado.bio,
+      foto: estado.foto,
       atalhos: estado.atalhos,
       audio: estado.audio,
       perfilTela: estado.perfilTela,
@@ -211,6 +252,7 @@ function salvarPreferencias() {
       mostrarAtividade: estado.mostrarAtividade,
       atalhoMudo: estado.atalhoMudo,
       volumes: [...estado.volumes],
+      programasPersonalizados: [...estado.programasPersonalizados],
     })
   );
 }
@@ -421,6 +463,111 @@ function fecharMenu() {
   $("menu").classList.add("oculto");
 }
 
+/* ═══ Seletor de emoji ══════════════════════════════════════════ */
+
+/** Mesmo padrão do menu suspenso — um só elemento reaproveitado, ancorado
+ *  perto de quem o abriu — só que com os cinco emoji em vez de texto, tanto
+ *  para escrever quanto para reagir. `aoEscolher` recebe o id do emoji. */
+function abrirSeletorDeEmoji(ancora, aoEscolher) {
+  const seletor = $("seletor-emoji");
+  seletor.textContent = "";
+
+  for (const emoji of EMOJIS) {
+    const botao = document.createElement("button");
+    botao.type = "button";
+    botao.className = "seletor-emoji__item";
+    botao.title = emoji.nome;
+    botao.append(elementoDeEmoji(emoji.id));
+    botao.addEventListener("click", (evento) => {
+      evento.stopPropagation();
+      fecharSeletorDeEmoji();
+      aoEscolher(emoji.id);
+    });
+    seletor.append(botao);
+  }
+
+  seletor.classList.remove("oculto");
+
+  // Acima da âncora por padrão — é onde a mão já está, no campo de escrever
+  // ou no botão de reagir de uma mensagem — e só desce se não couber ali.
+  const caixa = ancora.getBoundingClientRect();
+  const minha = seletor.getBoundingClientRect();
+  const x = Math.min(caixa.left, window.innerWidth - minha.width - 8);
+  const y = caixa.top - minha.height - 8 < 0 ? caixa.bottom + 6 : caixa.top - minha.height - 6;
+  seletor.style.left = `${Math.max(8, x)}px`;
+  seletor.style.top = `${Math.max(8, y)}px`;
+
+  setTimeout(() => {
+    document.addEventListener("click", fecharSeletorDeEmoji, { once: true });
+  }, 0);
+}
+
+function fecharSeletorDeEmoji() {
+  $("seletor-emoji").classList.add("oculto");
+}
+
+/** Deixa `abrirMenu` ancorar num clique em vez de num elemento: um ponto sem
+ *  área, exatamente onde o botão direito caiu. */
+function pontoDoClique(evento) {
+  return {
+    getBoundingClientRect: () => ({
+      left: evento.clientX,
+      right: evento.clientX,
+      top: evento.clientY,
+      bottom: evento.clientY,
+      width: 0,
+      height: 0,
+    }),
+  };
+}
+
+/* ═══ Brilho do cursor ══════════════════════════════════════════ */
+
+/**
+ * O brilho não salta para debaixo do cursor — ele escorrega até lá. É esse
+ * atraso curto, recalculado a cada quadro, que faz a mancha parecer líquida
+ * em vez de amarrada ao ponteiro; sem ele seria só um círculo grudado no
+ * mouse, e isso qualquer `background-position` faz.
+ */
+function prepararBrilhoDoCursor() {
+  const brilho = $("brilho-cursor");
+  if (!brilho || window.matchMedia("(pointer: coarse)").matches) return;
+
+  let alvoX = window.innerWidth / 2;
+  let alvoY = window.innerHeight / 2;
+  let atualX = alvoX;
+  let atualY = alvoY;
+  let emQuadro = false;
+
+  function passo() {
+    atualX += (alvoX - atualX) * 0.16;
+    atualY += (alvoY - atualY) * 0.16;
+    brilho.style.setProperty("--brilho-x", `${atualX}px`);
+    brilho.style.setProperty("--brilho-y", `${atualY}px`);
+
+    if (Math.abs(alvoX - atualX) > 0.4 || Math.abs(alvoY - atualY) > 0.4) {
+      requestAnimationFrame(passo);
+    } else {
+      emQuadro = false;
+    }
+  }
+
+  window.addEventListener("pointermove", (evento) => {
+    alvoX = evento.clientX;
+    alvoY = evento.clientY;
+    brilho.classList.add("brilho-cursor--ativo");
+    if (!emQuadro) {
+      emQuadro = true;
+      requestAnimationFrame(passo);
+    }
+  });
+
+  // A mancha continuaria acesa no último ponto se ninguém dissesse que o
+  // cursor foi embora — e "embora" aqui é sair da janela inteira, não de um
+  // elemento dentro dela.
+  document.addEventListener("mouseleave", () => brilho.classList.remove("brilho-cursor--ativo"));
+}
+
 /* ═══ Portal: entrar, criar conta, ou nenhum dos dois ═══════════ */
 
 /**
@@ -446,14 +593,6 @@ function prepararPortal() {
   $("criar-apelido").value = estado.apelido;
   $("entrar-email").value = estado.ultimoEmail;
   $("criar-email").value = "";
-
-  // A escolha vale na hora e é guardada na hora: quem clica num mascote e
-  // fecha o aplicativo sem entrar em grupo nenhum o encontra escolhido depois.
-  montarEscolhaDeMascotes($("entrada-mascotes"), estado.avatar, (id) => {
-    estado.avatar = id;
-    salvarPreferencias();
-    refletirPortal();
-  });
 
   for (const aba of $("portal-abas").querySelectorAll(".segmentado__aba")) {
     aba.addEventListener("click", () => trocarModoDoPortal(aba.dataset.aba));
@@ -659,7 +798,16 @@ async function criarConta() {
       avatar: estado.avatar,
       bio: estado.bio,
     });
-    assumirConta(sessao);
+    // A conta já existe, mas a aplicação ainda não abre: mascote, foto e bio
+    // ficam para o onboarding, que decide sozinho quando chamar
+    // `abrirAplicacao`. Cadastro por convite ou Google não passam por aqui —
+    // só quem preencheu o formulário do zero é recém-chegado de verdade.
+    assumirConta(sessao, { abrir: false });
+    const escolhas = await iniciarOnboarding(estado);
+    Object.assign(estado, escolhas);
+    salvarPreferencias();
+    sincronizarConta({ avatar: escolhas.avatar, bio: escolhas.bio });
+    abrirAplicacao();
   } catch (erro) {
     mostrarErroDoPortal(erro);
   } finally {
@@ -740,6 +888,23 @@ function fundirAtalhos(daConta) {
   estado.atalhos = [...juntos.values()];
 }
 
+const inicioCarregamento = performance.now();
+// Um pulso rápido demais parece um piscar de tela, não uma animação: quem
+// entra direto pelo apelido do ambiente decidiria em poucos milissegundos, e
+// o glifo sumiria antes de bater os olhos nele.
+const TEMPO_MINIMO_CARREGANDO = 550;
+
+function esconderTelaDeCarregando() {
+  const tela = $("tela-carregando");
+  if (!tela) return;
+  const decorrido = performance.now() - inicioCarregamento;
+  const espera = Math.max(0, TEMPO_MINIMO_CARREGANDO - decorrido);
+  setTimeout(() => {
+    tela.classList.add("carregando--saindo");
+    setTimeout(() => tela.remove(), 400);
+  }, espera);
+}
+
 function abrirAplicacao() {
   const portal = $("portal");
   portal.classList.add("portal--indo");
@@ -788,10 +953,20 @@ function prepararAplicacao() {
   mostrarMeuPerfil();
 
   $("botao-perfil").addEventListener("click", abrirMeuPerfil);
-  $("botao-novo-grupo").addEventListener("click", criarGrupo);
-  $("botao-entrar-grupo").addEventListener("click", entrarPorConvite);
-  $("botao-menu-grupo").addEventListener("click", (e) => menuDoGrupo(e.currentTarget));
-  $("botao-convite").addEventListener("click", copiarConvite);
+
+  // Clicar num grupo abre; clicar fora de todos, no vazio da coluna, é onde
+  // "criar" e "entrar com convite" moram agora — a coluna nunca tem um botão
+  // parado nela.
+  $("coluna-grupos").addEventListener("contextmenu", (evento) => {
+    if (evento.target.closest(".grupo")) return;
+    evento.preventDefault();
+    abrirMenu(pontoDoClique(evento), itensDeNovoGrupo());
+  });
+
+  $("botao-presentes").addEventListener("click", () => {
+    presentesForcado = !presentesDeveAbrir();
+    atualizarPresentes();
+  });
 
   $("botao-microfone").addEventListener("click", alternarMicrofone);
   $("botao-transmitir").addEventListener("click", () => {
@@ -799,6 +974,20 @@ function prepararAplicacao() {
     else abrirSeletorDeFontes();
   });
   $("botao-sair-voz").addEventListener("click", () => sairDaVoz(true));
+
+  $("botao-soundboard").addEventListener("click", alternarSoundboard);
+  $("soundboard-adicionar").addEventListener("click", () => $("soundboard-arquivo").click());
+  $("soundboard-arquivo").addEventListener("change", (e) => {
+    adicionarSomAoGrupo(e.target.files[0]);
+    e.target.value = "";
+  });
+
+  $("ajuste-som-entrada").addEventListener("change", (e) => aoEscolherSomDeEntrada(e.target.value));
+  $("sons-pessoais-adicionar").addEventListener("click", () => $("sons-pessoais-arquivo").click());
+  $("sons-pessoais-arquivo").addEventListener("change", (e) => {
+    adicionarSomPessoalArquivo(e.target.files[0]);
+    e.target.value = "";
+  });
 
   prepararAjustes();
   prepararTransmitirDialogo();
@@ -813,6 +1002,8 @@ function prepararAplicacao() {
     ) {
       return;
     }
+    // O cartão de novidades fecha sozinho pelo próprio Escape — registrado na
+    // abertura, para valer também sobre o portal. Aqui ele nem aparece.
     if (!$("transmitir-dialogo").classList.contains("oculto")) {
       fecharTransmitirDialogo();
     } else if (!$("ajustes").classList.contains("oculto")) {
@@ -836,7 +1027,24 @@ function prepararAplicacao() {
   sinal.addEventListener("estado", (e) => aoEstadoDeMidia(e.detail));
   sinal.addEventListener("perfil", (e) => aoPerfilDeOutro(e.detail));
   sinal.addEventListener("mensagem", (e) => aoMensagem(e.detail.mensagem));
+  sinal.addEventListener("reacao", (e) => aoReacao(e.detail));
   sinal.addEventListener("historico", (e) => aoHistorico(e.detail));
+  sinal.addEventListener("som", (e) => aoReceberBytesDeSom(e.detail));
+  sinal.addEventListener("som-adicionado", (e) => {
+    estado.sons.push(e.detail.som);
+    desenharSoundboard();
+    preencherSeletorSomEntrada();
+  });
+  sinal.addEventListener("som-removido", (e) => {
+    estado.sons = estado.sons.filter((s) => s.id !== e.detail.id);
+    desenharSoundboard();
+    preencherSeletorSomEntrada();
+  });
+  sinal.addEventListener("som-tocado", (e) => {
+    const quem = estado.membros.get(e.detail.de);
+    const som = estado.sons.find((s) => s.id === e.detail.id);
+    if (quem && som) avisar(`🔊 ${quem.apelido} tocou "${som.nome}"`);
+  });
   sinal.addEventListener("erro", (e) => avisar(e.detail.motivo, "erro"));
   sinal.addEventListener("queda", () => {
     if (!estado.grupo) return;
@@ -899,6 +1107,9 @@ const souDono = () => estado.grupo?.dono === estado.usuario;
 /** O rodapé da coluna de grupos: é o retrato de quem está usando o CALL aqui. */
 function mostrarMeuPerfil() {
   $("rotulo-usuario").textContent = estado.apelido;
+  // O trilho estreito não tem onde escrever o nome — o `title` é a única
+  // forma de dizer quem é sem abrir o perfil.
+  $("botao-perfil").title = `${estado.apelido || "Meu perfil"} — meu perfil`;
   pintarAvatar($("avatar-usuario"), estado);
 }
 
@@ -909,15 +1120,20 @@ async function abrirMeuPerfil() {
 
   Object.assign(estado, escolhido);
   salvarPreferencias();
-  sincronizarConta(escolhido);
+  // `foto` fica de fora: o servidor só entende o mascote de `avatar`, e
+  // mandar um data URL de 24 caracteres de sobra seria só ser recusado.
+  const { apelido, avatar, bio } = escolhido;
+  sincronizarConta({ apelido, avatar, bio });
   mostrarMeuPerfil();
 
   // Dentro de um grupo a saudação já passou, e sem este aviso o perfil novo só
   // valeria na próxima entrada — os outros continuariam vendo o antigo.
   const eu = estado.membros.get(estado.meuId);
   if (eu) {
+    // `eu` é a própria pessoa, do jeito que só ela se vê: a foto entra aqui,
+    // e não no que se manda pela rede duas linhas abaixo.
     Object.assign(eu, escolhido);
-    sinal.enviar({ tipo: "perfil", ...escolhido });
+    sinal.enviar({ tipo: "perfil", apelido, avatar, bio });
     redesenhar();
   }
 
@@ -1046,6 +1262,7 @@ function abrirCartaoDe(membro) {
     avatar: membro.avatar,
     bio: membro.bio,
     atividade: membro.atividade,
+    atividadeIcone: membro.atividadeIcone,
     etiquetas,
     acoes: [{ rotulo: "Ajustar volume…", fazer: () => ajustarVolumeDe(membro) }],
   });
@@ -1053,46 +1270,53 @@ function abrirCartaoDe(membro) {
 
 /* ═══ Grupos ════════════════════════════════════════════════════ */
 
+/** Os dois jeitos de começar: pelo "+" do trilho, ou pelo botão direito no
+ *  vazio da coluna — os mesmos dois itens, para não haver dois menus que
+ *  divergem com o tempo. */
+function itensDeNovoGrupo() {
+  return [
+    { rotulo: "Criar grupo", acao: criarGrupo },
+    { rotulo: "Entrar com convite", acao: entrarPorConvite },
+  ];
+}
+
 function desenharAtalhos() {
   const lista = $("lista-grupos");
   lista.textContent = "";
-
-  if (estado.atalhos.length === 0) {
-    const vazio = document.createElement("p");
-    vazio.className = "grupos__vazio";
-    vazio.textContent = "Nenhum grupo ainda. Crie o primeiro ou entre com um convite.";
-    lista.append(vazio);
-    return;
-  }
 
   for (const atalho of estado.atalhos) {
     const item = document.createElement("button");
     item.className = "grupo";
     item.type = "button";
+    item.title = atalho.nome;
+    item.setAttribute("aria-label", atalho.nome);
     if (atalho.codigo === estado.grupo?.codigo) item.classList.add("grupo--ativo");
 
     const marca = document.createElement("span");
     marca.className = "grupo__marca";
     marca.textContent = iniciais(atalho.nome);
 
-    const rotulo = document.createElement("span");
-    rotulo.className = "grupo__nome";
-    rotulo.textContent = atalho.nome;
-
-    item.append(marca, rotulo);
+    item.append(marca);
     item.addEventListener("click", () => abrirGrupo(atalho.codigo));
     item.addEventListener("contextmenu", (evento) => {
       evento.preventDefault();
-      abrirMenu(item, [
-        {
-          rotulo: "Esquecer este grupo",
-          perigo: true,
-          acao: () => esquecerGrupo(atalho.codigo),
-        },
-      ]);
+      menuDoAtalho(item, atalho);
     });
     lista.append(item);
   }
+
+  // Sempre por último no trilho — é o "+" de sempre criar mais um, do mesmo
+  // jeito que o Discord deixa o botão de novo servidor no fim da lista.
+  const novo = document.createElement("button");
+  novo.className = "grupo grupo--novo";
+  novo.type = "button";
+  novo.title = "Criar ou entrar num grupo";
+  novo.setAttribute("aria-label", "Criar ou entrar num grupo");
+  novo.innerHTML =
+    '<span class="grupo__marca grupo__marca--novo" aria-hidden="true">' +
+    '<svg viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"/></svg></span>';
+  novo.addEventListener("click", (evento) => abrirMenu(pontoDoClique(evento), itensDeNovoGrupo()));
+  lista.append(novo);
 }
 
 async function criarGrupo() {
@@ -1154,10 +1378,13 @@ async function conectar(saudacao) {
   }
 }
 
-function assumirGrupo({ eu, grupo, presentes, conta: daConta }) {
+function assumirGrupo({ eu, grupo, presentes, conta: daConta, sons }) {
   estado.grupo = grupo;
   estado.meuId = eu.id;
   malha.definirIdentidade(eu.id);
+  // Um grupo novo começa com a coluna decidindo sozinha de novo — a escolha
+  // manual era sobre o grupo anterior, e não teria por que valer aqui.
+  presentesForcado = null;
 
   // A saudação com token volta com a conta inteira. É aqui que os grupos de
   // outra máquina aparecem na coluna da esquerda, sem transação separada.
@@ -1168,8 +1395,21 @@ function assumirGrupo({ eu, grupo, presentes, conta: daConta }) {
   }
 
   estado.membros.clear();
-  estado.membros.set(eu.id, { ...eu, apelido: estado.apelido, avatar: estado.avatar, bio: estado.bio });
+  // `foto` entra aqui — e só aqui, na própria entrada — porque este mapa é
+  // que alimenta como cada um se desenha na tela, e é a própria pessoa vendo
+  // a si mesma. A saudação que os outros recebem sobre "eu" não carrega isto.
+  estado.membros.set(eu.id, {
+    ...eu,
+    apelido: estado.apelido,
+    avatar: estado.avatar,
+    bio: estado.bio,
+    foto: estado.foto,
+  });
   for (const membro of presentes) estado.membros.set(membro.id, membro);
+
+  estado.sons = sons ?? [];
+  desenharSoundboard();
+  preencherSeletorSomEntrada();
 
   lembrarGrupo(grupo.codigo, grupo.nome);
   sincronizarConta({ atalhos: estado.atalhos });
@@ -1197,9 +1437,12 @@ function desligar() {
   estado.grupo = null;
   estado.meuId = null;
   estado.membros.clear();
+  presentesForcado = null;
   estado.canalTexto = null;
   estado.mensagens.clear();
   estado.naoLidos.clear();
+  estado.sons = [];
+  fecharSoundboard();
 
   atualizarConexao(false);
   desenharAtalhos();
@@ -1219,12 +1462,7 @@ function esquecerGrupo(codigo) {
 }
 
 function desenharCabecalhoDoGrupo() {
-  const grupo = estado.grupo;
-  $("nome-grupo").textContent = grupo?.nome ?? "Nenhum grupo";
-  $("botao-menu-grupo").disabled = !grupo;
-  $("botao-convite").hidden = !grupo;
-  $("codigo-convite").textContent = grupo?.codigo ?? "—";
-  $("acao-convite").textContent = "copiar link";
+  $("nome-grupo").textContent = estado.grupo?.nome ?? "Nenhum grupo";
 }
 
 /**
@@ -1233,14 +1471,15 @@ function desenharCabecalhoDoGrupo() {
  * ninguém registrou não abre nada nem explica por quê. A página abre o
  * aplicativo com um clique para quem tem, e oferece o instalador para quem
  * não tem.
+ *
+ * Recebe código e nome direto, e não `estado.grupo`: o convite de um grupo
+ * precisa poder ser copiado a partir da lista, sem estar conectado a ele —
+ * uma conexão atende a um grupo só, e não é por isso que os outros somem.
  */
-function linkDoConvite() {
-  const grupo = estado.grupo;
-  if (!grupo) return null;
-
+function linkDoConvitePara(codigo, nome) {
   const endereco = new URL(`${SITE}/entrar/`);
-  endereco.searchParams.set("c", grupo.codigo);
-  if (grupo.nome) endereco.searchParams.set("g", grupo.nome);
+  endereco.searchParams.set("c", codigo);
+  if (nome) endereco.searchParams.set("g", nome);
   if (estado.apelido) endereco.searchParams.set("a", estado.apelido);
   return endereco.toString();
 }
@@ -1255,42 +1494,47 @@ async function copiar(texto) {
   }
 }
 
-/** Clique no cartão do convite: o link, que é o que se manda para alguém. */
-async function copiarConvite() {
-  const link = linkDoConvite();
-  if (!link) return;
-  if (!(await copiar(link))) return;
-
-  $("acao-convite").textContent = "link copiado";
-  setTimeout(() => ($("acao-convite").textContent = "copiar link"), 1600);
+async function copiarLinkDoConvite(atalho) {
+  if (await copiar(linkDoConvitePara(atalho.codigo, atalho.nome))) {
+    avisar("Link do convite copiado.", "bom");
+  }
 }
 
 /** O código continua tendo dono: quem vai ditar por voz ou digitar à mão. */
-async function copiarCodigo() {
-  if (!estado.grupo) return;
-  if (await copiar(estado.grupo.codigo)) avisar("Código copiado.", "bom");
+async function copiarCodigoDoConvite(atalho) {
+  if (await copiar(atalho.codigo)) avisar("Código copiado.", "bom");
 }
 
-function menuDoGrupo(ancora) {
+/**
+ * O menu do botão direito sobre um grupo na lista. Renomear e nova categoria
+ * só cabem no grupo em que a pessoa está de fato conectada — dono ou não, o
+ * servidor só aceita esses comandos na conexão aberta com aquele grupo — e
+ * por isso só aparecem quando o atalho é o grupo ativo.
+ */
+function menuDoAtalho(ancora, atalho) {
+  const ehAtivo = atalho.codigo === estado.grupo?.codigo;
+
   const itens = [
-    { rotulo: "Copiar link do convite", acao: copiarConvite },
-    { rotulo: "Copiar código do convite", acao: copiarCodigo },
-    { rotulo: "Sair do grupo", acao: () => desligar() },
-    "-",
-    {
-      rotulo: "Esquecer este grupo",
-      perigo: true,
-      acao: () => esquecerGrupo(estado.grupo.codigo),
-    },
+    { rotulo: "Copiar link do convite", acao: () => copiarLinkDoConvite(atalho) },
+    { rotulo: "Copiar código do convite", acao: () => copiarCodigoDoConvite(atalho) },
   ];
 
-  if (souDono()) {
+  if (ehAtivo) itens.push({ rotulo: "Sair do grupo", acao: () => desligar() });
+
+  itens.push("-", {
+    rotulo: "Esquecer este grupo",
+    perigo: true,
+    acao: () => esquecerGrupo(atalho.codigo),
+  });
+
+  if (ehAtivo && souDono()) {
     itens.unshift(
       { rotulo: "Renomear grupo", acao: renomearGrupo },
       { rotulo: "Nova categoria", acao: criarCategoria },
       "-"
     );
   }
+
   abrirMenu(ancora, itens);
 }
 
@@ -1594,12 +1838,13 @@ function aoSair(id) {
   if (membro) avisar(`${membro.apelido} saiu do grupo.`);
 }
 
-function aoEstadoDeMidia({ de, mudo, transmitindo, atividade }) {
+function aoEstadoDeMidia({ de, mudo, transmitindo, atividade, atividadeIcone }) {
   const membro = estado.membros.get(de);
   if (!membro) return;
   membro.mudo = mudo;
   membro.transmitindo = transmitindo;
   membro.atividade = atividade ?? null;
+  membro.atividadeIcone = atividadeIcone ?? null;
   if (!transmitindo) removerTela(de);
   redesenhar();
 }
@@ -1630,6 +1875,32 @@ function registrarLinha(id, elemento) {
   else linhas.set(id, [elemento]);
 }
 
+/**
+ * A coluna de presentes começa fechada e só abre sozinha quando alguém entra
+ * numa call — é o "alguma ação" que justifica o espaço. `null` quer dizer
+ * "decide sozinho"; `true`/`false` é a pessoa tendo mexido na mão, e essa
+ * escolha vale até a próxima troca de grupo.
+ */
+let presentesForcado = null;
+
+function presentesDeveAbrir() {
+  if (presentesForcado !== null) return presentesForcado;
+  return [...estado.membros.values()].some((m) => m.canalVoz);
+}
+
+function atualizarPresentes() {
+  const aberto = presentesDeveAbrir();
+  $("tela-aplicacao").dataset.presentes = aberto ? "aberto" : "fechado";
+
+  const botao = $("botao-presentes");
+  botao.setAttribute("aria-pressed", String(aberto));
+
+  const quantos = estado.membros.size;
+  const selo = $("badge-presentes");
+  selo.textContent = String(quantos);
+  selo.classList.toggle("oculto", quantos === 0);
+}
+
 function desenharParticipantes() {
   const lista = $("lista-participantes");
   lista.textContent = "";
@@ -1640,6 +1911,7 @@ function desenharParticipantes() {
     vazio.textContent = "Você não está em nenhum grupo.";
     lista.append(vazio);
     $("contador-participantes").textContent = "0";
+    atualizarPresentes();
     return;
   }
 
@@ -1674,8 +1946,17 @@ function desenharParticipantes() {
       texto.className = "participante__texto";
       const fazendo = document.createElement("span");
       fazendo.className = "participante__atividade";
-      fazendo.textContent = membro.atividade;
       fazendo.title = membro.atividade;
+      if (membro.atividadeIcone) {
+        const icone = document.createElement("img");
+        icone.className = "participante__atividade-icone";
+        icone.src = membro.atividadeIcone;
+        icone.alt = "";
+        fazendo.append(icone);
+      }
+      const rotulo = document.createElement("span");
+      rotulo.textContent = membro.atividade;
+      fazendo.append(rotulo);
       texto.append(nome, fazendo);
     }
 
@@ -1705,6 +1986,8 @@ function desenharParticipantes() {
     lista.append(linha);
     registrarLinha(membro.id, linha);
   }
+
+  atualizarPresentes();
 }
 
 /**
@@ -1791,6 +2074,10 @@ function atualizarConexao(ligado) {
   const rotulo = $("rotulo-conexao");
   rotulo.textContent = ligado ? "Conectado" : "Desconectado";
   rotulo.dataset.ligado = ligado ? "sim" : "nao";
+  // O pontinho no avatar do rodapé é quem carrega esse estado no trilho
+  // estreito — `rotulo-conexao` continua existindo, só que sem espaço para
+  // aparecer.
+  $("avatar-usuario").dataset.ligado = ligado ? "sim" : "nao";
 }
 
 /* ═══ Conversa ══════════════════════════════════════════════════ */
@@ -1816,6 +2103,28 @@ function prepararRedator() {
     campo.style.height = "auto";
     campo.style.height = `${Math.min(campo.scrollHeight, 160)}px`;
   });
+
+  $("redator-emoji").addEventListener("click", (evento) => {
+    evento.stopPropagation();
+    abrirSeletorDeEmoji($("redator-emoji"), inserirEmojiNoCampo);
+  });
+}
+
+/** Insere `:id:` no ponto onde o cursor estava, e devolve o foco ao campo —
+ *  escolher um emoji não deve tirar a pessoa do fluxo de escrever. */
+function inserirEmojiNoCampo(id) {
+  const campo = $("campo-mensagem");
+  const inicio = campo.selectionStart ?? campo.value.length;
+  const fim = campo.selectionEnd ?? campo.value.length;
+  const token = `:${id}:`;
+
+  campo.value = campo.value.slice(0, inicio) + token + campo.value.slice(fim);
+  campo.focus();
+  const cursor = inicio + token.length;
+  campo.setSelectionRange(cursor, cursor);
+  // O redimensionamento automático do campo mora no ouvinte de "input"; sem
+  // disparar um, o campo não cresceria para caber o texto que acabou de entrar.
+  campo.dispatchEvent(new Event("input"));
 }
 
 function enviarMensagem() {
@@ -1975,14 +2284,115 @@ function blocoDeMensagem(mensagem) {
   return bloco;
 }
 
+/**
+ * Troca todo `:id:` de um emoji válido pelo desenho dele, e deixa o resto
+ * como texto puro. `elemento.append` com uma string cria nó de texto — nunca
+ * `innerHTML` — então o que a outra pessoa escreveu nunca vira marcação,
+ * mesmo intercalado com os emoji.
+ */
+function preencherTextoComEmoji(elemento, texto) {
+  elemento.textContent = "";
+  TOKEN_EMOJI.lastIndex = 0;
+  let ultimo = 0;
+  let m;
+  while ((m = TOKEN_EMOJI.exec(texto))) {
+    if (m.index > ultimo) elemento.append(texto.slice(ultimo, m.index));
+    elemento.append(elementoDeEmoji(m[1], "emoji emoji--linha"));
+    ultimo = TOKEN_EMOJI.lastIndex;
+  }
+  if (ultimo < texto.length) elemento.append(texto.slice(ultimo));
+}
+
+/**
+ * Uma linha de mensagem: o texto, a fileira de reações (só aparece com pelo
+ * menos uma) e o botão de reagir, que só se revela no hover — a mesma lógica
+ * de "nada fica exposto sem uma ação" que o resto do CALL segue.
+ */
 function corpoDeMensagem(mensagem, dentroDoBloco = false) {
+  const linha = document.createElement("div");
+  linha.className = "mensagem__linha";
+  if (!dentroDoBloco) linha.classList.add("mensagem__linha--seguida");
+  linha.dataset.mensagemId = mensagem.id;
+
   const texto = document.createElement("p");
-  texto.className = dentroDoBloco ? "mensagem__texto" : "mensagem__texto mensagem__texto--seguida";
+  texto.className = "mensagem__texto";
   texto.title = HORA.format(new Date(mensagem.em));
-  // textContent, nunca innerHTML: o que chega aqui foi digitado por outra
-  // pessoa e não é marcação.
-  texto.textContent = mensagem.texto;
-  return texto;
+  preencherTextoComEmoji(texto, mensagem.texto);
+
+  const reacoes = document.createElement("div");
+  reacoes.className = "mensagem__reacoes";
+  reacoes.hidden = true;
+
+  const acoes = document.createElement("div");
+  acoes.className = "mensagem__acoes";
+  const botaoReagir = document.createElement("button");
+  botaoReagir.type = "button";
+  botaoReagir.className = "mensagem__reagir";
+  botaoReagir.title = "Reagir";
+  botaoReagir.setAttribute("aria-label", "Reagir a esta mensagem");
+  botaoReagir.innerHTML =
+    '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.4"/><circle cx="7.3" cy="8.4" r=".9" fill="currentColor" stroke="none"/><circle cx="12.7" cy="8.4" r=".9" fill="currentColor" stroke="none"/><path d="M7 12.2c.9 1.1 1.9 1.7 3 1.7s2.1-.6 3-1.7" stroke-linecap="round"/></svg>';
+  botaoReagir.addEventListener("click", (evento) => {
+    evento.stopPropagation();
+    abrirSeletorDeEmoji(botaoReagir, (emoji) => reagir(mensagem.id, emoji));
+  });
+  acoes.append(botaoReagir);
+
+  linha.append(texto, reacoes, acoes);
+  desenharReacoes(linha, mensagem.id, mensagem.reacoes);
+  return linha;
+}
+
+/**
+ * As pílulas de reação de uma mensagem, sempre na mesma ordem — a de
+ * `EMOJIS`, e não a que veio no JSON: um `HashMap` do Rust não promete
+ * ordem nenhuma, e sem um critério fixo as pílulas trocariam de lugar a
+ * cada reação de qualquer pessoa no grupo.
+ */
+function desenharReacoes(linha, mensagemId, reacoes) {
+  const area = linha.querySelector(".mensagem__reacoes");
+  area.textContent = "";
+  let houveAlguma = false;
+
+  for (const emoji of EMOJIS) {
+    const usuarios = reacoes?.[emoji.id];
+    if (!usuarios?.length) continue;
+    houveAlguma = true;
+
+    const pilula = document.createElement("button");
+    pilula.type = "button";
+    pilula.className = "reacao-pilula";
+    pilula.dataset.minha = usuarios.includes(estado.usuario) ? "sim" : "nao";
+    pilula.title = usuarios.length === 1 ? "1 reação" : `${usuarios.length} reações`;
+    pilula.append(elementoDeEmoji(emoji.id, "emoji emoji--pilula"));
+    const contagem = document.createElement("span");
+    contagem.textContent = String(usuarios.length);
+    pilula.append(contagem);
+    pilula.addEventListener("click", () => reagir(mensagemId, emoji.id));
+    area.append(pilula);
+  }
+
+  area.hidden = !houveAlguma;
+}
+
+/** Alterna a própria reação numa mensagem — igual a curtir em qualquer chat:
+ *  clicar de novo no mesmo emoji tira. Otimista? Não: a pílula só muda
+ *  quando o servidor confirma, a mesma regra que já vale para o texto. */
+function reagir(mensagemId, emoji) {
+  if (!estado.canalTexto) return;
+  sinal.enviar({ tipo: "reagir", canal: estado.canalTexto, mensagem: mensagemId, emoji });
+}
+
+function aoReacao({ canal, mensagem: mensagemId, reacoes }) {
+  const lista = estado.mensagens.get(canal);
+  const alvo = lista?.find((m) => m.id === mensagemId);
+  if (alvo) alvo.reacoes = reacoes;
+
+  if (canal !== estado.canalTexto) return;
+  // Atualiza só a linha afetada — redesenhar a conversa inteira a cada
+  // reação faria a tela pular e perderia a posição de quem estava lendo.
+  const linha = document.querySelector(`[data-mensagem-id="${CSS.escape(mensagemId)}"]`);
+  if (linha) desenharReacoes(linha, mensagemId, reacoes);
 }
 
 /* ═══ Voz ═══════════════════════════════════════════════════════ */
@@ -2040,6 +2450,10 @@ function aoEntrarNaVoz({ canal, pares }) {
   }
 
   motor.tocarAviso("entrei");
+  // Sem esperar: um som de entrada que falha em baixar não pode atrasar a
+  // entrada na call, e o sino sintetizado já deu a confirmação de que
+  // funcionou.
+  tocarSomDeEntradaPersonalizado();
   atualizarRodapeDeVoz();
   redesenhar();
   anunciarEstado();
@@ -2089,6 +2503,332 @@ function derrubarPar(id) {
   }
 }
 
+/* ═══ Soundboard ════════════════════════════════════════════════
+ *
+ * Sons do grupo vivem no servidor por metadado só — os bytes chegam sob
+ * demanda, na primeira vez que alguém pede para tocar (`pedirBytesDoSom`), e
+ * ficam em cache dentro do próprio `motor` depois disso (ver `tocarClipe`
+ * em audio.js). Tocar não é "mandar áudio para o servidor repassar": é
+ * decodificar aqui e misturar no grafo que já alimenta o WebRTC — quem ouve,
+ * ouve pela chamada de verdade, e o servidor nunca vê um byte de áudio além
+ * do que guarda em disco.
+ */
+
+/** Teto de um clipe, em bytes — o mesmo que o servidor aplica. Checar aqui
+ *  também evita gastar a viagem de ida e volta com um arquivo óbvio demais. */
+const SOM_BYTES_MAX = 300 * 1024;
+
+/** id do som -> lista de resolvedores esperando os bytes dele. Mais de um
+ *  pedido para o mesmo som enquanto o primeiro ainda não voltou compartilha
+ *  a mesma resposta, em vez de pedir duas vezes. */
+const pedidosDeSom = new Map();
+
+function aoReceberBytesDeSom({ id, dados }) {
+  const fila = pedidosDeSom.get(id);
+  if (!fila) return;
+  pedidosDeSom.delete(id);
+  const bytes = decodificarBase64(dados);
+  for (const resolver of fila) resolver(bytes);
+}
+
+/** Busca os bytes de um som do grupo atual. `null` quando o servidor nunca
+ *  respondeu — um id inválido não gera resposta nenhuma, então o teto de
+ *  tempo é o que evita esperar para sempre. */
+function pedirBytesDoSom(id) {
+  return new Promise((resolver) => {
+    if (!pedidosDeSom.has(id)) pedidosDeSom.set(id, []);
+    pedidosDeSom.get(id).push(resolver);
+    sinal.enviar({ tipo: "pedir-som", id });
+
+    setTimeout(() => {
+      const fila = pedidosDeSom.get(id);
+      if (!fila) return;
+      pedidosDeSom.delete(id);
+      for (const r of fila) r(null);
+    }, 8000);
+  });
+}
+
+async function tocarSomDoGrupo(som) {
+  if (!estado.canalVoz) return;
+  const bytes = await pedirBytesDoSom(som.id);
+  if (!bytes) {
+    avisar("Não foi possível buscar esse som agora.", "erro");
+    return;
+  }
+  const tocou = await motor.tocarClipe(bytes, som.id);
+  if (tocou) sinal.enviar({ tipo: "som-tocado", id: som.id });
+  else avisar("Esse som não pôde ser tocado — talvez seja longo ou esteja corrompido.", "erro");
+}
+
+function removerSomDoGrupo(som) {
+  sinal.enviar({ tipo: "remover-som", id: som.id });
+}
+
+async function adicionarSomAoGrupo(arquivo) {
+  if (!arquivo) return;
+  if (arquivo.size > SOM_BYTES_MAX) {
+    avisar("Esse som passa de 300 KB.", "erro");
+    return;
+  }
+  const bytes = new Uint8Array(await arquivo.arrayBuffer());
+  const nome = arquivo.name.replace(/\.[^.]+$/, "").slice(0, 40) || "Som";
+  sinal.enviar({
+    tipo: "adicionar-som",
+    nome,
+    mime: arquivo.type || "application/octet-stream",
+    dados: codificarBase64(bytes),
+  });
+}
+
+function desenharSoundboard() {
+  const lista = $("soundboard-lista");
+  const vazio = $("soundboard-vazio");
+  if (!lista) return;
+  lista.innerHTML = "";
+  vazio.classList.toggle("oculto", estado.sons.length > 0);
+
+  for (const som of estado.sons) {
+    const item = document.createElement("li");
+    item.className = "soundboard__item";
+
+    const nome = document.createElement("span");
+    nome.className = "soundboard__nome";
+    nome.textContent = som.nome;
+    nome.title = som.nome;
+
+    const tocar = document.createElement("button");
+    tocar.className = "soundboard__tocar";
+    tocar.type = "button";
+    tocar.title = "Tocar";
+    tocar.setAttribute("aria-label", `Tocar ${som.nome}`);
+    tocar.textContent = "▶";
+    tocar.addEventListener("click", () => tocarSomDoGrupo(som));
+
+    item.append(nome, tocar);
+
+    // Quem enviou o som, ou o dono do grupo, pode removê-lo — o mesmo par
+    // que o servidor confere antes de aceitar o pedido.
+    if (som.dono === estado.usuario || estado.grupo?.dono === estado.usuario) {
+      const remover = document.createElement("button");
+      remover.className = "soundboard__remover";
+      remover.type = "button";
+      remover.title = "Remover";
+      remover.setAttribute("aria-label", `Remover ${som.nome}`);
+      remover.textContent = "✕";
+      remover.addEventListener("click", () => removerSomDoGrupo(som));
+      item.append(remover);
+    }
+
+    lista.append(item);
+  }
+}
+
+function fecharSoundboard() {
+  $("soundboard-popover")?.classList.add("oculto");
+  document.removeEventListener("click", aoCliqueForaDoSoundboard);
+}
+
+function aoCliqueForaDoSoundboard(evento) {
+  const popover = $("soundboard-popover");
+  if (!popover || popover.contains(evento.target) || evento.target.closest("#botao-soundboard")) return;
+  fecharSoundboard();
+}
+
+function alternarSoundboard() {
+  const popover = $("soundboard-popover");
+  if (!popover) return;
+  if (popover.classList.contains("oculto")) {
+    popover.classList.remove("oculto");
+    // Um `setTimeout(0)` para não fechar com o próprio clique que abriu.
+    setTimeout(() => document.addEventListener("click", aoCliqueForaDoSoundboard), 0);
+  } else {
+    fecharSoundboard();
+  }
+}
+
+/* ── Som de entrada pessoal ────────────────────────────────────── */
+
+/**
+ * Toca, para o grupo, o clipe escolhido como som de entrada — no lugar (ou
+ * melhor, além) do sino sintetizado que só quem entrou ouve de si mesmo.
+ * `estado.conta.somEntrada` é `{ origem, grupo, id }` ou ausente.
+ *
+ * Um som "de grupo" só vale dentro do próprio grupo: o clipe mora na pasta
+ * daquele grupo, e não existe em nenhum outro — entrar num grupo diferente
+ * cai de volta para o sino, em silêncio, sem erro nenhum.
+ */
+async function tocarSomDeEntradaPersonalizado() {
+  const pref = estado.conta?.somEntrada;
+  if (!pref) return;
+
+  try {
+    let bytes = null;
+    if (pref.origem === "grupo" && pref.grupo === estado.grupo?.codigo) {
+      bytes = await pedirBytesDoSom(pref.id);
+    } else if (pref.origem === "pessoal" && estado.token) {
+      const resposta = await conta.pedirSomPessoal(estado.servidor, estado.token, pref.id);
+      bytes = decodificarBase64(resposta.dados);
+    }
+    if (bytes) await motor.tocarClipe(bytes, `entrada:${pref.origem}:${pref.id}`);
+  } catch {
+    // Som de entrada é um extra sobre o sino, não um requisito: falhar aqui
+    // não deveria virar erro na cara de ninguém.
+  }
+}
+
+function preencherSeletorSomEntrada() {
+  const select = $("ajuste-som-entrada");
+  if (!select) return;
+  const atual = estado.conta?.somEntrada ?? null;
+  select.innerHTML = "";
+
+  const padrao = document.createElement("option");
+  padrao.value = "";
+  padrao.textContent = "Sino padrão";
+  select.append(padrao);
+
+  if (estado.grupo && estado.sons.length) {
+    const grupo = document.createElement("optgroup");
+    grupo.label = `Sons deste grupo (${estado.grupo.nome})`;
+    for (const som of estado.sons) {
+      const opcao = document.createElement("option");
+      opcao.value = JSON.stringify({ origem: "grupo", grupo: estado.grupo.codigo, id: som.id });
+      opcao.textContent = som.nome;
+      grupo.append(opcao);
+    }
+    select.append(grupo);
+  }
+
+  if (estado.sonsPessoais.length) {
+    const pessoal = document.createElement("optgroup");
+    pessoal.label = "Minha biblioteca pessoal";
+    for (const som of estado.sonsPessoais) {
+      const opcao = document.createElement("option");
+      opcao.value = JSON.stringify({ origem: "pessoal", id: som.id });
+      opcao.textContent = som.nome;
+      pessoal.append(opcao);
+    }
+    select.append(pessoal);
+  }
+
+  select.value = atual ? JSON.stringify(atual) : "";
+  // Uma preferência gravada que não bate com opção nenhuma (som apagado, ou
+  // som de outro grupo) fica sem seleção visível — o valor real continua "o
+  // sino", e é isso que `select.value` cai para quando nada casa.
+  select.disabled = !estado.conta;
+}
+
+async function aoEscolherSomDeEntrada(valor) {
+  if (!estado.conta) {
+    avisar("Entre numa conta para guardar essa escolha.", "erro");
+    preencherSeletorSomEntrada();
+    return;
+  }
+  const preferencia = valor ? JSON.parse(valor) : null;
+  try {
+    const contaAtualizada = await conta.escolherSomEntrada(estado.servidor, estado.token, preferencia);
+    if (contaAtualizada) estado.conta = contaAtualizada;
+    avisar("Som de entrada atualizado.", "bom");
+  } catch (erro) {
+    avisar(erro.message ?? String(erro), "erro");
+    preencherSeletorSomEntrada();
+  }
+}
+
+function desenharSonsPessoais() {
+  const lista = $("sons-pessoais-lista");
+  const dica = $("sons-pessoais-dica");
+  const botaoAdicionar = $("sons-pessoais-adicionar");
+  if (!lista) return;
+  lista.innerHTML = "";
+
+  if (!estado.conta) {
+    dica.textContent = "Entre numa conta para guardar sons seus e usá-los como som de entrada em qualquer grupo.";
+    dica.classList.remove("oculto");
+    botaoAdicionar.classList.add("oculto");
+    // Sem conta não há som nenhum a listar — a caixa vazia com borda não
+    // diria nada que a dica acima já não tenha dito.
+    lista.classList.add("oculto");
+    return;
+  }
+
+  lista.classList.toggle("oculto", estado.sonsPessoais.length === 0);
+  dica.classList.toggle("oculto", estado.sonsPessoais.length > 0);
+  if (dica.classList.contains("oculto") === false) {
+    dica.textContent = "Nenhum som pessoal ainda.";
+  }
+  botaoAdicionar.classList.toggle("oculto", estado.sonsPessoais.length >= 3);
+
+  for (const som of estado.sonsPessoais) {
+    const item = document.createElement("li");
+    item.className = "soundboard__item";
+
+    const nome = document.createElement("span");
+    nome.className = "soundboard__nome";
+    nome.textContent = som.nome;
+    nome.title = som.nome;
+
+    const remover = document.createElement("button");
+    remover.className = "soundboard__remover";
+    remover.type = "button";
+    remover.title = "Remover";
+    remover.setAttribute("aria-label", `Remover ${som.nome}`);
+    remover.textContent = "✕";
+    remover.addEventListener("click", async () => {
+      try {
+        await conta.removerSomPessoal(estado.servidor, estado.token, som.id);
+        estado.sonsPessoais = estado.sonsPessoais.filter((s) => s.id !== som.id);
+        desenharSonsPessoais();
+        preencherSeletorSomEntrada();
+      } catch (erro) {
+        avisar(erro.message ?? String(erro), "erro");
+      }
+    });
+
+    item.append(nome, remover);
+    lista.append(item);
+  }
+}
+
+async function adicionarSomPessoalArquivo(arquivo) {
+  if (!arquivo || !estado.conta) return;
+  if (arquivo.size > SOM_BYTES_MAX) {
+    avisar("Esse som passa de 300 KB.", "erro");
+    return;
+  }
+  const bytes = new Uint8Array(await arquivo.arrayBuffer());
+  const nome = arquivo.name.replace(/\.[^.]+$/, "").slice(0, 40) || "Som";
+  try {
+    const resposta = await conta.adicionarSomPessoal(
+      estado.servidor,
+      estado.token,
+      nome,
+      arquivo.type || "application/octet-stream",
+      codificarBase64(bytes)
+    );
+    estado.sonsPessoais.push(resposta.som);
+    desenharSonsPessoais();
+    preencherSeletorSomEntrada();
+  } catch (erro) {
+    avisar(erro.message ?? String(erro), "erro");
+  }
+}
+
+/** Chamado ao abrir a aba "Sons" dos ajustes — a biblioteca pessoal só é
+ *  buscada aqui, e não toda vez que a conta muda, porque é uma tela que a
+ *  maioria das sessões nunca abre. */
+async function abrirAbaSons() {
+  preencherSeletorSomEntrada();
+  if (!estado.conta) {
+    desenharSonsPessoais();
+    return;
+  }
+  estado.sonsPessoais = await conta.listarSonsPessoais(estado.servidor, estado.token);
+  desenharSonsPessoais();
+  preencherSeletorSomEntrada();
+}
+
 /* ── Tempo em call ─────────────────────────────────────────────── */
 
 /**
@@ -2117,6 +2857,7 @@ function mostrarTempoDaCall() {
 function sairDaVoz(anunciar) {
   if (!estado.canalVoz) return;
   if (anunciar) sinal.enviar({ tipo: "sair-voz" });
+  fecharSoundboard();
 
   // Antes de desmontar: é `desmontarMalha` que fecha o contexto de áudio, e o
   // motor só espera pela cauda de um aviso que já esteja agendado.
@@ -2189,7 +2930,39 @@ function anunciarEstado() {
     mudo: estado.mudo,
     transmitindo: estado.transmitindo,
     atividade: estado.minhaAtividade,
+    atividadeIcone: estado.minhaAtividadeIcone,
   });
+}
+
+/**
+ * O ícone de um programa cadastrado a mão, achado pelo nome que já saiu de
+ * `nomeVisivel` — que para um cadastro é sempre o nome escolhido por quem
+ * cadastrou. Poucos cadastros existem por pessoa, então percorrer o mapa é
+ * mais simples que manter um segundo índice só para isto.
+ */
+function iconeDoNomeAtivo(nome) {
+  for (const dados of estado.programasPersonalizados.values()) {
+    if (dados.nome === nome) return dados.icone ?? null;
+  }
+  return null;
+}
+
+/** Registra ou atualiza um programa cadastrado a mão, e salva na hora. */
+function cadastrarPrograma(exe, nome, icone) {
+  estado.programasPersonalizados.set(exe.toLowerCase(), { nome, icone: icone ?? null });
+  salvarPreferencias();
+  desenharProgramasPersonalizados();
+  // O cadastro pode mudar o que está no ar agora mesmo (um nome feio virando
+  // bonito, ou um ícone chegando); a próxima leitura da Vigia já aplica, mas
+  // não há por que esperar até cinco segundos por isso.
+  vigia.olhar();
+}
+
+function removerPrograma(exe) {
+  estado.programasPersonalizados.delete(exe);
+  salvarPreferencias();
+  desenharProgramasPersonalizados();
+  vigia.olhar();
 }
 
 /**
@@ -2216,6 +2989,167 @@ function mostrarAtividadeAtual() {
   else if (!estado.grupo) linha.textContent = "Entre em um grupo para começar a mostrar.";
   else if (estado.minhaAtividade) linha.textContent = `Agora o grupo vê: ${estado.minhaAtividade}`;
   else linha.textContent = "Agora o grupo não vê nada — nenhum programa em primeiro plano.";
+}
+
+/* ═══ Cadastro manual de atividade ══════════════════════════════════
+ *
+ * Para quando o CALL não reconhece um programa, ou reconhece com um nome
+ * feio. Não depende de grupo nem de a pessoa ter acabado de usar o
+ * programa: ela aponta o `.exe` direto pelo seletor de arquivo — que só
+ * precisa do nome do arquivo, nunca do conteúdo dele — dá um nome e um
+ * ícone, e dali em diante o CALL reconhece aquele executável sozinho.
+ */
+
+/** exe (minúsculas) escolhido no formulário aberto, ou `null` sem escolha. */
+let atividadeEmEdicao = null;
+/** exe que o formulário tinha ao abrir para editar, ou `null` se é um
+ *  cadastro novo — é o que permite saber que a pessoa trocou de executável
+ *  no meio da edição, e o cadastro antigo precisa sair. */
+let edicaoOriginalExe = null;
+/** Ícone escolhido no formulário aberto — pode ser `null` (sem ícone). */
+let iconeEmEdicao = null;
+
+/** Nome de exibição de um arquivo, sem a extensão `.exe` — é o que vira a
+ *  chave do cadastro, e é dela que a Vigia reconhece o programa depois. */
+const exeDeArquivo = (nomeArquivo) => String(nomeArquivo ?? "").replace(/\.exe$/i, "").toLowerCase();
+
+function atualizarExecutavelEscolhido() {
+  $("atividade-form-executavel-nome").textContent = atividadeEmEdicao
+    ? `${atividadeEmEdicao}.exe`
+    : "Nenhum executável escolhido";
+}
+
+function atualizarPreviewDeIconeDeAtividade() {
+  const img = $("atividade-form-icone-img");
+  const vazio = $("atividade-form-icone-vazio");
+  img.src = iconeEmEdicao ?? "";
+  img.hidden = !iconeEmEdicao;
+  vazio.hidden = Boolean(iconeEmEdicao);
+}
+
+/** `existente` é `{ exe, nome }` para editar um cadastro já feito, ou
+ *  omitido para um cadastro novo, começando sem executável escolhido. */
+function abrirFormularioDeAtividade(existente = null) {
+  edicaoOriginalExe = existente?.exe ? existente.exe.toLowerCase() : null;
+  atividadeEmEdicao = edicaoOriginalExe;
+  const dados = edicaoOriginalExe ? estado.programasPersonalizados.get(edicaoOriginalExe) : null;
+  iconeEmEdicao = dados?.icone ?? null;
+
+  $("atividade-form-nome").value = dados?.nome ?? existente?.nome ?? "";
+  atualizarExecutavelEscolhido();
+  atualizarPreviewDeIconeDeAtividade();
+  $("atividade-cadastrar-botao").hidden = true;
+  $("atividade-form").hidden = false;
+  $("atividade-form-nome").focus();
+}
+
+function fecharFormularioDeAtividade() {
+  atividadeEmEdicao = null;
+  edicaoOriginalExe = null;
+  iconeEmEdicao = null;
+  $("atividade-form").hidden = true;
+  $("atividade-form").reset();
+  atualizarExecutavelEscolhido();
+  atualizarPreviewDeIconeDeAtividade();
+  $("atividade-cadastrar-botao").hidden = false;
+}
+
+function desenharProgramasPersonalizados() {
+  const lista = $("atividade-lista");
+  if (!lista) return;
+  lista.textContent = "";
+  const entradas = [...estado.programasPersonalizados.entries()];
+  lista.hidden = entradas.length === 0;
+
+  for (const [exe, dados] of entradas) {
+    const item = document.createElement("li");
+    item.className = "atividade-item";
+
+    const icone = document.createElement("span");
+    icone.className = "atividade-item__icone";
+    if (dados.icone) {
+      const img = document.createElement("img");
+      img.src = dados.icone;
+      img.alt = "";
+      icone.append(img);
+    }
+
+    const nome = document.createElement("span");
+    nome.className = "atividade-item__nome";
+    nome.textContent = dados.nome;
+    nome.title = dados.nome;
+
+    const editar = document.createElement("button");
+    editar.type = "button";
+    editar.className = "icone atividade-item__acao";
+    editar.title = "Editar";
+    editar.setAttribute("aria-label", `Editar ${dados.nome}`);
+    editar.innerHTML =
+      '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16l.7-3 8-8 2.3 2.3-8 8-3 .7z"/><path d="M11 5.5L14.5 9" /></svg>';
+    editar.addEventListener("click", () => abrirFormularioDeAtividade({ exe, nome: dados.nome }));
+
+    const remover = document.createElement("button");
+    remover.type = "button";
+    remover.className = "icone atividade-item__acao";
+    remover.title = "Remover";
+    remover.setAttribute("aria-label", `Remover ${dados.nome}`);
+    remover.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>';
+    remover.addEventListener("click", () => removerPrograma(exe));
+
+    item.append(icone, nome, editar, remover);
+    lista.append(item);
+  }
+}
+
+function prepararCadastroDeAtividade() {
+  $("atividade-cadastrar-botao").addEventListener("click", () => abrirFormularioDeAtividade());
+  $("atividade-form-cancelar").addEventListener("click", fecharFormularioDeAtividade);
+
+  $("atividade-form-executavel-botao").addEventListener("click", () =>
+    $("atividade-form-executavel-arquivo").click()
+  );
+  $("atividade-form-executavel-arquivo").addEventListener("change", (e) => {
+    const arquivo = e.target.files?.[0];
+    // Zera na hora, como no seletor de foto: sem isto, escolher o mesmo
+    // arquivo de novo não dispara `change` de novo.
+    e.target.value = "";
+    if (!arquivo) return;
+    atividadeEmEdicao = exeDeArquivo(arquivo.name);
+    atualizarExecutavelEscolhido();
+    // Um primeiro palpite de nome, a partir do arquivo — a pessoa é livre
+    // para trocar por qualquer coisa mais bonita antes de salvar.
+    if (!$("atividade-form-nome").value.trim()) {
+      $("atividade-form-nome").value = arquivo.name.replace(/\.exe$/i, "");
+    }
+  });
+
+  $("atividade-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!atividadeEmEdicao) {
+      avisar("Escolha o executável do programa primeiro.");
+      return;
+    }
+    const nome = $("atividade-form-nome").value.trim();
+    if (!nome) return;
+    // Trocar de executável no meio de uma edição não pode deixar um
+    // cadastro órfão para trás, apontando para o nome antigo.
+    if (edicaoOriginalExe && edicaoOriginalExe !== atividadeEmEdicao) {
+      removerPrograma(edicaoOriginalExe);
+    }
+    cadastrarPrograma(atividadeEmEdicao, nome, iconeEmEdicao);
+    fecharFormularioDeAtividade();
+  });
+
+  prepararEscolhaDeFoto(
+    $("atividade-form-icone"),
+    $("atividade-form-arquivo"),
+    (icone) => {
+      iconeEmEdicao = icone;
+      atualizarPreviewDeIconeDeAtividade();
+    },
+    (erro) => avisar(erro.message, "erro"),
+    lerIconeDeArquivo
+  );
 }
 
 /* ═══ Microfone ═════════════════════════════════════════════════ */
@@ -2605,6 +3539,19 @@ function decodificarBase64(base64) {
   const bytes = new Uint8Array(binario.length);
   for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
   return bytes;
+}
+
+/** O inverso de `decodificarBase64` — usado para mandar um clipe do
+ *  soundboard. Em blocos de 32 KB: `String.fromCharCode(...bytes)` de uma vez
+ *  só estoura a pilha de chamadas em arquivos de dezenas de KB. */
+function codificarBase64(bytes) {
+  if (bytes.toBase64) return bytes.toBase64();
+  let binario = "";
+  const bloco = 0x8000;
+  for (let i = 0; i < bytes.length; i += bloco) {
+    binario += String.fromCharCode(...bytes.subarray(i, i + bloco));
+  }
+  return btoa(binario);
 }
 
 function tocarPedacoDeAudioDaTela(pedaco) {
@@ -2999,6 +3946,19 @@ function prepararAjustes() {
     aba.addEventListener("click", () => trocarAba(aba.dataset.aba));
   }
 
+  // Cada cartão de ajuste começa fechado (ou aberto, conforme o HTML já
+  // decidiu) e só troca de estado quando alguém clica nele — é o mesmo
+  // princípio do resto do aplicativo agora: nada aparece sozinho, aparece
+  // porque uma ação pediu.
+  for (const secao of document.querySelectorAll(".ajustes__secao")) {
+    const botao = secao.querySelector(".ajustes__secao-topo");
+    botao.addEventListener("click", () => {
+      const aberto = secao.dataset.aberto === "sim";
+      secao.dataset.aberto = aberto ? "nao" : "sim";
+      botao.setAttribute("aria-expanded", String(!aberto));
+    });
+  }
+
   // Um deslizante emite `input` a cada pixel arrastado. Aplicar no motor é
   // barato (é só o valor de um parâmetro), mas gravar em disco a cada pixel
   // não é — a gravação sai da mão de quem arrasta e vai para o `change`.
@@ -3054,8 +4014,14 @@ function prepararAjustes() {
     motor.ouvirAviso("entrei");
   });
 
-  for (const [id, campo] of [["ajuste-entrada", "entrada"], ["ajuste-saida", "saida"]]) {
-    $(id).addEventListener("change", (e) => aplicarAudio({ [campo]: e.target.value }, true));
+  for (const [id, campo, selo] of [
+    ["ajuste-entrada", "entrada", "selo-entrada"],
+    ["ajuste-saida", "saida", "selo-saida"],
+  ]) {
+    $(id).addEventListener("change", (e) => {
+      $(selo).hidden = e.target.value !== "";
+      aplicarAudio({ [campo]: e.target.value }, true);
+    });
   }
 
   $("ajuste-som-da-tela").addEventListener("change", (e) => {
@@ -3093,6 +4059,7 @@ function prepararAjustes() {
     ajustarVigia();
     mostrarAtividadeAtual();
   });
+  prepararCadastroDeAtividade();
 
   montarBitrates();
   montarPerfis();
@@ -3360,6 +4327,9 @@ function trocarAba(nome) {
   for (const painel of document.querySelectorAll(".ajustes__painel")) {
     painel.hidden = painel.dataset.painel !== nome;
   }
+  // A biblioteca pessoal é buscada só quando a aba abre: é tela que a maioria
+  // das sessões nunca visita, e não vale pedir em toda entrada de grupo.
+  if (nome === "sons") abrirAbaSons();
 }
 
 /** Põe na tela o que está no estado. Um só caminho: qualquer mudança passa a
@@ -3388,6 +4358,7 @@ function refletirAjustes() {
   $("ajuste-atividade").checked = estado.mostrarAtividade;
   $("bloco-atividade").hidden = !estado.mostrarAtividade;
   mostrarAtividadeAtual();
+  desenharProgramasPersonalizados();
 
   for (const [i, botao] of [...$("ajuste-bitrate").children].entries()) {
     botao.setAttribute("aria-pressed", BITRATES_AUDIO[i].valor === a.bitrate ? "true" : "false");
@@ -3424,7 +4395,7 @@ async function observarNivel() {
 async function desenharDispositivos() {
   const { entradas, saidas } = await listarDispositivos();
 
-  const encher = (campo, lista, escolhido, padrao) => {
+  const encher = (campo, lista, escolhido, padrao, selo) => {
     campo.textContent = "";
     const automatico = document.createElement("option");
     automatico.value = "";
@@ -3439,12 +4410,15 @@ async function desenharDispositivos() {
     // O motor pode ter caído para o padrão se o dispositivo salvo sumiu; ler
     // dele, e não do estado, é o que mantém a tela honesta.
     campo.value = lista.some((i) => i.id === escolhido) ? escolhido : "";
+    // O selo é a mesma honestidade em forma de selo: unicamente visível
+    // quando é mesmo o sistema escolhendo, e não uma pessoa que já decidiu.
+    if (selo) selo.hidden = campo.value !== "";
   };
 
   const atual = motor.config;
   estado.audio.entrada = atual.entrada;
-  encher($("ajuste-entrada"), entradas, atual.entrada, "Padrão do sistema");
-  encher($("ajuste-saida"), saidas, atual.saida, "Padrão do sistema");
+  encher($("ajuste-entrada"), entradas, atual.entrada, "Padrão do sistema", $("selo-entrada"));
+  encher($("ajuste-saida"), saidas, atual.saida, "Padrão do sistema", $("selo-saida"));
 }
 
 /* ═══ Atualização automática ════════════════════════════════════ */
@@ -3459,18 +4433,23 @@ let atualizacaoAdiada = null;
 /** Versão nova encontrada, dispensada ou não. Enquanto houver uma aqui, a
  *  marca do canto fica na tela. */
 let atualizacaoDisponivel = null;
+/** As notas da versão nova, como o publicador as escreveu no manifesto. Sem
+ *  elas o botão "Ver o que há de novo" abre um cartão honesto — diz que a
+ *  versão existe, e não inventa conteúdo que não veio. */
+let atualizacaoNotas = "";
 let instalando = false;
 
 async function procurarAtualizacao() {
   if (instalando) return;
   try {
-    const versao = await invocar("procurar_atualizacao");
-    if (!versao) return;
-    atualizacaoDisponivel = versao;
+    const achado = await invocar("procurar_atualizacao");
+    if (!achado?.versao) return;
+    atualizacaoDisponivel = achado.versao;
+    atualizacaoNotas = achado.notas ?? "";
     mostrarMarcaDeAtualizacao();
     // O cartão aparece uma vez por versão. Insistir a cada meia hora com o
     // mesmo aviso é o caminho mais curto para a pessoa aprender a ignorá-lo.
-    if (versao !== atualizacaoAdiada) abrirCartaoDeAtualizacao(versao);
+    if (achado.versao !== atualizacaoAdiada) abrirCartaoDeAtualizacao(achado.versao);
   } catch {
     // Sem rede, servidor fora do ar ou rodando fora do aplicativo. Nada disso
     // é problema do usuário: a próxima rodada tenta de novo, em silêncio.
@@ -3504,6 +4483,129 @@ function abrirCartaoDeAtualizacao(versao) {
   };
 
   $("botao-atualizar").onclick = () => instalarAtualizacao();
+  $("botao-novidades").onclick = () => abrirNovidades();
+}
+
+/**
+ * O cartão "O que há de novo": o que mudou nesta versão, em linguagem de
+ * gente — as notas que o publicador escreveu, montadas como leitura, não
+ * como lista de arquivos.
+ */
+function abrirNovidades() {
+  if (!atualizacaoDisponivel || instalando) return;
+
+  $("novidades-versao").textContent = `CALL ${atualizacaoDisponivel}`;
+  montarNovidades($("novidades-corpo"), atualizacaoNotas);
+  $("novidades-dialogo").classList.remove("oculto");
+
+  const fechar = () => {
+    $("novidades-dialogo").classList.add("oculto");
+    document.removeEventListener("keydown", aoTeclar);
+    // O foco volta a quem abriu — fechar deixa o teclado onde estava, em vez
+    // de órfão no nada.
+    $("botao-novidades").focus();
+  };
+
+  // O Escape é registrado aqui, e não só em `prepararAplicacao`, porque o
+  // cartão da atualização também aparece sobre o portal — e lá dentro o
+  // handler da aplicação ainda não existe.
+  const aoTeclar = (evento) => {
+    if (evento.key === "Escape") fechar();
+  };
+
+  // O "Depois" do cartão grande também vale aqui dentro: dispensar a leitura
+  // não é dispensar a atualização, é só fechar esta janela.
+  $("novidades-depois").onclick = fechar;
+  $("novidades-fechar").onclick = fechar;
+  $("novidades-atualizar").onclick = () => {
+    fechar();
+    instalarAtualizacao();
+  };
+  $("novidades-dialogo").onclick = (evento) => {
+    if (evento.target === $("novidades-dialogo")) fechar();
+  };
+
+  document.addEventListener("keydown", aoTeclar);
+  $("novidades-fechar").focus();
+}
+
+/**
+ * Monta as notas da versão dentro do cartão, como texto de leitura.
+ *
+ * O formato é o que o publicador escreve no manifesto: uma linha por item,
+ * com `-` no começo. Seções delimitadas por uma linha em branco viram blocos
+ * com título — "O que mudou", "O que foi consertado" — para a leitura ter
+ * hierarquia e não virar uma parede de texto. Sem notas, o cartão diz a
+ * verdade: a versão chegou, e nada mais.
+ */
+function montarNovidades(corpo, notas) {
+  corpo.textContent = "";
+
+  const texto = String(notas ?? "").trim();
+  if (!texto) {
+    const vazio = document.createElement("p");
+    vazio.className = "novidades__vazio";
+    vazio.textContent =
+      "Esta versão não trouxe notas escritas. Instale para ver o que mudou — é rápido e não desfaz nada.";
+    corpo.append(vazio);
+    return;
+  }
+
+  // Cada linha é um item, e uma linha vazia encerra o bloco anterior — por
+  // isso o corte é por linha (`/\n/`), e não por uma ou mais (`/\n+/`): juntar
+  // as vazias com as cheias apagaria a separação que o publicador fez.
+  //
+  // O bloco com mais de um item ganha título; o de um só, não — um título
+  // para uma linha é cerimônia. E uma linha solta, sem item nenhum, é
+  // parágrafo — nunca pode sumir só porque não veio seguida de marcador.
+  let bloco = null;
+  let itens = [];
+
+  const fecharBloco = () => {
+    if (bloco && !itens.length) {
+      const paragrafo = document.createElement("p");
+      paragrafo.className = "novidades__vazio";
+      paragrafo.textContent = bloco;
+      corpo.append(paragrafo);
+      bloco = null;
+      return;
+    }
+    if (!itens.length) return;
+    if (itens.length > 1) {
+      const secao = document.createElement("h4");
+      secao.className = "novidades__secao";
+      secao.textContent = bloco;
+      corpo.append(secao);
+    }
+    const lista = document.createElement("ul");
+    lista.className = "novidades__lista";
+    for (const item of itens) {
+      const linha = document.createElement("li");
+      linha.className = "novidades__item";
+      linha.textContent = item;
+      lista.append(linha);
+    }
+    corpo.append(lista);
+    bloco = null;
+    itens = [];
+  };
+
+  for (const linhaBruta of texto.split(/\n/)) {
+    const linha = linhaBruta.trim();
+    if (!linha) {
+      fecharBloco();
+      continue;
+    }
+    const semMarca = linha.replace(/^[-•]\s*/, "");
+    if (semMarca === linha) {
+      // Linha sem a marca de item começa um bloco novo, com ela de título.
+      fecharBloco();
+      bloco = linha;
+    } else {
+      itens.push(semMarca);
+    }
+  }
+  fecharBloco();
 }
 
 async function instalarAtualizacao() {
@@ -3568,6 +4670,7 @@ if (apelidoDoAmbiente) {
 }
 
 prepararPortal();
+prepararBrilhoDoCursor();
 
 /**
  * Quem entra direto, e quem vê o portal.
@@ -3587,35 +4690,41 @@ prepararPortal();
  * próxima saudação. O CALL funciona sem internet, e a conta não pode ser o
  * que passa a exigi-la.
  */
-const guardada = conta.sessaoGuardada();
-let entrouPelaSessao = false;
-let sessaoRecusada = false;
+try {
+  const guardada = conta.sessaoGuardada();
+  let entrouPelaSessao = false;
+  let sessaoRecusada = false;
 
-if (guardada?.token && guardada.servidor === estado.servidor) {
-  // Assumido desde já: se o servidor estiver fora do ar, a saudação ainda
-  // leva o token e a identidade da conta continua sendo comprovável.
-  estado.token = guardada.token;
-  try {
-    const sessao = await conta.retomar(estado.servidor, guardada.token);
-    if (sessao) {
-      assumirConta(sessao, { abrir: false });
-      entrouPelaSessao = true;
-    } else {
-      largarIdentidadeDaConta();
-      sessaoRecusada = true;
+  if (guardada?.token && guardada.servidor === estado.servidor) {
+    // Assumido desde já: se o servidor estiver fora do ar, a saudação ainda
+    // leva o token e a identidade da conta continua sendo comprovável.
+    estado.token = guardada.token;
+    try {
+      const sessao = await conta.retomar(estado.servidor, guardada.token);
+      if (sessao) {
+        assumirConta(sessao, { abrir: false });
+        entrouPelaSessao = true;
+      } else {
+        largarIdentidadeDaConta();
+        sessaoRecusada = true;
+      }
+    } catch {
+      /* servidor fora do ar: segue com o token guardado */
     }
-  } catch {
-    /* servidor fora do ar: segue com o token guardado */
   }
-}
 
-if (entrouPelaSessao || (estado.apelido && !sessaoRecusada)) {
-  abrirAplicacao();
-} else {
-  refletirPortal();
-  // Perguntar pelo Google custa uma conexão curta ao servidor. Só quem vai
-  // mesmo ver o botão paga por ela.
-  perguntarPeloGoogle();
+  if (entrouPelaSessao || (estado.apelido && !sessaoRecusada)) {
+    abrirAplicacao();
+  } else {
+    refletirPortal();
+    // Perguntar pelo Google custa uma conexão curta ao servidor. Só quem vai
+    // mesmo ver o botão paga por ela.
+    perguntarPeloGoogle();
+  }
+} finally {
+  // Some mesmo se algo aqui em cima falhar de um jeito inesperado — travada
+  // atrás do glifo para sempre é pior que aparecer no portal sem sessão.
+  esconderTelaDeCarregando();
 }
 
 // Um link clicado com o CALL já aberto chega por evento; um link que abriu o

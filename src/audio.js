@@ -9,9 +9,10 @@
  * O grafo é deliberadamente raso. Cada nó a mais é trabalho por bloco de 128
  * amostras, 375 vezes por segundo:
  *
- *   microfone → passa-alta 85 Hz → porta de ruído → destino → WebRTC
- *   recebido  → ganho da pessoa → ganho geral → alto-falante
- *   avisos    → ganho dos avisos → alto-falante
+ *   microfone  → passa-alta 85 Hz → porta de ruído → destino → WebRTC
+ *   recebido   → ganho da pessoa → ganho geral → alto-falante
+ *   avisos     → ganho dos avisos → alto-falante
+ *   soundboard → ganho do soundboard → destino (WebRTC) e alto-falante
  *
  * Os avisos — os sons de entrar e sair da voz, sintetizados em `sons.js` —
  * penduram-se no mesmo contexto, e não em um `<audio>` solto, por dois
@@ -19,6 +20,13 @@
  * vale para o contexto inteiro, e não pelo padrão do sistema; e o volume
  * deles é independente do volume geral, para que abaixar a voz de todo mundo
  * não apague os avisos e vice-versa.
+ *
+ * O soundboard é diferente dos dois: ele é o único ramo que também alimenta
+ * `destino` — o mesmo nó que vira a trilha WebRTC. Um clipe tocado precisa
+ * chegar aos outros participantes pela chamada de verdade, e não só ser
+ * ouvido por quem clicou; por isso ele tem sua própria saída para o destino,
+ * em paralelo à do microfone, nunca passando pela porta de ruído (que existe
+ * só para voz — um efeito sonoro não deve ser tratado como se fosse fala).
  *
  * A passa-alta é nativa e custa quase nada, e tira o que nenhuma supressão de
  * ruído resolve bem: ronco de rede elétrica, trepidação de mesa e o estouro de
@@ -52,7 +60,16 @@ export const AUDIO_PADRAO = {
   /** Volume deles, de 0 a 1. Fica abaixo de 1 por padrão porque estes sons
    *  interrompem uma conversa: eles avisam, não anunciam. */
   volumeSons: 0.7,
+  /** Volume dos clipes do soundboard — o que sai para os outros e o que quem
+   *  tocou ouve de volta. Cheio por padrão: um efeito tocado de propósito não
+   *  deveria precisar de ajuste antes de ser ouvido. */
+  volumeSoundboard: 1,
 };
+
+/** Clipe mais longo do que isto é recusado antes de tocar. Soundboard é
+ *  efeito curto, não trilha sonora — e o teto evita que um clipe comprido
+ *  fique pendurado no grafo de saída por muito tempo. */
+export const DURACAO_CLIPE_MAX = 5;
 
 /** Escolhas oferecidas na interface, com o custo declarado. */
 export const BITRATES_AUDIO = [
@@ -81,6 +98,9 @@ export class MotorDeAudio {
   #destino = null; // MediaStreamAudioDestinationNode
   #geral = null; // GainNode mestre da reprodução
   #avisos = null; // GainNode dos sons de entrar e sair
+  #soundboard = null; // GainNode dos clipes tocados manualmente
+  #soundboardLigadoAoDestino = false;
+  #cacheClipes = new Map(); // id do som -> AudioBuffer já decodificado
   // O relógio do contexto começa em zero, então o "nunca tocou" precisa ser
   // menor que qualquer instante possível — com zero aqui, um aviso disparado
   // nos primeiros 90 ms de vida do contexto seria descartado como repetido.
@@ -126,6 +146,9 @@ export class MotorDeAudio {
       this.#avisos = this.#contexto.createGain();
       this.#avisos.gain.value = this.#config.volumeSons;
       this.#avisos.connect(this.#contexto.destination);
+      this.#soundboard = this.#contexto.createGain();
+      this.#soundboard.gain.value = this.#config.volumeSoundboard;
+      this.#soundboard.connect(this.#contexto.destination);
       await this.#aplicarSaida();
     }
     if (this.#contexto.state === "suspended") await this.#contexto.resume().catch(() => {});
@@ -152,6 +175,13 @@ export class MotorDeAudio {
     if (!this.#destino) {
       this.#destino = contexto.createMediaStreamDestination();
       this.#destino.channelCount = 1;
+    }
+    // Liga o soundboard ao destino uma única vez: `connect` chamado duas
+    // vezes entre o mesmo par de nós somaria o sinal em dobro, não é
+    // idempotente.
+    if (!this.#soundboardLigadoAoDestino && this.#soundboard) {
+      this.#soundboard.connect(this.#destino);
+      this.#soundboardLigadoAoDestino = true;
     }
     if (!this.#passaAlta) {
       this.#passaAlta = contexto.createBiquadFilter();
@@ -296,6 +326,46 @@ export class MotorDeAudio {
     this.tocarAviso(nome);
   }
 
+  /* ── Soundboard ────────────────────────────────────────────────── */
+
+  /**
+   * Decodifica e toca um clipe do soundboard. `bytes` é um `Uint8Array` (o
+   * som chega em base64 pelo protocolo e é decodificado antes de chegar
+   * aqui). Quando `idCache` é dado, o `AudioBuffer` decodificado fica
+   * guardado — tocar o mesmo som de novo na mesma sessão não decodifica de
+   * novo.
+   *
+   * Exige o motor ativo (`this.ativo`, ou seja, dentro de um canal de voz):
+   * é o `#destino` que carrega o clipe até os outros participantes, e ele só
+   * existe depois de `abrirMicrofone`.
+   *
+   * Devolve `false` sem tocar quando o motor não está ativo ou o clipe passa
+   * do teto de duração — nunca lança, porque um clipe malformado não deveria
+   * derrubar quem tentou tocá-lo.
+   */
+  async tocarClipe(bytes, idCache) {
+    if (!this.ativo) return false;
+    const contexto = await this.contexto();
+
+    let buffer = idCache ? this.#cacheClipes.get(idCache) : null;
+    if (!buffer) {
+      const copia = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      try {
+        buffer = await contexto.decodeAudioData(copia);
+      } catch {
+        return false;
+      }
+      if (idCache) this.#cacheClipes.set(idCache, buffer);
+    }
+    if (buffer.duration > DURACAO_CLIPE_MAX) return false;
+
+    const fonte = contexto.createBufferSource();
+    fonte.buffer = buffer;
+    fonte.connect(this.#soundboard);
+    fonte.start();
+    return true;
+  }
+
   /* ── Ajustes ───────────────────────────────────────────────────── */
 
   /**
@@ -309,6 +379,7 @@ export class MotorDeAudio {
 
     if (this.#geral) this.#geral.gain.value = depois.volumeGeral;
     if (this.#avisos) this.#avisos.gain.value = depois.volumeSons;
+    if (this.#soundboard) this.#soundboard.gain.value = depois.volumeSoundboard;
     if (this.#worklet) {
       this.#worklet.parameters.get("ativa").value = depois.porta ? 1 : 0;
       this.#worklet.parameters.get("limiar").value = depois.limiar;
@@ -369,6 +440,12 @@ export class MotorDeAudio {
     this.#avisoAte = 0;
     this.#avisos?.disconnect();
     this.#avisos = null;
+    this.#soundboard?.disconnect();
+    this.#soundboard = null;
+    this.#soundboardLigadoAoDestino = false;
+    // Os `AudioBuffer` guardados pertencem ao contexto que está fechando —
+    // um contexto novo não pode tocar um buffer decodificado pelo anterior.
+    this.#cacheClipes.clear();
 
     this.#worklet?.disconnect();
     this.#passaAlta?.disconnect();

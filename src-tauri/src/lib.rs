@@ -152,10 +152,20 @@ fn apelido_do_ambiente() -> Option<String> {
     std::env::var("CALL_APELIDO").ok().filter(|s| !s.is_empty())
 }
 
+/// O que a interface precisa saber de uma versao nova: o numero, e o texto
+/// das notas que o publicador escreveu no manifesto (`latest.json`). As notas
+/// viajam do plugin para ca no campo `body` — e o que o cartao "Ver o que ha
+/// de novo" mostra antes de alguem decidir atualizar.
+#[derive(serde::Serialize)]
+struct Atualizacao {
+    versao: String,
+    notas: Option<String>,
+}
+
 /// Consulta o servidor de atualizacao e devolve a versao nova, se houver.
 /// Devolver `None` e o caso normal: significa que ja estamos em dia.
 #[tauri::command]
-async fn procurar_atualizacao(app: tauri::AppHandle) -> Result<Option<String>, String> {
+async fn procurar_atualizacao(app: tauri::AppHandle) -> Result<Option<Atualizacao>, String> {
     use tauri_plugin_updater::UpdaterExt;
 
     let achado = app
@@ -165,7 +175,10 @@ async fn procurar_atualizacao(app: tauri::AppHandle) -> Result<Option<String>, S
         .await
         .map_err(|erro| erro.to_string())?;
 
-    Ok(achado.map(|atualizacao| atualizacao.version))
+    Ok(achado.map(|atualizacao| Atualizacao {
+        versao: atualizacao.version,
+        notas: atualizacao.body,
+    }))
 }
 
 /// Baixa e executa o instalador da versao nova. A assinatura do pacote e

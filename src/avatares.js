@@ -259,7 +259,25 @@ export function iniciais(nome) {
  * ou versão mais nova com um sétimo mascote — cai nas iniciais, que vão por
  * `textContent`. Em nenhum caminho um texto de outra pessoa vira marcação.
  */
-export function pintarAvatar(elemento, { avatar, apelido } = {}) {
+/**
+ * `foto` é sempre local — a conta de outra pessoa nunca traz esse campo,
+ * porque o servidor não guarda foto nenhuma ainda, só o mascote. Por isso ela
+ * só aparece pintada em avatares que representam a própria pessoa usando o
+ * CALL neste computador, nunca em quem está do outro lado do grupo.
+ */
+export function pintarAvatar(elemento, { avatar, apelido, foto } = {}) {
+  elemento.classList.toggle("avatar--foto", Boolean(foto));
+
+  if (foto) {
+    elemento.classList.remove("avatar--mascote");
+    elemento.textContent = "";
+    const imagem = document.createElement("img");
+    imagem.src = foto;
+    imagem.alt = "";
+    elemento.append(imagem);
+    return;
+  }
+
   const escolhido = acharAvatar(avatar);
   elemento.classList.toggle("avatar--mascote", Boolean(escolhido));
 
