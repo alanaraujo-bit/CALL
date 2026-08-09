@@ -26,6 +26,7 @@ const invocar = (comando, args) =>
     : Promise.reject(new Error("Recurso disponível apenas no aplicativo."));
 
 const CHAVE = "call.preferencias";
+const VERSAO_ATUAL = "0.9.5";
 /** Servidor oficial do CALL, hospedado. É o padrão para que ninguém precise
  *  subir nada na própria máquina para conversar com os amigos. */
 const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
@@ -125,6 +126,19 @@ const estado = {
   audioDaTela: true,
   /** Mostrar aos outros que aplicativo está em primeiro plano aqui. */
   mostrarAtividade: true,
+  escalaInterface: 1,
+  brilhoCursor: true,
+  tamanhoBrilhoCursor: 460,
+  intensidadeBrilhoCursor: 100,
+  /** A busca periódica pode ser desligada; a verificação manual continua
+   * sempre disponível no painel de Atualizações. */
+  buscarAtualizacoesAutomaticamente: true,
+  /** `{ versao, lembrarEm }`, ou `null`: o "Depois" não perde a versão, só
+   * agenda uma nova lembrança sem virar uma interrupção a cada abertura. */
+  lembreteAtualizacao: null,
+  /** Última versão encontrada, mantida para o atalho de atualização continuar
+   * visível mesmo se o aplicativo for fechado antes de ela ser instalada. */
+  atualizacaoPendente: null,
   /** O que já foi anunciado ao grupo. Não é preferência: é o que está no ar. */
   minhaAtividade: null,
   /** Ícone da atividade no ar, quando ela veio de um programa cadastrado a
@@ -242,6 +256,33 @@ function carregarPreferencias() {
     if (typeof bruto.mostrarAtividade === "boolean") {
       estado.mostrarAtividade = bruto.mostrarAtividade;
     }
+    if (Number.isFinite(bruto.escalaInterface)) {
+      estado.escalaInterface = Math.min(1.4, Math.max(0.8, bruto.escalaInterface));
+    }
+    if (typeof bruto.brilhoCursor === "boolean") estado.brilhoCursor = bruto.brilhoCursor;
+    if (Number.isFinite(bruto.tamanhoBrilhoCursor)) {
+      estado.tamanhoBrilhoCursor = Math.min(700, Math.max(280, bruto.tamanhoBrilhoCursor));
+    }
+    if (Number.isFinite(bruto.intensidadeBrilhoCursor)) {
+      estado.intensidadeBrilhoCursor = Math.min(160, Math.max(20, bruto.intensidadeBrilhoCursor));
+    }
+    if (typeof bruto.buscarAtualizacoesAutomaticamente === "boolean") {
+      estado.buscarAtualizacoesAutomaticamente = bruto.buscarAtualizacoesAutomaticamente;
+    }
+    if (
+      bruto.lembreteAtualizacao &&
+      typeof bruto.lembreteAtualizacao.versao === "string" &&
+      Number.isFinite(bruto.lembreteAtualizacao.lembrarEm)
+    ) {
+      estado.lembreteAtualizacao = bruto.lembreteAtualizacao;
+    }
+    if (
+      bruto.atualizacaoPendente &&
+      typeof bruto.atualizacaoPendente.versao === "string" &&
+      typeof bruto.atualizacaoPendente.notas === "string"
+    ) {
+      estado.atualizacaoPendente = bruto.atualizacaoPendente;
+    }
     if (typeof bruto.atalhoMudo === "string") estado.atalhoMudo = bruto.atalhoMudo;
     estado.volumes = new Map(Array.isArray(bruto.volumes) ? bruto.volumes : []);
     estado.programasPersonalizados = new Map(
@@ -266,6 +307,8 @@ function carregarPreferencias() {
   // Sem isto, um grupo recém-criado teria seis avatares idênticos — e o avatar
   // deixaria de distinguir alguém justamente antes de qualquer ajuste.
   if (!estado.avatar) estado.avatar = avatarSugerido(estado.usuario);
+  aplicarEscalaDaInterface();
+  aplicarPreferenciasDoBrilho();
 }
 
 function salvarPreferencias() {
@@ -285,6 +328,13 @@ function salvarPreferencias() {
         perfilTela: estado.perfilTela,
         audioDaTela: estado.audioDaTela,
         mostrarAtividade: estado.mostrarAtividade,
+        escalaInterface: estado.escalaInterface,
+        brilhoCursor: estado.brilhoCursor,
+        tamanhoBrilhoCursor: estado.tamanhoBrilhoCursor,
+        intensidadeBrilhoCursor: estado.intensidadeBrilhoCursor,
+        buscarAtualizacoesAutomaticamente: estado.buscarAtualizacoesAutomaticamente,
+        lembreteAtualizacao: estado.lembreteAtualizacao,
+        atualizacaoPendente: estado.atualizacaoPendente,
         atalhoMudo: estado.atalhoMudo,
         volumes: [...estado.volumes],
         programasPersonalizados: [...estado.programasPersonalizados],
@@ -620,9 +670,12 @@ function prepararBrilhoDoCursor() {
   }
 
   window.addEventListener("pointermove", (evento) => {
-    alvoX = evento.clientX;
-    alvoY = evento.clientY;
-    brilho.classList.add("brilho-cursor--ativo");
+    // `clientX/Y` vêm em pixels físicos da janela. Como a raiz pode estar com
+    // zoom, a camada do brilho precisa receber a coordenada no espaço do layout
+    // para continuar exatamente sob o ponteiro em qualquer escala.
+    alvoX = evento.clientX / estado.escalaInterface;
+    alvoY = evento.clientY / estado.escalaInterface;
+    if (estado.brilhoCursor) brilho.classList.add("brilho-cursor--ativo");
     if (!emQuadro) {
       emQuadro = true;
       requestAnimationFrame(passo);
@@ -633,6 +686,14 @@ function prepararBrilhoDoCursor() {
   // cursor foi embora — e "embora" aqui é sair da janela inteira, não de um
   // elemento dentro dela.
   document.addEventListener("mouseleave", () => brilho.classList.remove("brilho-cursor--ativo"));
+}
+
+function aplicarPreferenciasDoBrilho() {
+  const brilho = $("brilho-cursor");
+  if (!brilho) return;
+  brilho.style.setProperty("--brilho-tamanho", `${estado.tamanhoBrilhoCursor}px`);
+  brilho.style.setProperty("--brilho-intensidade", String(estado.intensidadeBrilhoCursor / 100));
+  if (!estado.brilhoCursor) brilho.classList.remove("brilho-cursor--ativo");
 }
 
 /* ═══ Portal: entrar, criar conta, ou nenhum dos dois ═══════════ */
@@ -1004,6 +1065,7 @@ function abrirAplicacao() {
   // A aplicação é montada já, e a tela de entrada só sai depois: montar
   // depois faria a espera aparecer como uma tela preta.
   $("tela-aplicacao").classList.remove("oculto");
+  mostrarMarcaDeAtualizacao();
   // Quem saiu da conta e entrou de novo já tem tudo ligado; repetir aqui
   // duplicaria cada ouvinte, e cada clique passaria a valer por dois.
   if (aplicacaoPronta) {
@@ -4700,6 +4762,17 @@ function prepararAjustes() {
     aplicarAudio({ limiar: v });
   });
 
+  $("ajuste-retorno-microfone").addEventListener("change", async (e) => {
+    try {
+      if (e.target.checked && !motor.ativo) await motor.abrirMicrofone();
+      motor.monitorarEntrada(e.target.checked);
+    } catch {
+      e.target.checked = false;
+      motor.monitorarEntrada(false);
+      avisar("Não foi possível iniciar a prévia do microfone.", "erro");
+    }
+  });
+
   const chave = (id, campo) =>
     $(id).addEventListener("change", (e) => aplicarAudio({ [campo]: e.target.checked }, true));
 
@@ -4747,6 +4820,50 @@ function prepararAjustes() {
     estado.audioDaTela = e.target.checked;
     salvarPreferencias();
   });
+
+  const escala = $("ajuste-escala-interface");
+  escala.addEventListener("input", () => {
+    estado.escalaInterface = Number(escala.value) / 100;
+    aplicarEscalaDaInterface();
+    atualizarRotuloDaEscala();
+  });
+  escala.addEventListener("change", salvarPreferencias);
+  $("ajuste-escala-padrao").addEventListener("click", () => {
+    estado.escalaInterface = 1;
+    aplicarEscalaDaInterface();
+    atualizarRotuloDaEscala();
+    salvarPreferencias();
+  });
+
+  $("ajuste-brilho-cursor").addEventListener("change", (e) => {
+    estado.brilhoCursor = e.target.checked;
+    aplicarPreferenciasDoBrilho();
+    $("bloco-controles-brilho").hidden = !estado.brilhoCursor;
+    salvarPreferencias();
+  });
+  const tamanhoDoBrilho = $("ajuste-tamanho-brilho");
+  tamanhoDoBrilho.addEventListener("input", () => {
+    estado.tamanhoBrilhoCursor = Number(tamanhoDoBrilho.value);
+    aplicarPreferenciasDoBrilho();
+    $("valor-tamanho-brilho").textContent = `${estado.tamanhoBrilhoCursor}px`;
+  });
+  tamanhoDoBrilho.addEventListener("change", salvarPreferencias);
+  const intensidadeDoBrilho = $("ajuste-intensidade-brilho");
+  intensidadeDoBrilho.addEventListener("input", () => {
+    estado.intensidadeBrilhoCursor = Number(intensidadeDoBrilho.value);
+    aplicarPreferenciasDoBrilho();
+    $("valor-intensidade-brilho").textContent = `${estado.intensidadeBrilhoCursor}%`;
+  });
+  intensidadeDoBrilho.addEventListener("change", salvarPreferencias);
+
+  $("ajuste-busca-automatica").addEventListener("change", (e) => {
+    estado.buscarAtualizacoesAutomaticamente = e.target.checked;
+    salvarPreferencias();
+    mostrarEstadoDaAtualizacao(
+      e.target.checked ? "A busca automática está ativa." : "A busca automática está desativada."
+    );
+  });
+  $("botao-buscar-atualizacao").addEventListener("click", () => procurarAtualizacao({ manual: true }));
 
   $("botao-aplicar-servidor").addEventListener("click", async () => {
     const servidor = $("campo-servidor").value.trim();
@@ -5046,6 +5163,8 @@ async function abrirAjustes() {
 function fecharAjustes() {
   $("ajustes").classList.add("oculto");
   motor.medir(null);
+  motor.monitorarEntrada(false);
+  $("ajuste-retorno-microfone").checked = false;
 
   // Fora de um canal de voz, o microfone aberto era só para o teste.
   if (!estado.canalVoz) {
@@ -5067,10 +5186,38 @@ function trocarAba(nome) {
   if (nome === "sons") abrirAbaSons();
 }
 
+/** Aplica a mesma escala ao layout inteiro. `zoom` no elemento raiz é
+ * intencional: ao contrário de aumentar só a fonte, ele amplia alvos de clique,
+ * ícones e espaçamentos, e faz o aplicativo se reorganizar no espaço disponível. */
+function aplicarEscalaDaInterface() {
+  document.documentElement.style.zoom = String(estado.escalaInterface);
+}
+
+function atualizarRotuloDaEscala() {
+  const porcentagem = Math.round(estado.escalaInterface * 100);
+  $("ajuste-escala-interface").value = String(porcentagem);
+  $("valor-escala-interface").textContent = `${porcentagem}%`;
+  $("ajuste-escala-padrao").hidden = porcentagem === 100;
+}
+
+function atualizarAjustesDaInterface() {
+  atualizarRotuloDaEscala();
+  $("ajuste-brilho-cursor").checked = estado.brilhoCursor;
+  $("bloco-controles-brilho").hidden = !estado.brilhoCursor;
+  $("ajuste-tamanho-brilho").value = String(estado.tamanhoBrilhoCursor);
+  $("valor-tamanho-brilho").textContent = `${estado.tamanhoBrilhoCursor}px`;
+  $("ajuste-intensidade-brilho").value = String(estado.intensidadeBrilhoCursor);
+  $("valor-intensidade-brilho").textContent = `${estado.intensidadeBrilhoCursor}%`;
+  $("ajuste-busca-automatica").checked = estado.buscarAtualizacoesAutomaticamente;
+  $("versao-atual").textContent = `CALL ${VERSAO_ATUAL}`;
+}
+
 /** Põe na tela o que está no estado. Um só caminho: qualquer mudança passa a
  *  gravar e a chamar isto, em vez de cada controle cuidar do próprio rótulo. */
 function refletirAjustes() {
   const a = estado.audio;
+
+  atualizarAjustesDaInterface();
 
   $("ajuste-ganho").value = String(Math.round(a.ganhoEntrada * 100));
   $("valor-ganho").textContent = `${Math.round(a.ganhoEntrada * 100)}%`;
@@ -5078,6 +5225,7 @@ function refletirAjustes() {
   $("valor-volume").textContent = `${Math.round(a.volumeGeral * 100)}%`;
   $("ajuste-limiar").value = String(a.limiar);
   $("valor-limiar").textContent = `${String(a.limiar).replace("-", "−")} dB`;
+  $("ajuste-retorno-microfone").checked = false;
 
   $("ajuste-porta").checked = a.porta;
   $("bloco-limiar").hidden = !a.porta;
@@ -5162,9 +5310,8 @@ async function desenharDispositivos() {
  *  o bastante para uma correção chegar no mesmo dia e raro o bastante para
  *  não pesar em nada. */
 const INTERVALO_ATUALIZACAO = 30 * 60 * 1000;
+const LEMBRETE_ATUALIZACAO_MS = 4 * 60 * 60 * 1000;
 
-/** Versão que o usuário já dispensou nesta sessão. */
-let atualizacaoAdiada = null;
 /** Versão nova encontrada, dispensada ou não. Enquanto houver uma aqui, a
  *  marca do canto fica na tela. */
 let atualizacaoDisponivel = null;
@@ -5174,21 +5321,50 @@ let atualizacaoDisponivel = null;
 let atualizacaoNotas = "";
 let instalando = false;
 
-async function procurarAtualizacao() {
-  if (instalando) return;
+async function procurarAtualizacao({ manual = false } = {}) {
+  if (instalando || (!manual && !estado.buscarAtualizacoesAutomaticamente)) return;
+  if (manual) {
+    $("botao-buscar-atualizacao").disabled = true;
+    $("botao-buscar-atualizacao").textContent = "Verificando…";
+    mostrarEstadoDaAtualizacao("Verificando atualizações…");
+  }
   try {
     const achado = await invocar("procurar_atualizacao");
-    if (!achado?.versao) return;
+    if (!achado?.versao) {
+      estado.atualizacaoPendente = null;
+      estado.lembreteAtualizacao = null;
+      salvarPreferencias();
+      atualizacaoDisponivel = null;
+      atualizacaoNotas = "";
+      mostrarMarcaDeAtualizacao();
+      if (manual) mostrarEstadoDaAtualizacao(`CALL ${VERSAO_ATUAL} já está atualizado.`);
+      return;
+    }
     atualizacaoDisponivel = achado.versao;
     atualizacaoNotas = achado.notas ?? "";
+    estado.atualizacaoPendente = { versao: atualizacaoDisponivel, notas: atualizacaoNotas };
+    salvarPreferencias();
     mostrarMarcaDeAtualizacao();
-    // O cartão aparece uma vez por versão. Insistir a cada meia hora com o
-    // mesmo aviso é o caminho mais curto para a pessoa aprender a ignorá-lo.
-    if (achado.versao !== atualizacaoAdiada) abrirCartaoDeAtualizacao(achado.versao);
+    mostrarEstadoDaAtualizacao(`CALL ${achado.versao} está pronto para instalar.`);
+    const lembrete = estado.lembreteAtualizacao;
+    if (!lembrete || lembrete.versao !== achado.versao || Date.now() >= lembrete.lembrarEm) {
+      abrirCartaoDeAtualizacao(achado.versao);
+    }
   } catch {
     // Sem rede, servidor fora do ar ou rodando fora do aplicativo. Nada disso
     // é problema do usuário: a próxima rodada tenta de novo, em silêncio.
+    if (manual) mostrarEstadoDaAtualizacao("Não foi possível buscar atualizações agora.");
+  } finally {
+    if (manual) {
+      $("botao-buscar-atualizacao").disabled = false;
+      $("botao-buscar-atualizacao").textContent = "Buscar agora";
+    }
   }
+}
+
+function mostrarEstadoDaAtualizacao(texto) {
+  const campo = $("estado-atualizacao");
+  if (campo) campo.textContent = texto;
 }
 
 /**
@@ -5211,9 +5387,11 @@ function abrirCartaoDeAtualizacao(versao) {
   $("atualizacao").classList.remove("oculto");
 
   $("botao-adiar").onclick = () => {
-    atualizacaoAdiada = versao;
+    estado.lembreteAtualizacao = { versao, lembrarEm: Date.now() + LEMBRETE_ATUALIZACAO_MS };
+    salvarPreferencias();
     $("atualizacao").classList.add("oculto");
-    // O cartão sai, a marca fica.
+    mostrarEstadoDaAtualizacao("Lembraremos você novamente em algumas horas.");
+    // O cartão sai, mas a marca fica para a atualização poder ser retomada já.
     mostrarMarcaDeAtualizacao();
   };
 
@@ -5389,6 +5567,11 @@ window.addEventListener("beforeunload", () => {
 });
 
 carregarPreferencias();
+
+if (estado.atualizacaoPendente) {
+  atualizacaoDisponivel = estado.atualizacaoPendente.versao;
+  atualizacaoNotas = estado.atualizacaoPendente.notas;
+}
 
 // Um servidor imposto pelo ambiente vence o gravado. Fora do aplicativo o
 // comando não existe, e a recusa é o caso normal.

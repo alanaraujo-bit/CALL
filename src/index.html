@@ -813,6 +813,7 @@
         <nav class="ajustes__abas" role="tablist">
           <button class="aba" type="button" role="tab" data-aba="voz" aria-selected="true">Voz</button>
           <button class="aba" type="button" role="tab" data-aba="tela" aria-selected="false">Transmissão</button>
+          <button class="aba" type="button" role="tab" data-aba="interface" aria-selected="false">Interface</button>
           <button class="aba" type="button" role="tab" data-aba="atalhos" aria-selected="false">Atalhos</button>
           <button class="aba" type="button" role="tab" data-aba="atividade" aria-selected="false">Atividade</button>
           <button class="aba" type="button" role="tab" data-aba="sons" aria-selected="false">Sons</button>
@@ -875,6 +876,15 @@
                     O traço marca o limiar de ativação.
                   </p>
                 </div>
+
+                <label class="chave">
+                  <input type="checkbox" id="ajuste-retorno-microfone" />
+                  <span class="chave__marca" aria-hidden="true"></span>
+                  <span class="chave__texto">
+                    <strong>Ouvir minha voz</strong>
+                    <span>Reproduz como os outros ouvem. Use fones para evitar eco.</span>
+                  </span>
+                </label>
 
                 <div class="ajuste">
                   <div class="ajuste__cabecalho">
@@ -995,6 +1005,86 @@
                   <span class="chave__texto">
                     <strong>Envio contínuo</strong>
                     <span>Mantém o áudio ativo no silêncio</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Interface ───────────────────────────────────────── -->
+          <section class="ajustes__painel" data-painel="interface" hidden>
+            <div class="ajustes__secao" data-aberto="sim">
+              <button type="button" class="ajustes__secao-topo" aria-expanded="true">
+                <span class="ajustes__secao-glifo" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg>
+                </span>
+                <span class="ajustes__secao-titulo">Tamanho da interface</span>
+                <svg class="ajustes__secao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>
+              </button>
+              <div class="ajustes__secao-corpo">
+                <div class="ajuste">
+                  <div class="ajuste__cabecalho">
+                    <label class="ajuste__rotulo" for="ajuste-escala-interface">Escala</label>
+                    <span class="ajuste__valor" id="valor-escala-interface">100%</span>
+                  </div>
+                  <input class="deslizante" type="range" id="ajuste-escala-interface" min="80" max="140" step="5" value="100" />
+                  <div class="ajuste__escala-rodape">
+                    <span>Menor</span>
+                    <button class="elo ajuste__escala-padrao" type="button" id="ajuste-escala-padrao" hidden>Usar padrão</button>
+                    <span>Maior</span>
+                  </div>
+                  <p class="ajuste__dica">Amplia textos, campos, ícones e espaçamentos em todo o CALL.</p>
+                </div>
+                <label class="chave">
+                  <input type="checkbox" id="ajuste-brilho-cursor" />
+                  <span class="chave__marca" aria-hidden="true"></span>
+                  <span class="chave__texto">
+                    <strong>Brilho que acompanha o cursor</strong>
+                    <span>Uma luz suave que segue o ponteiro pela janela.</span>
+                  </span>
+                </label>
+                <div class="bloco-controles-brilho" id="bloco-controles-brilho">
+                  <div class="ajuste ajuste--recuado">
+                    <div class="ajuste__cabecalho">
+                      <label class="ajuste__rotulo" for="ajuste-tamanho-brilho">Tamanho do brilho</label>
+                      <span class="ajuste__valor" id="valor-tamanho-brilho">460px</span>
+                    </div>
+                    <input class="deslizante" type="range" id="ajuste-tamanho-brilho" min="280" max="700" step="20" value="460" />
+                    <div class="ajuste__escala-rodape" aria-hidden="true"><span>Menor</span><span>Maior</span></div>
+                  </div>
+                  <div class="ajuste ajuste--recuado">
+                    <div class="ajuste__cabecalho">
+                      <label class="ajuste__rotulo" for="ajuste-intensidade-brilho">Intensidade do brilho</label>
+                      <span class="ajuste__valor" id="valor-intensidade-brilho">100%</span>
+                    </div>
+                    <input class="deslizante" type="range" id="ajuste-intensidade-brilho" min="20" max="160" step="5" value="100" />
+                    <div class="ajuste__escala-rodape" aria-hidden="true"><span>Suave</span><span>Intensa</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="ajustes__secao" data-aberto="nao">
+              <button type="button" class="ajustes__secao-topo" aria-expanded="false">
+                <span class="ajustes__secao-glifo" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M7 12a6 6 0 0 1 10-3l3 3M17 12a6 6 0 0 1-10 3l-3-3"/></svg>
+                </span>
+                <span class="ajustes__secao-titulo">Atualizações</span>
+                <svg class="ajustes__secao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>
+              </button>
+              <div class="ajustes__secao-corpo">
+                <div class="atualizacoes__linha">
+                  <div>
+                    <span class="ajuste__rotulo" id="versao-atual">CALL 0.9.5</span>
+                    <p class="ajuste__dica" id="estado-atualizacao">Verifique se há uma versão nova.</p>
+                  </div>
+                  <button class="botao botao--sutil" type="button" id="botao-buscar-atualizacao">Buscar agora</button>
+                </div>
+                <label class="chave">
+                  <input type="checkbox" id="ajuste-busca-automatica" />
+                  <span class="chave__marca" aria-hidden="true"></span>
+                  <span class="chave__texto">
+                    <strong>Buscar atualizações automaticamente</strong>
+                    <span>Verifica em segundo plano a cada 30 minutos.</span>
                   </span>
                 </label>
               </div>

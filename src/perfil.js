@@ -599,6 +599,10 @@ export function editarPerfil(atual) {
 
     const erroFoto = $("perfil-foto-erro");
     const inputFoto = $("perfil-foto-arquivo");
+    // O editor compartilhado de foto está antes deste diálogo no HTML. Sem
+    // pausar o perfil, ele abre por baixo desta cortina e a pessoa consegue
+    // salvar antes de terminar o recorte. O rascunho então nunca recebe a foto.
+    let editandoFoto = false;
     inputFoto.onchange = async () => {
       const arquivo = inputFoto.files?.[0];
       // Zera na hora: sem isto, escolher o mesmo arquivo de novo (depois de
@@ -606,12 +610,21 @@ export function editarPerfil(atual) {
       inputFoto.value = "";
       if (!arquivo) return;
       try {
-        rascunho.foto = await lerFotoDeArquivo(arquivo);
+        editandoFoto = true;
         erroFoto.hidden = true;
-        refletir();
+        cortina.classList.add("oculto");
+        const foto = await lerFotoDeArquivo(arquivo);
+        // Cancelar o recorte não é remover a foto atual.
+        if (foto) {
+          rascunho.foto = foto;
+          refletir();
+        }
       } catch (erro) {
         erroFoto.textContent = erro.message;
         erroFoto.hidden = false;
+      } finally {
+        editandoFoto = false;
+        cortina.classList.remove("oculto");
       }
     };
 
@@ -650,6 +663,9 @@ export function editarPerfil(atual) {
     };
 
     const aoTeclar = (evento) => {
+      // Enquanto o editor de recorte está aberto, Escape pertence a ele;
+      // fechar o perfil junto descartaria a foto recém-escolhida.
+      if (editandoFoto) return;
       if (evento.key === "Escape") fechar(null);
     };
 

@@ -109,6 +109,8 @@ export class MotorDeAudio {
   #geral = null; // GainNode mestre da reprodução
   #avisos = null; // GainNode dos sons de entrar e sair
   #soundboard = null; // GainNode dos clipes tocados manualmente
+  #retornoLocal = null; // retorno tratado do microfone, só para o teste
+  #monitorandoEntrada = false;
   #soundboardLigadoAoDestino = false;
   #cacheClipes = new Map(); // id do som -> AudioBuffer já decodificado
   // O relógio do contexto começa em zero, então o "nunca tocou" precisa ser
@@ -276,6 +278,23 @@ export class MotorDeAudio {
 
     this.#passaAlta.connect(this.#worklet);
     this.#worklet.connect(this.#destino);
+    // O retorno usa exatamente o áudio que seria enviado a outra pessoa — já
+    // com porta, filtros e ganho — mas fica fechado até alguém pedir o teste.
+    this.#retornoLocal = contexto.createGain();
+    this.#retornoLocal.gain.value = this.#monitorandoEntrada ? 1 : 0;
+    this.#worklet.connect(this.#retornoLocal);
+    this.#retornoLocal.connect(this.#geral);
+  }
+
+  /** Reproduz localmente a voz já tratada. É deliberadamente temporário: a
+   * interface o desliga ao fechar os ajustes para não surpreender ninguém com
+   * retorno de microfone numa chamada — sobretudo sem fones. */
+  monitorarEntrada(ativo) {
+    this.#monitorandoEntrada = Boolean(ativo);
+    if (!this.#retornoLocal || !this.#contexto) return;
+    const agora = this.#contexto.currentTime;
+    this.#retornoLocal.gain.cancelScheduledValues(agora);
+    this.#retornoLocal.gain.setTargetAtTime(this.#monitorandoEntrada ? 1 : 0, agora, 0.018);
   }
 
   /* ── Reprodução ────────────────────────────────────────────────── */
@@ -497,9 +516,12 @@ export class MotorDeAudio {
     this.#cacheClipes.clear();
 
     this.#worklet?.disconnect();
+    this.#retornoLocal?.disconnect();
     this.#passaAlta?.disconnect();
     this.#destino?.disconnect();
     this.#worklet = null;
+    this.#retornoLocal = null;
+    this.#monitorandoEntrada = false;
     this.#passaAlta = null;
     this.#destino = null;
     this.#geral = null;

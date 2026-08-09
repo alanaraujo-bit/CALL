@@ -133,9 +133,9 @@ svg {
   opacity: 0;
   transition: opacity 480ms ease;
   background: radial-gradient(
-    460px circle at var(--brilho-x, 50%) var(--brilho-y, 50%),
-    rgba(139, 148, 255, 0.2),
-    rgba(124, 131, 230, 0.08) 34%,
+    var(--brilho-tamanho, 460px) circle at var(--brilho-x, 50%) var(--brilho-y, 50%),
+    rgb(139 148 255 / calc(0.2 * var(--brilho-intensidade, 1))),
+    rgb(124 131 230 / calc(0.08 * var(--brilho-intensidade, 1))) 34%,
     transparent 68%
   );
 }
@@ -3944,6 +3944,38 @@ svg {
 }
 
 .ajuste__dica--solta {
+  margin-top: 16px;
+}
+
+.ajuste__escala-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  color: var(--texto-3);
+  font-size: 10.5px;
+}
+
+.ajuste__escala-padrao {
+  font-size: 11px;
+}
+
+.atualizacoes__linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.atualizacoes__linha .ajuste__dica {
+  margin-top: 2px;
+}
+
+.atualizacoes__linha .botao {
+  flex: none;
+}
+
+.chave + .bloco-controles-brilho {
   margin-top: 16px;
 }
 
