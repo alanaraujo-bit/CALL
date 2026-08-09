@@ -20,16 +20,15 @@ const CONFIGURACAO = {
  *
  * O `codec` não é enfeite, é a diferença entre leve e pesado:
  *
- * - **VP9** custa mais CPU por quadro e rende muito mais em imagem parada com
- *   texto: nas taxas baixas ele preserva bordas que o VP8 borra. Nos perfis de
- *   até 30 quadros sobra CPU para pagar por isso.
- * - **H.264** tem codificador em hardware em praticamente toda GPU dos últimos
- *   dez anos. Nos perfis de 60 quadros é ele que mantém a promessa de ser leve:
- *   o trabalho sai do processador e vai para a placa de vídeo.
+ * **H.264** fica na frente em todos os perfis porque tem codificador em
+ * hardware em praticamente toda GPU dos últimos dez anos. VP9 preserva um
+ * pouco mais de texto em bitrate baixo, mas cobra CPU justamente das máquinas
+ * que o CALL quer atender. Se H.264 não existir no par, a lista completa de
+ * codecs continua atrás dele e a negociação escolhe o melhor fallback comum.
  *
- * `dica` vira `contentHint` na trilha, e decide o que o codificador sacrifica
- * quando a banda aperta: `detail` abre mão de quadros para manter a nitidez,
- * `motion` faz o contrário.
+ * `dica` vira `contentHint` na trilha. Todos os perfis usam `motion`: quando a
+ * banda aperta, a imagem pode perder resolução, mas o encoder não deve trocar
+ * os 30/60 quadros escolhidos por uma apresentação de slides mais nítida.
  */
 export const PERFIS_TELA = [
   {
@@ -38,7 +37,7 @@ export const PERFIS_TELA = [
     detalhe: "720p · 30 fps · 1,5 Mbps",
     resumo: "Menor uso de rede",
     largura: 1280, altura: 720, quadros: 30, bits: 1_500_000,
-    dica: "detail", codec: "VP9", degradacao: "maintain-resolution",
+    dica: "motion", codec: "H264", degradacao: "maintain-framerate",
   },
   {
     id: "equilibrado",
@@ -46,7 +45,7 @@ export const PERFIS_TELA = [
     detalhe: "1080p · 30 fps · 3 Mbps",
     resumo: "Uso equilibrado",
     largura: 1920, altura: 1080, quadros: 30, bits: 3_000_000,
-    dica: "detail", codec: "VP9", degradacao: "maintain-resolution",
+    dica: "motion", codec: "H264", degradacao: "maintain-framerate",
   },
   {
     id: "nitido",
@@ -73,6 +72,16 @@ export function acharPerfilDeTela(id) {
   return PERFIS_TELA.find((p) => p.id === id) ?? PERFIS_TELA.find((p) => p.id === PERFIL_TELA_PADRAO);
 }
 
+/** Limites aplicados à fonte capturada. `ideal` pede a qualidade escolhida e
+ * `max` impede uma fonte 4K de atravessar o pipeline inteiro antes do resize. */
+export function restricoesDoPerfil(perfil) {
+  return {
+    width: { ideal: perfil.largura, max: perfil.largura },
+    height: { ideal: perfil.altura, max: perfil.altura },
+    frameRate: { ideal: perfil.quadros, max: perfil.quadros },
+  };
+}
+
 /** Aplica o teto de banda, de quadros e a política de degradação ao remetente
  *  da tela. Sem teto o WebRTC sobe o bitrate até onde a rede aguentar — e é a
  *  CPU de quem transmite que paga a conta da codificação. */
@@ -84,6 +93,12 @@ async function limitarTela(remetente, perfil) {
     for (const codificacao of parametros.encodings) {
       codificacao.maxBitrate = perfil.bits;
       codificacao.maxFramerate = perfil.quadros;
+      codificacao.scaleResolutionDownBy = 1;
+      // A tela é a mídia dominante durante uma transmissão. Em ligações com
+      // voz + som do sistema + vídeo, isto evita o alocador tratar o vídeo
+      // como mais um sender de prioridade padrão e derrubar quadros primeiro.
+      codificacao.priority = "high";
+      codificacao.networkPriority = "high";
     }
     parametros.degradationPreference = perfil.degradacao;
     await remetente.setParameters(parametros);
@@ -297,6 +312,11 @@ class Elo {
             await this.descreverLocal();
             this.malha.enviarSinal(this.id, { descricao: pc.localDescription });
           }
+          // Alguns Chromium/WebView2 só materializam os parâmetros do encoder
+          // depois que a seção de vídeo foi negociada. Reaplicar aqui impede
+          // que uma configuração feita logo após addTrack seja silenciosamente
+          // substituída pelos padrões do navegador.
+          await this.malha.ajustarTelaDoElo(this);
         } finally {
           this.aplicandoDescricao = false;
         }
@@ -390,13 +410,27 @@ export class Malha {
    * conexão — teto de banda, política de degradação e codec.
    */
   async definirPerfilTela(perfil) {
+    const codecMudou = this.#perfilTela.codec !== perfil.codec;
     this.#perfilTela = perfil;
     if (this.#trilhaTela) this.#trilhaTela.contentHint = perfil.dica;
     for (const elo of this.#elos.values()) {
       if (!elo.remetenteTela) continue;
       preferirCodec(elo.transceptorTela, perfil.codec);
       await limitarTela(elo.remetenteTela, perfil);
+      // setCodecPreferences só afeta a próxima oferta. Bitrate e FPS mudam
+      // por setParameters; trocar VP9/H.264 precisa de uma renegociação curta.
+      if (codecMudou && elo.transceptorTela?.currentDirection && elo.pc.signalingState === "stable") {
+        await elo.ofertar();
+      }
     }
+  }
+
+  /** Chamado depois de cada negociação para garantir que o encoder recém-
+   * criado preserve o perfil escolhido. Público apenas para `Elo`, que vive
+   * neste mesmo módulo e é quem conhece o instante exato da negociação. */
+  async ajustarTelaDoElo(elo) {
+    if (elo.remetenteTela) await limitarTela(elo.remetenteTela, this.#perfilTela);
+    if (elo.remetenteAudioTela) await limitarAudio(elo.remetenteAudioTela, BITRATE_AUDIO_TELA);
   }
 
   /** O servidor só diz quem eu sou depois que a malha já existe. */

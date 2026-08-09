@@ -1,276 +1,19 @@
-//! Captura de tela nativa, para o seletor de fontes ter a cara do CALL em vez
-//! da caixa cinza que o Windows entrega a qualquer site que chame
-//! `getDisplayMedia`. O vídeo sai daqui como quadros JPEG por evento; quem
-//! monta o `MediaStreamTrack` de verdade é a interface, desenhando cada
-//! quadro num `<canvas>` e chamando `captureStream()` nele.
+//! Áudio que acompanha a transmissão de tela.
+//!
+//! O vídeo é capturado diretamente pelo WebView2 e já nasce como uma
+//! `MediaStreamTrack`; fazê-lo atravessar o IPC como screenshots comprimidos
+//! duplicava o trabalho do codec e limitava a transmissão a cerca de 15 fps.
+//! Aqui fica apenas o recurso que a API web não resolve sozinha no Windows: o
+//! loopback do sistema excluindo as vozes reproduzidas pelo próprio CALL.
 
-use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use image::codecs::jpeg::JpegEncoder;
-use image::imageops::FilterType;
-use image::{DynamicImage, ImageEncoder, RgbaImage};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
-use xcap::{Monitor, Window};
-
-/// Uma janela ou uma tela inteira, do jeito que o seletor mostra: já com a
-/// miniatura pronta, para a grade não esperar rede nem disco — só o tempo de
-/// capturar e reduzir cada imagem uma vez.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Fonte {
-    id: u32,
-    tipo: &'static str,
-    nome: String,
-    miniatura: String,
-    largura: u32,
-    altura: u32,
-}
-
-/// Reduz para uma miniatura leve e devolve como `data:` URL — o formato que
-/// uma tag `<img>` aceita direto, sem outra viagem até o disco.
-fn miniaturizar(imagem: &RgbaImage, largura_alvo: u32) -> String {
-    let proporcao = imagem.height() as f32 / imagem.width().max(1) as f32;
-    let altura_alvo = ((largura_alvo as f32) * proporcao).round().max(1.0) as u32;
-    let reduzida = image::imageops::resize(imagem, largura_alvo, altura_alvo, FilterType::Triangle);
-
-    let mut bytes = Vec::new();
-    // PNG aqui, não JPEG: a miniatura é estática e pequena, e texto de janela
-    // sofre visivelmente com a compressão com perdas nesse tamanho.
-    let _ = image::codecs::png::PngEncoder::new(&mut bytes).write_image(
-        reduzida.as_raw(),
-        reduzida.width(),
-        reduzida.height(),
-        image::ExtendedColorType::Rgba8,
-    );
-    format!("data:image/png;base64,{}", STANDARD.encode(&bytes))
-}
-
-/// Lista as telas e depois as janelas — a ordem que o Discord usa, e que
-/// coloca a opção mais comum (a tela toda) antes da mais específica.
-///
-/// Falhas em capturar uma janela isolada (fechada entre a listagem e a
-/// captura, sem permissão, minimizada) não derrubam a lista inteira: essa
-/// janela só não aparece.
-#[tauri::command]
-pub fn listar_fontes_de_tela() -> Result<Vec<Fonte>, String> {
-    let mut fontes = Vec::new();
-
-    let monitores = Monitor::all().map_err(|e| e.to_string())?;
-    for monitor in monitores {
-        let Ok(imagem) = monitor.capture_image() else {
-            continue;
-        };
-        if imagem.width() == 0 || imagem.height() == 0 {
-            continue;
-        }
-        let Ok(id) = monitor.id() else { continue };
-        let nome = monitor
-            .friendly_name()
-            .or_else(|_| monitor.name())
-            .unwrap_or_else(|_| "Tela".into());
-
-        fontes.push(Fonte {
-            id,
-            tipo: "tela",
-            nome,
-            miniatura: miniaturizar(&imagem, 320),
-            largura: imagem.width(),
-            altura: imagem.height(),
-        });
-    }
-
-    let janelas = Window::all().map_err(|e| e.to_string())?;
-    for janela in janelas {
-        // Minimizada captura preto sólido na maioria dos sistemas — pior do
-        // que não oferecer a opção é oferecer e entregar uma tela vazia.
-        if matches!(janela.is_minimized(), Ok(true)) {
-            continue;
-        }
-        let Ok(imagem) = janela.capture_image() else {
-            continue;
-        };
-        if imagem.width() < 40 || imagem.height() < 40 {
-            continue;
-        }
-        let Ok(id) = janela.id() else { continue };
-        let titulo = janela.title().unwrap_or_default();
-        if titulo.trim().is_empty() {
-            continue;
-        }
-
-        fontes.push(Fonte {
-            id,
-            tipo: "janela",
-            nome: titulo,
-            miniatura: miniaturizar(&imagem, 320),
-            largura: imagem.width(),
-            altura: imagem.height(),
-        });
-    }
-
-    Ok(fontes)
-}
-
-/// Sinal de parada da captura em curso. Um só de cada vez: começar uma nova
-/// avisa a anterior antes de seguir, então nunca há duas threads desenhando
-/// quadros ao mesmo tempo.
-#[derive(Default)]
-pub struct CapturaAtiva(Mutex<Option<Arc<AtomicBool>>>);
-
-impl CapturaAtiva {
-    fn parar_a_anterior(&self) {
-        if let Ok(mut atual) = self.0.lock() {
-            if let Some(parar) = atual.take() {
-                parar.store(true, Ordering::SeqCst);
-            }
-        }
-    }
-}
-
-/// Quadro de vídeo, do jeito que a interface recebe: só o essencial para
-/// desenhar num canvas — os bytes e o tamanho, já que um quadro pode chegar
-/// menor que o pedido quando a janela capturada muda de tamanho.
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct Quadro {
-    dados: String,
-    largura: u32,
-    altura: u32,
-}
-
-enum FonteViva {
-    Tela(Monitor),
-    Janela(Window),
-}
-
-impl FonteViva {
-    fn capturar(&self) -> xcap::XCapResult<RgbaImage> {
-        match self {
-            FonteViva::Tela(m) => m.capture_image(),
-            FonteViva::Janela(w) => w.capture_image(),
-        }
-    }
-}
-
-fn encontrar_fonte(tipo: &str, id: u32) -> Option<FonteViva> {
-    match tipo {
-        "tela" => Monitor::all()
-            .ok()?
-            .into_iter()
-            .find(|m| m.id().ok() == Some(id))
-            .map(FonteViva::Tela),
-        "janela" => Window::all()
-            .ok()?
-            .into_iter()
-            .find(|w| w.id().ok() == Some(id))
-            .map(FonteViva::Janela),
-        _ => None,
-    }
-}
-
-/// Começa a mandar quadros da fonte escolhida pelo evento `quadro-tela`, no
-/// ritmo pedido pelo perfil de qualidade. Roda numa thread própria porque é
-/// um laço com `sleep`: numa das threads do runtime assíncrono ele travaria
-/// outros comandos no meio do caminho.
-#[tauri::command]
-pub fn iniciar_captura_de_tela(
-    app: AppHandle,
-    estado: State<'_, CapturaAtiva>,
-    tipo: String,
-    id: u32,
-    largura_max: u32,
-    altura_max: u32,
-    quadros: u32,
-) -> Result<(), String> {
-    estado.parar_a_anterior();
-
-    // O achado aqui é só para falhar cedo se a fonte já sumiu — o valor em
-    // si não atravessa para a thread: um `HMONITOR`/`HWND` do Windows não é
-    // `Send`, então quem captura busca a própria fonte de novo, já lá dentro.
-    encontrar_fonte(&tipo, id).ok_or_else(|| "Essa fonte não está mais disponível.".to_string())?;
-
-    let parar = Arc::new(AtomicBool::new(false));
-    *estado
-        .0
-        .lock()
-        .map_err(|_| "Estado interno inconsistente.".to_string())? = Some(parar.clone());
-
-    let quadros = quadros.max(1).min(60);
-    let intervalo = Duration::from_millis(1000 / quadros as u64);
-
-    thread::spawn(move || {
-        let Some(fonte) = encontrar_fonte(&tipo, id) else {
-            return;
-        };
-
-        while !parar.load(Ordering::SeqCst) {
-            let inicio = Instant::now();
-
-            if let Ok(imagem) = fonte.capturar() {
-                let redimensionada = if imagem.width() > largura_max || imagem.height() > altura_max
-                {
-                    let escala = (largura_max as f32 / imagem.width() as f32)
-                        .min(altura_max as f32 / imagem.height() as f32);
-                    let largura = ((imagem.width() as f32) * escala).round().max(1.0) as u32;
-                    let altura = ((imagem.height() as f32) * escala).round().max(1.0) as u32;
-                    DynamicImage::ImageRgba8(imagem).resize_exact(largura, altura, FilterType::Triangle)
-                } else {
-                    DynamicImage::ImageRgba8(imagem)
-                };
-                let rgb = redimensionada.to_rgb8();
-
-                let mut bytes = Vec::new();
-                let escritor = JpegEncoder::new_with_quality(Cursor::new(&mut bytes), 82);
-                if escritor
-                    .write_image(
-                        rgb.as_raw(),
-                        rgb.width(),
-                        rgb.height(),
-                        image::ExtendedColorType::Rgb8,
-                    )
-                    .is_ok()
-                {
-                    let quadro = Quadro {
-                        dados: STANDARD.encode(&bytes),
-                        largura: rgb.width(),
-                        altura: rgb.height(),
-                    };
-                    if app.emit("quadro-tela", quadro).is_err() {
-                        break;
-                    }
-                }
-            } else {
-                // A janela pode ter fechado no meio da transmissão. Sem a
-                // imagem não há o que mandar, mas isso sozinho não é motivo
-                // para desistir — só a pessoa que compartilha, pelo botão,
-                // decide quando parar.
-            }
-
-            let decorrido = inicio.elapsed();
-            if decorrido < intervalo {
-                thread::sleep(intervalo - decorrido);
-            }
-        }
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn parar_captura_de_tela(estado: State<'_, CapturaAtiva>) -> Result<(), String> {
-    estado.parar_a_anterior();
-    Ok(())
-}
-
-/* ═══ Áudio do sistema (captura em loopback via WASAPI) ═════════════ */
-
-use wasapi::{initialize_mta, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
+use wasapi::{initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat};
 
 const AUDIO_TAXA_DE_AMOSTRAGEM: usize = 48_000;
 const AUDIO_CANAIS: usize = 2;
@@ -278,7 +21,6 @@ const AUDIO_CANAIS: usize = 2;
 /// bastante para não virar uma enxurrada de eventos.
 const AUDIO_QUADROS_POR_PEDACO: usize = 960;
 
-/// Mesmo desenho do `CapturaAtiva`: um sinal de parada por vez.
 #[derive(Default)]
 pub struct AudioAtivo(Mutex<Option<Arc<AtomicBool>>>);
 
@@ -300,12 +42,15 @@ struct PedacoDeAudio {
     canais: usize,
 }
 
-/// Grava o que sai dos alto-falantes, não o microfone: pede o dispositivo de
-/// *saída* padrão em modo de captura, o mesmo mecanismo por trás da antiga
-/// "Mixagem estéreo" do Windows. As amostras chegam em ponto flutuante — o
-/// formato nativo do mecanismo de áudio do Windows — e saem daqui em inteiro
-/// de 16 bits, que é metade do tamanho e já é mais resolução do que o ouvido
-/// nota nessa viagem.
+/// Grava o som do sistema sem capturar o próprio CALL. O loopback tradicional
+/// do dispositivo inclui também as vozes remotas que o aplicativo acabou de
+/// tocar; enviá-las de volta cria o eco ouvido por toda a sala. O process
+/// loopback do Windows, em modo EXCLUDE_TARGET_PROCESS_TREE, captura tudo menos
+/// este processo e seus filhos — exatamente a separação usada por aplicativos
+/// de chamada.
+///
+/// As amostras chegam em ponto flutuante e saem daqui em inteiro de 16 bits,
+/// metade do tamanho e ainda acima da resolução útil depois do Opus.
 fn gravar_audio_do_sistema(app: &AppHandle, parar: &AtomicBool) -> Result<(), wasapi::WasapiError> {
     initialize_mta().ok()?;
 
@@ -317,16 +62,16 @@ fn gravar_audio_do_sistema(app: &AppHandle, parar: &AtomicBool) -> Result<(), wa
         AUDIO_CANAIS,
         None,
     );
-    let enumerador = DeviceEnumerator::new()?;
-    let dispositivo = enumerador.get_default_device(&Direction::Render)?;
-    let mut cliente = dispositivo.get_iaudioclient()?;
-    let (_padrao, minimo) = cliente.get_device_period()?;
+    // `false` seleciona PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE.
+    // Esta API existe no Windows 10 build 20348 em diante. Em versões mais
+    // antigas preferimos seguir sem som de tela a reintroduzir retorno de voz.
+    let mut cliente = AudioClient::new_application_loopback_client(std::process::id(), false)?;
     let modo = StreamMode::EventsShared {
         autoconvert: true,
-        buffer_duration_hns: minimo,
+        // Process loopback não expõe get_device_period; 20 ms casa com o
+        // tamanho dos pedaços enviados à interface.
+        buffer_duration_hns: 200_000,
     };
-    // Pedir `Capture` a um dispositivo aberto como `Render` é o que ativa o
-    // loopback — não existe uma opção "loopback: true" separada.
     cliente.initialize_client(&formato, &Direction::Capture, &modo)?;
     let evento = cliente.set_get_eventhandle()?;
     let capturador = cliente.get_audiocaptureclient()?;
@@ -381,6 +126,7 @@ pub fn iniciar_audio_da_tela(app: AppHandle, estado: State<'_, AudioAtivo>) -> R
     thread::spawn(move || {
         if let Err(erro) = gravar_audio_do_sistema(&app, &parar) {
             eprintln!("[tela] captura de áudio do sistema encerrada: {erro}");
+            let _ = app.emit("erro-audio-tela", erro.to_string());
         }
     });
 

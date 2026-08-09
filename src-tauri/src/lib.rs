@@ -11,7 +11,7 @@ use tauri_plugin_shell::ShellExt;
 mod atividade;
 mod google;
 mod tela;
-use tela::{AudioAtivo, CapturaAtiva};
+use tela::AudioAtivo;
 
 /// Processo do servidor de sinalizacao, quando esta maquina esta hospedando.
 #[derive(Default)]
@@ -336,7 +336,6 @@ pub fn run() {
 
             app.manage(Hospedagem::default());
             app.manage(Convite::default());
-            app.manage(CapturaAtiva::default());
             app.manage(AudioAtivo::default());
             app.manage(AtalhoMudo::default());
             app.manage(SaindoDeVerdade::default());
@@ -422,9 +421,6 @@ pub fn run() {
             instalar_atualizacao,
             definir_atalho_mudo,
             google::google_autenticar,
-            tela::listar_fontes_de_tela,
-            tela::iniciar_captura_de_tela,
-            tela::parar_captura_de_tela,
             tela::iniciar_audio_da_tela,
             tela::parar_audio_da_tela,
             atividade::atividade_em_foco
@@ -437,7 +433,6 @@ pub fn run() {
     app.run(|app, evento| {
         if let RunEvent::Exit = evento {
             app.state::<Hospedagem>().encerrar();
-            let _ = tela::parar_captura_de_tela(app.state::<CapturaAtiva>());
             let _ = tela::parar_audio_da_tela(app.state::<AudioAtivo>());
         }
     });

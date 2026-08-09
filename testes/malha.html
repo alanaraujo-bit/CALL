@@ -16,7 +16,7 @@
 
     <script type="module">
       import { Sinal } from "../src/sinal.js";
-      import { Malha, acharPerfilDeTela, ajustarOpus } from "../src/rtc.js";
+      import { Malha, acharPerfilDeTela, ajustarOpus, restricoesDoPerfil } from "../src/rtc.js";
 
       const entregar = (dados, rota = "/resultado") =>
         fetch(`http://127.0.0.1:8123${rota}`, {
@@ -330,15 +330,27 @@
           [...ana.malha.conexoes.values()][0].getSenders().find((r) => r.track?.kind === "video");
 
         const equilibrado = acharPerfilDeTela("equilibrado");
+        const restricoes = restricoesDoPerfil(equilibrado);
+        conferir(
+          restricoes.width.max === equilibrado.largura &&
+            restricoes.height.max === equilibrado.altura &&
+            restricoes.frameRate.max === equilibrado.quadros,
+          "resolução e FPS do perfil também limitam a captura"
+        );
         const codificacaoDaTela = () => remetenteDeTela()?.getParameters().encodings?.[0] ?? {};
         conferir(
           codificacaoDaTela().maxBitrate === equilibrado.bits &&
-            codificacaoDaTela().maxFramerate === equilibrado.quadros,
+            codificacaoDaTela().maxFramerate === equilibrado.quadros &&
+            codificacaoDaTela().scaleResolutionDownBy === 1,
           `o perfil padrão chega ao codificador (${equilibrado.detalhe})`
         );
         conferir(
+          codificacaoDaTela().priority === "high" && codificacaoDaTela().networkPriority === "high",
+          "a transmissão recebe prioridade sobre os outros remetentes"
+        );
+        conferir(
           remetenteDeTela()?.getParameters().degradationPreference === equilibrado.degradacao,
-          "a política de degradação é declarada (nitidez antes de fluidez)"
+          "a política de degradação preserva o FPS escolhido"
         );
         conferir(
           tela.getVideoTracks()[0].contentHint === equilibrado.dica,

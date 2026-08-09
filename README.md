@@ -125,12 +125,13 @@ o seu nível, o piso da sala e onde a porta abre, para o ajuste ser visto e não
 adivinhado. A qualidade da voz vai de 32 a 128 kbps e vale só para o que sai da
 sua máquina: a sua escolha não limita a voz de ninguém.
 
-Em **Transmissão**: quatro perfis, de 720p a 30 quadros até 1440p a 60. Os de
-até 30 quadros usam VP9, que rende muito mais em texto; os de 60 usam H.264, que
-tem codificador em hardware e mantém a transmissão leve num jogo. Trocar de
-perfil durante uma transmissão vale na hora. O **som do sistema** viaja numa
-trilha separada da sua voz, no teto do codec e sem os filtros de voz — um
-cancelador de eco destrói música e efeito de jogo.
+Em **Transmissão**: quatro perfis, de 720p a 30 quadros até 1440p a 60. Todos
+preferem H.264 para aproveitar o codificador da GPU e preservar o FPS escolhido;
+se a rede apertar, a resolução cede antes dos quadros. Trocar de perfil durante
+uma transmissão vale na hora. O **som do sistema** viaja numa trilha separada da
+sua voz, no teto do codec e sem os filtros de voz. A captura exclui o processo
+do CALL e seus filhos, portanto as vozes que você ouve não retornam pela
+transmissão e não criam eco.
 
 Em **Atividade**: mostrar ao grupo o programa que está na sua frente. Vai **só
 o nome do programa** — "Google Chrome", "Rocket League" —, e nunca o título da
@@ -269,6 +270,7 @@ KB viaja no instalador do CALL: o sidecar continua nos 599 KB de sempre.
 | `src/emojis.js` | Emojis Unicode e os cinco emojis próprios do CALL |
 | `src-tauri/src/atividade.rs` | Qual programa está em primeiro plano |
 | `src-tauri/src/google.rs` | PKCE, navegador do sistema e porta de retorno |
+| `src-tauri/src/tela.rs` | Som da transmissão via loopback, excluindo o próprio CALL |
 | `src-tauri/src/lib.rs` | Comandos nativos, permissões e ajuste de memória |
 | `servidor/src/main.rs` | Protocolo do servidor |
 | `servidor/src/modelo.rs` | Grupos, mensagens e persistência em disco |

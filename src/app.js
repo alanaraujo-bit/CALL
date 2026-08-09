@@ -1,5 +1,11 @@
 import { Sinal } from "./sinal.js";
-import { Malha, PERFIS_TELA, PERFIL_TELA_PADRAO, acharPerfilDeTela } from "./rtc.js";
+import {
+  Malha,
+  PERFIS_TELA,
+  PERFIL_TELA_PADRAO,
+  acharPerfilDeTela,
+  restricoesDoPerfil,
+} from "./rtc.js";
 import { MotorDeAudio, AUDIO_PADRAO, BITRATES_AUDIO, listarDispositivos } from "./audio.js";
 import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
 import { Vigia } from "./atividade.js";
@@ -26,7 +32,7 @@ const invocar = (comando, args) =>
     : Promise.reject(new Error("Recurso disponível apenas no aplicativo."));
 
 const CHAVE = "call.preferencias";
-const VERSAO_ATUAL = "0.9.5";
+const VERSAO_ATUAL = "0.9.6";
 /** Servidor oficial do CALL, hospedado. É o padrão para que ninguém precise
  *  subir nada na própria máquina para conversar com os amigos. */
 const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
@@ -1125,7 +1131,7 @@ function prepararAplicacao() {
   $("botao-microfone").addEventListener("click", alternarMicrofone);
   $("botao-transmitir").addEventListener("click", () => {
     if (estado.transmitindo) pararTransmissao();
-    else abrirSeletorDeFontes();
+    else iniciarCapturaOtimizada(acharPerfilDeTela(estado.perfilTela));
   });
   $("botao-sair-voz").addEventListener("click", () => sairDaVoz(true));
 
@@ -1144,8 +1150,6 @@ function prepararAplicacao() {
   });
 
   prepararAjustes();
-  prepararTransmitirDialogo();
-  prepararSeletorDeFontes();
   document.addEventListener("keydown", (evento) => {
     if (evento.key !== "Escape") return;
     // O perfil e o cartão fecham a si mesmos. Sem esta saída, o Escape deles
@@ -1158,12 +1162,8 @@ function prepararAplicacao() {
     }
     // O cartão de novidades fecha sozinho pelo próprio Escape — registrado na
     // abertura, para valer também sobre o portal. Aqui ele nem aparece.
-    if (!$("transmitir-dialogo").classList.contains("oculto")) {
-      fecharTransmitirDialogo();
-    } else if (!$("ajustes").classList.contains("oculto")) {
+    if (!$("ajustes").classList.contains("oculto")) {
       fecharAjustes();
-    } else if (!$("seletor-dialogo").classList.contains("oculto")) {
-      fecharSeletorDeFontes();
     } else if (telaMaximizada) {
       alternarMaximizarTela(telaMaximizada);
     }
@@ -4044,7 +4044,7 @@ function montarPerfisLive() {
       refletirAjustes();
       // Já transmitindo: o teto e a política valem na hora, sem reabrir a
       // captura — ver a explicação em `montarPerfis`.
-      if (estado.transmitindo) await malha.definirPerfilTela(perfil);
+      if (estado.transmitindo) await aplicarPerfilDeTela(perfil);
     });
     area.append(botao);
   });
@@ -4057,233 +4057,95 @@ function refletirTransmitirDialogo() {
   $("transmitir-som").checked = estado.audioDaTela;
 }
 
-/* ── Seletor de fontes (telas e janelas, capturadas pelo próprio CALL) ── */
+/* ── Captura nativa: MediaStreamTrack direto do WebView2 ── */
 
-let seletorDeFontesPreparado = false;
-let fonteEscolhida = null;
-
-function prepararSeletorDeFontes() {
-  if (seletorDeFontesPreparado) return;
-  seletorDeFontesPreparado = true;
-
-  $("seletor-fechar").addEventListener("click", fecharSeletorDeFontes);
-  $("seletor-cancelar").addEventListener("click", fecharSeletorDeFontes);
-  $("seletor-config").addEventListener("click", () => {
-    prepararTransmitirDialogo();
-    abrirTransmitirDialogo(true);
-  });
-  $("seletor-dialogo").addEventListener("click", (evento) => {
-    if (evento.target === $("seletor-dialogo")) fecharSeletorDeFontes();
-  });
-  $("seletor-confirmar").addEventListener("click", () => {
-    if (!fonteEscolhida) return;
-    const perfil = acharPerfilDeTela(estado.perfilTela);
-    fecharSeletorDeFontes();
-    iniciarCapturaNativa(fonteEscolhida, perfil);
-  });
-}
-
-async function abrirSeletorDeFontes() {
-  if (!estado.canalVoz) return;
-  prepararSeletorDeFontes();
-
-  fonteEscolhida = null;
-  $("seletor-confirmar").disabled = true;
-  $("seletor-secoes").classList.add("oculto");
-  $("seletor-vazio").classList.add("oculto");
-  $("seletor-carregando").classList.remove("oculto");
-  $("seletor-dialogo").classList.remove("oculto");
-
-  let fontes;
-  try {
-    fontes = await invocar("listar_fontes_de_tela");
-  } catch {
-    fontes = [];
-  }
-
-  $("seletor-carregando").classList.add("oculto");
-  if (!fontes.length) {
-    $("seletor-vazio").classList.remove("oculto");
-    return;
-  }
-  montarSecoesDeFontes(fontes);
-  $("seletor-secoes").classList.remove("oculto");
-}
-
-function fecharSeletorDeFontes() {
-  $("seletor-dialogo").classList.add("oculto");
-}
-
-function montarSecoesDeFontes(fontes) {
-  const area = $("seletor-secoes");
-  area.textContent = "";
-
-  const grupos = [
-    { tipo: "tela", legenda: "Telas" },
-    { tipo: "janela", legenda: "Janelas" },
-  ];
-
-  for (const grupo of grupos) {
-    const itens = fontes.filter((f) => f.tipo === grupo.tipo);
-    if (!itens.length) continue;
-
-    const secao = document.createElement("div");
-    const legenda = document.createElement("h4");
-    legenda.className = "seletor__legenda";
-    legenda.textContent = grupo.legenda;
-    const grade = document.createElement("div");
-    grade.className = "seletor__grade";
-
-    for (const fonte of itens) {
-      const botao = document.createElement("button");
-      botao.type = "button";
-      botao.className = "fonte";
-      botao.dataset.id = String(fonte.id);
-      botao.dataset.tipo = fonte.tipo;
-      botao.setAttribute("aria-pressed", "false");
-      botao.innerHTML = `
-        <span class="fonte__miniatura"><img alt="" /></span>
-        <span class="fonte__nome"></span>
-      `;
-      botao.querySelector("img").src = fonte.miniatura;
-      botao.querySelector(".fonte__nome").textContent = fonte.nome;
-
-      botao.addEventListener("click", () => {
-        fonteEscolhida = fonte;
-        for (const outro of area.querySelectorAll(".fonte")) {
-          outro.setAttribute("aria-pressed", outro === botao ? "true" : "false");
-        }
-        $("seletor-confirmar").disabled = false;
-      });
-
-      grade.append(botao);
-    }
-
-    secao.append(legenda, grade);
-    area.append(secao);
-  }
-}
-
-/* ── Captura em si: Rust manda quadros, o canvas vira o `MediaStreamTrack` ── */
-
-let pararDeOuvirQuadros = null;
-let canvasDeCaptura = null;
 let trilhaDeCaptura = null;
-/** Uma imagem só, reaproveitada quadro a quadro — cada `new Image()` seria
- *  lixo de coleta a mais no ritmo de até 60 por segundo. */
-const imagemDeCaptura = new Image();
-/** Verdadeiro enquanto o quadro anterior ainda está sendo decodificado. Um
- *  quadro que chega nesse meio-tempo é descartado, não enfileirado — o
- *  próximo da fila sempre vai chegar mais fresco do que este, e empilhar
- *  trabalho atrasado é exatamente o que vira lag crescente. */
-let ocupadoComQuadro = false;
+let iniciandoCaptura = false;
 
-/** Decodifica o JPEG que veio do Rust e desenha no canvas.
- *
- * `Image.decode()` deixa o decode a cargo do motor do navegador — nativo, e
- * em geral fora da thread principal — em vez de uma volta manual por
- * `atob`/`charCodeAt` em JavaScript puro. Para um quadro de 1080p essa volta
- * manual custava dezenas de milissegundos por quadro, na própria thread que
- * desenha a interface: é o motivo mais provável do "travamento" percebido
- * antes desta versão, muito mais do que a rede ou a qualidade escolhida.
- *
- * `requestFrame()` entrega o quadro à trilha na hora — a trilha nasceu com
- * `captureStream(0)` (modo manual) exatamente para isto. Deixar o canvas
- * amostrar sozinho, no seu próprio relógio, é o que fazia o quadro chegar
- * atrasado ou repetido quando a decodificação varia de duração — o
- * "travamento" que dava pra sentir independente do perfil escolhido.
- */
-async function desenharQuadroCapturado(quadro) {
-  if (!canvasDeCaptura || ocupadoComQuadro) return;
-  ocupadoComQuadro = true;
-
-  try {
-    if (canvasDeCaptura.width !== quadro.largura || canvasDeCaptura.height !== quadro.altura) {
-      canvasDeCaptura.width = quadro.largura;
-      canvasDeCaptura.height = quadro.altura;
+/** Aplica o perfil na fonte e nos RTCRtpSenders. Assim uma troca durante a
+ * transmissão muda resolução, FPS e bitrate sem abrir outro seletor. */
+async function aplicarPerfilDeTela(perfil) {
+  if (trilhaDeCaptura?.applyConstraints) {
+    try {
+      await trilhaDeCaptura.applyConstraints(restricoesDoPerfil(perfil));
+    } catch (erro) {
+      // Alguns drivers recusam uma combinação apesar de aceitarem cada limite
+      // separado. O sender ainda recebe bitrate/FPS e mantém a transmissão.
+      console.warn("[tela] a fonte não aceitou todos os limites do perfil", erro);
     }
-    imagemDeCaptura.src = `data:image/jpeg;base64,${quadro.dados}`;
-    await imagemDeCaptura.decode();
-    canvasDeCaptura.getContext("2d").drawImage(imagemDeCaptura, 0, 0);
-    trilhaDeCaptura?.requestFrame();
-  } catch {
-    // Um quadro corrompido ou fora de ordem não é motivo para parar a
-    // transmissão inteira — o próximo, um instante depois, resolve sozinho.
-  } finally {
-    ocupadoComQuadro = false;
+    trilhaDeCaptura.contentHint = perfil.dica;
   }
+  await malha.definirPerfilTela(perfil);
 }
 
-async function iniciarCapturaNativa(fonte, perfil) {
-  if (!estado.canalVoz) return;
-
-  canvasDeCaptura = document.createElement("canvas");
-  canvasDeCaptura.width = fonte.largura;
-  canvasDeCaptura.height = fonte.altura;
-
-  pararDeOuvirQuadros = await window.__TAURI__.event.listen("quadro-tela", (evento) =>
-    desenharQuadroCapturado(evento.payload)
-  );
+/**
+ * Caminho rápido: o WebView2 entrega uma MediaStreamTrack nativa diretamente
+ * ao WebRTC. Isso elimina a antiga volta RGBA → resize → JPEG → base64 → IPC →
+ * decode → canvas em todo quadro e mantém captura/codificação no caminho
+ * acelerado do Chromium.
+ */
+async function iniciarCapturaOtimizada(perfil) {
+  if (!estado.canalVoz || estado.transmitindo || iniciandoCaptura) return;
+  iniciandoCaptura = true;
 
   try {
-    await invocar("iniciar_captura_de_tela", {
-      tipo: fonte.tipo,
-      id: fonte.id,
-      larguraMax: perfil.largura,
-      alturaMax: perfil.altura,
-      quadros: perfil.quadros,
-    });
-  } catch {
-    pararDeOuvirQuadros?.();
-    pararDeOuvirQuadros = null;
-    canvasDeCaptura = null;
-    avisar("Não foi possível capturar essa fonte.", "erro");
-    return;
+    let fluxo;
+    try {
+      fluxo = await navigator.mediaDevices.getDisplayMedia({
+        video: restricoesDoPerfil(perfil),
+        audio: false,
+        // Dicas do Chromium atual; versões antigas podem ignorá-las sem impedir
+        // a captura.
+        selfBrowserSurface: "exclude",
+        surfaceSwitching: "exclude",
+        monitorTypeSurfaces: "include",
+      });
+    } catch (erro) {
+      if (erro?.name !== "NotAllowedError" && erro?.name !== "AbortError") {
+        console.error("[tela] captura nativa falhou", erro);
+        avisar("Não foi possível capturar essa fonte.", "erro");
+      }
+      return;
+    }
+
+    const [trilha] = fluxo.getVideoTracks();
+    if (!trilha || !estado.canalVoz) {
+      fluxo.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
+    trilhaDeCaptura = trilha;
+    trilha.onended = () => pararTransmissao();
+    await aplicarPerfilDeTela(perfil);
+
+    const trilhaDeAudio = estado.audioDaTela ? await iniciarAudioDaTela() : null;
+    if (!estado.canalVoz || trilha.readyState === "ended") {
+      pararAudioDaTela();
+      fluxo.getTracks().forEach((t) => t.stop());
+      trilhaDeCaptura = null;
+      return;
+    }
+
+    estado.fluxoTela = fluxo;
+    estado.transmitindo = true;
+    malha.publicarTela(trilha, fluxo, trilhaDeAudio);
+    mostrarTela(estado.meuId, fluxo, `${estado.apelido} (você)`);
+
+    const eu = estado.membros.get(estado.meuId);
+    if (eu) eu.transmitindo = true;
+
+    atualizarBotaoTransmissao();
+    redesenhar();
+    anunciarEstado();
+  } finally {
+    iniciandoCaptura = false;
   }
-
-  // Pedir e começar a capturar leva um instante; nesse meio-tempo a pessoa
-  // pode ter saído da voz. Publicar agora acenderia uma transmissão sem
-  // ninguém do outro lado.
-  if (!estado.canalVoz) {
-    await invocar("parar_captura_de_tela").catch(() => {});
-    pararDeOuvirQuadros?.();
-    pararDeOuvirQuadros = null;
-    canvasDeCaptura = null;
-    return;
-  }
-
-  // `0` é o modo manual: o canvas só entrega um quadro à trilha quando
-  // `requestFrame()` é chamado, em vez de amostrar sozinho num relógio fixo
-  // — ver a explicação em `desenharQuadroCapturado`.
-  const fluxo = canvasDeCaptura.captureStream(0);
-  const [trilha] = fluxo.getVideoTracks();
-  trilhaDeCaptura = trilha;
-
-  const trilhaDeAudio = estado.audioDaTela ? await iniciarAudioDaTela() : null;
-
-  estado.fluxoTela = fluxo;
-  estado.transmitindo = true;
-
-  await malha.definirPerfilTela(perfil);
-  malha.publicarTela(trilha, fluxo, trilhaDeAudio);
-  mostrarTela(estado.meuId, fluxo, `${estado.apelido} (você)`);
-
-  const eu = estado.membros.get(estado.meuId);
-  if (eu) eu.transmitindo = true;
-
-  atualizarBotaoTransmissao();
-  redesenhar();
-  anunciarEstado();
 }
 
 function pararTransmissao() {
   if (!estado.transmitindo) return;
   estado.transmitindo = false;
   malha.retirarTela();
-  invocar("parar_captura_de_tela").catch(() => {});
-  pararDeOuvirQuadros?.();
-  pararDeOuvirQuadros = null;
-  canvasDeCaptura = null;
   trilhaDeCaptura = null;
   pararAudioDaTela();
   estado.fluxoTela?.getTracks().forEach((t) => t.stop());
@@ -4311,6 +4173,7 @@ let contextoDeAudioDaTela = null;
 let destinoDeAudioDaTela = null;
 let proximoInicioDeAudio = 0;
 let pararDeOuvirAudio = null;
+let pararDeOuvirErroAudio = null;
 
 const ATRASO_MAXIMO_DE_AUDIO = 0.5;
 
@@ -4374,12 +4237,18 @@ async function iniciarAudioDaTela() {
   pararDeOuvirAudio = await window.__TAURI__.event.listen("audio-tela", (evento) =>
     tocarPedacoDeAudioDaTela(evento.payload)
   );
+  pararDeOuvirErroAudio = await window.__TAURI__.event.listen("erro-audio-tela", (evento) => {
+    console.warn("[tela] som do sistema indisponível", evento.payload);
+    avisar("O vídeo continua, mas o som do sistema não pôde ser capturado.", "neutro");
+  });
 
   try {
     await invocar("iniciar_audio_da_tela");
   } catch {
     pararDeOuvirAudio?.();
     pararDeOuvirAudio = null;
+    pararDeOuvirErroAudio?.();
+    pararDeOuvirErroAudio = null;
     contextoDeAudioDaTela?.close().catch(() => {});
     contextoDeAudioDaTela = null;
     destinoDeAudioDaTela = null;
@@ -4395,6 +4264,8 @@ function pararAudioDaTela() {
   invocar("parar_audio_da_tela").catch(() => {});
   pararDeOuvirAudio?.();
   pararDeOuvirAudio = null;
+  pararDeOuvirErroAudio?.();
+  pararDeOuvirErroAudio = null;
   contextoDeAudioDaTela.close().catch(() => {});
   contextoDeAudioDaTela = null;
   destinoDeAudioDaTela = null;
@@ -5099,10 +4970,9 @@ function montarPerfis() {
       estado.perfilTela = perfil.id;
       salvarPreferencias();
       refletirAjustes();
-      // Já transmitindo: o teto e a política valem na hora. As dimensões e os
-      // quadros vivem na captura, e trocá-los exigiria pedir a tela de novo —
-      // o que faria o Windows perguntar tudo outra vez no meio da conversa.
-      if (estado.transmitindo) await malha.definirPerfilTela(perfil);
+      // A trilha nativa aceita novas constraints em voo: resolução, FPS,
+      // bitrate e política de degradação mudam sem pedir a fonte novamente.
+      if (estado.transmitindo) await aplicarPerfilDeTela(perfil);
     });
     area.append(botao);
   }
