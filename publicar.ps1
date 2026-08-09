@@ -89,6 +89,13 @@ if (-not (Test-Path "$instalador.sig")) {
   Write-Error "Assinatura nao encontrada. Sem ela nenhuma maquina aceita a atualizacao."
 }
 
+# O site nunca deve depender da API do GitHub para descobrir o nome da versão.
+# Este alias vive em cada release e `releases/latest/download/CALL-setup.exe`
+# redireciona direto para o instalador mais novo, inclusive com JavaScript
+# desativado ou quando a API estiver temporariamente limitada.
+$instaladorPublico = "target\release\bundle\nsis\CALL-setup.exe"
+Copy-Item -LiteralPath $instalador -Destination $instaladorPublico -Force
+
 # ─── Manifesto do atualizador ───────────────────────────────────────────
 
 # O aplicativo instalado busca este arquivo, compara a versao com a sua e,
@@ -135,7 +142,7 @@ gh release create "v$versao" `
   --repo $REPOSITORIO `
   --title "CALL v$versao" `
   --notes $corpo `
-  $instalador "$instalador.sig" $destino
+  $instalador "$instalador.sig" $destino $instaladorPublico
 
 if ($LASTEXITCODE -ne 0) { Write-Error "Falha ao criar a release." }
 
