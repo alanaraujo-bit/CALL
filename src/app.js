@@ -48,7 +48,7 @@ const SERVIDOR_ANTIGO = "ws://127.0.0.1:8787";
 const PAGINA_LOCAL = ["127.0.0.1", "localhost"].includes(window.location.hostname);
 
 /** Página do projeto, que hospeda a página de convite. */
-const SITE = "https://alanaraujo-bit.github.io/CALL";
+const SITE = "https://call.aionixdev.com";
 
 const HORA = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
 const DIA = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
