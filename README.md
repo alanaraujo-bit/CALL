@@ -15,19 +15,14 @@ feita — dispensar o aviso não faz a versão nova ser esquecida. Antes de
 atualizar, "Ver o que há de novo" mostra o que a versão traz, escrito para
 gente e organizado por blocos — o aviso deixa de ser uma ordem e vira uma
 escolha informada. Página do projeto:
-**https://alanaraujo-bit.github.io/CALL/**
-
-> A publicação espelhada na Vercel (`call-rho-dusky.vercel.app`) está fora do
-> ar desde a v0.2.0: o endereço responde `DEPLOYMENT_NOT_FOUND`, ou seja, o
-> projeto foi removido do lado da plataforma. O `vercel.json` continua no
-> repositório e a religação é feita pelo painel da Vercel.
+**https://call.aionixdev.com/**
 
 ---
 
 ## Instalação
 
 Baixe o instalador da versão mais recente em
-**[Releases](https://github.com/alanaraujo-bit/CALL/releases/latest)** e
+**[call.aionixdev.com](https://call.aionixdev.com/)** e
 execute. A instalação é por usuário e não exige privilégios de administrador.
 O único requisito é o **WebView2**, presente por padrão no Windows 10 e 11.
 
