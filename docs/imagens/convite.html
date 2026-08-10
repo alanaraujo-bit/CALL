@@ -1,0 +1,256 @@
+<!doctype html>
+<!--
+  Fonte do cartão de compartilhamento (Open Graph / Twitter Card) da página
+  de convite — docs/entrar/. Separado do cartão.html da home: quem recebe um
+  link de convite no WhatsApp precisa reconhecer "fui chamado para algo" à
+  primeira vista, não o folheto genérico do produto.
+
+  Mesma técnica do cartao.html: HTML/CSS real, capturado em 1200x630.
+
+  Para regerar depois de editar:
+    msedge --headless=new --disable-gpu --hide-scrollbars \
+      --window-size=1200,630 --screenshot=docs/imagens/convite.png \
+      docs/imagens/convite.html
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        background: #0e0f11;
+        font-family: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI",
+          system-ui, -apple-system, "Inter", "Helvetica Neue", Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .fundo {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(55% 65% at 78% 15%, rgba(95, 106, 217, 0.28), transparent 62%),
+          radial-gradient(46% 50% at 10% 100%, rgba(79, 201, 140, 0.1), transparent 62%),
+          #0e0f11;
+      }
+
+      .malha {
+        position: absolute;
+        inset: 0;
+        opacity: 0.55;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.06) 1px, transparent 1.4px);
+        background-size: 34px 34px;
+        background-position: -10px -10px;
+        -webkit-mask-image: radial-gradient(55% 75% at 70% 40%, #000 0%, transparent 78%);
+        mask-image: radial-gradient(55% 75% at 70% 40%, #000 0%, transparent 78%);
+      }
+
+      .miolo {
+        position: relative;
+        height: 100%;
+        padding: 80px 84px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .marca {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .marca__glifo {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        height: 40px;
+      }
+      .marca__glifo i {
+        width: 6px;
+        border-radius: 3px;
+        display: block;
+      }
+      .marca__glifo i:nth-child(1) { height: 15px; background: #7b84e4; }
+      .marca__glifo i:nth-child(2) { height: 27px; background: #6b75dd; }
+      .marca__glifo i:nth-child(3) { height: 40px; background: #5f6ad9; }
+      .marca__glifo i:nth-child(4) { height: 23px; background: #6b75dd; }
+      .marca__glifo i:nth-child(5) { height: 12px; background: #7b84e4; }
+      .marca__nome {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: #e9ebee;
+      }
+
+      .selo {
+        margin-top: 36px;
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        width: fit-content;
+        padding: 8px 18px 8px 14px;
+        border-radius: 999px;
+        background: rgba(95, 106, 217, 0.16);
+        border: 1px solid rgba(95, 106, 217, 0.36);
+        font-size: 16px;
+        font-weight: 600;
+        color: #a8b0f2;
+      }
+      .selo svg {
+        width: 18px;
+        height: 18px;
+        stroke: #a8b0f2;
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .titulo {
+        margin-top: 28px;
+        font-size: 60px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        line-height: 1.1;
+        color: #f4f5f7;
+        max-width: 760px;
+      }
+      .titulo em {
+        font-style: normal;
+        color: #98a1f5;
+      }
+
+      .lead {
+        margin-top: 22px;
+        max-width: 600px;
+        font-size: 22px;
+        line-height: 1.5;
+        color: #9ba1a9;
+      }
+
+      .rodape {
+        position: absolute;
+        left: 84px;
+        bottom: 54px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 16px;
+        color: #6a7079;
+        letter-spacing: 0.02em;
+      }
+      .rodape i {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: #4fc98c;
+        box-shadow: 0 0 0 4px rgba(79, 201, 140, 0.18);
+      }
+
+      /* Envelope estilizado, ecoando o "convite" sem virar clipart genérico:
+         mesma linguagem de cartão do resto do site (bordas suaves, um
+         brilho de acento, nada fotorrealista). */
+      .envelope {
+        position: absolute;
+        top: 130px;
+        right: -30px;
+        width: 460px;
+        height: 340px;
+        transform: rotate(-3deg);
+      }
+      .envelope__corpo {
+        position: absolute;
+        inset: 0;
+        border-radius: 20px;
+        background: #141619;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        box-shadow: 0 50px 120px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.2);
+      }
+      .envelope__aba {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 200px;
+        background: linear-gradient(160deg, #1c2030, #141619 70%);
+        clip-path: polygon(0 0, 100% 0, 50% 62%);
+        border-radius: 20px 20px 0 0;
+      }
+      .envelope__selo {
+        position: absolute;
+        top: 44px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 72px;
+        height: 72px;
+        border-radius: 20px;
+        background: linear-gradient(145deg, #5f6ad9, #8790ea);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 20px 40px -10px rgba(95, 106, 217, 0.55);
+      }
+      .envelope__selo svg {
+        width: 36px;
+        height: 36px;
+        stroke: #fff;
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .envelope__linha {
+        position: absolute;
+        left: 40px;
+        right: 40px;
+        height: 12px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.07);
+      }
+      .envelope__linha--1 { bottom: 78px; width: calc(100% - 130px); }
+      .envelope__linha--2 { bottom: 52px; width: calc(100% - 190px); background: rgba(255, 255, 255, 0.045); }
+    </style>
+  </head>
+  <body>
+    <div class="fundo"></div>
+    <div class="malha"></div>
+
+    <div class="envelope">
+      <div class="envelope__corpo"></div>
+      <div class="envelope__aba"></div>
+      <div class="envelope__linha envelope__linha--1"></div>
+      <div class="envelope__linha envelope__linha--2"></div>
+      <div class="envelope__selo">
+        <svg viewBox="0 0 24 24"><path d="M4 7l8 6 8-6M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z" /></svg>
+      </div>
+    </div>
+
+    <div class="miolo">
+      <div class="marca">
+        <span class="marca__glifo"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="marca__nome">CALL</span>
+      </div>
+
+      <span class="selo">
+        <svg viewBox="0 0 20 20"><path d="M3 6l7 5 7-5M3 5h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" /></svg>
+        Convite de grupo
+      </span>
+
+      <h1 class="titulo">Você foi <em>chamado</em><br />para o CALL.</h1>
+
+      <p class="lead">
+        Voz, texto e transmissão de tela com o seu grupo — abra o convite
+        para entrar, sem conta.
+      </p>
+    </div>
+
+    <div class="rodape"><i></i>alanaraujo-bit.github.io/CALL</div>
+  </body>
+</html>

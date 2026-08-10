@@ -1229,9 +1229,22 @@ code {
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(60% 50% at 50% 0%, rgba(95, 106, 217, 0.16), transparent 62%),
-    radial-gradient(50% 40% at 15% 100%, rgba(79, 201, 140, 0.07), transparent 62%),
+    radial-gradient(60% 50% at 50% 0%, rgba(95, 106, 217, 0.18), transparent 62%),
+    radial-gradient(50% 40% at 15% 100%, rgba(79, 201, 140, 0.08), transparent 62%),
     var(--fundo);
+}
+
+/* Malha de pontos sutil, a mesma linguagem do cartão de compartilhamento —
+   um convite devia parecer parte do produto, não uma página avulsa. */
+.pagina-convite__fundo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1.4px);
+  background-size: 30px 30px;
+  -webkit-mask-image: radial-gradient(60% 55% at 50% 20%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(60% 55% at 50% 20%, #000 0%, transparent 78%);
 }
 
 .pagina-convite__cartao {
@@ -1247,6 +1260,58 @@ code {
   border: 1px solid var(--borda);
   border-radius: var(--raio-gg);
   box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.6);
+  animation: convite-entrar 0.5s cubic-bezier(0.22, 0.85, 0.32, 1) both;
+}
+
+@keyframes convite-entrar {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+
+.pagina-convite__selo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 20px;
+  padding: 5px 13px 5px 10px;
+  border-radius: 999px;
+  background: var(--acento-suave);
+  border: 1px solid rgba(95, 106, 217, 0.32);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--acento-claro);
+}
+.pagina-convite__selo svg {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Avatar do grupo: nenhum convite carrega uma foto real (o link é estático,
+   não tem como consultar o servidor antes de abrir), então a inicial sobre
+   um gradiente é o mesmo truque de Slack/Discord — parece proposital, não
+   um placeholder esquecido. A cor vem de um hash do nome, então o mesmo
+   grupo sempre cai na mesma cor entre convites diferentes. */
+.pagina-convite__avatar {
+  width: 72px;
+  height: 72px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 14px 30px -10px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
 }
 
 .marca--convite {
@@ -1266,11 +1331,21 @@ code {
 }
 
 .pagina-convite__saudacao {
-  font-size: 19px;
-  font-weight: 700;
+  font-size: 14.5px;
+  font-weight: 500;
   line-height: 1.4;
+  color: var(--texto-2);
+  max-width: 32ch;
+}
+
+.pagina-convite__grupo {
+  display: block;
+  margin-top: 2px;
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1.35;
   color: var(--texto);
-  max-width: 30ch;
+  max-width: 26ch;
 }
 
 .pagina-convite__codigo {
@@ -1280,6 +1355,15 @@ code {
   border-radius: var(--raio-m);
   background: var(--superficie-2);
   border: 1px solid var(--borda-forte);
+  position: relative;
+  overflow: hidden;
+}
+.pagina-convite__codigo::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(95, 106, 217, 0.1), transparent 55%);
+  pointer-events: none;
 }
 
 .pagina-convite__codigo-rotulo {
