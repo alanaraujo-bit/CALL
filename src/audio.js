@@ -9,8 +9,8 @@
  * O grafo é deliberadamente raso. Cada nó a mais é trabalho por bloco de 128
  * amostras, 375 vezes por segundo:
  *
- *   microfone  → passa-alta 85 Hz → porta de ruído → destino → WebRTC
- *   recebido   → ganho da pessoa → ganho geral → alto-falante
+ *   microfone  → passa-alta → RNNoise → porta → limitador → WebRTC
+ *   recebido   → ganho da pessoa → ganho geral → limitador → alto-falante
  *   avisos     → ganho dos avisos → alto-falante
  *   soundboard → ganho do soundboard → destino (WebRTC) e alto-falante
  *
@@ -39,9 +39,9 @@ import { tocar as tocarSom } from "./sons.js";
 export const AUDIO_PADRAO = {
   entrada: "", // deviceId do microfone; vazio = o do sistema
   saida: "", // deviceId do alto-falante; vazio = o do sistema
-  ganhoEntrada: 1, // 0 a 4
+  ganhoEntrada: 1, // 0 a 2
   volumeGeral: 1, // 0 a 2
-  /** Cancelamento de eco, supressão e ganho automático do próprio Chromium. */
+  /** Eco e ganho usam o APM do Chromium; ruído usa RNNoise com fallback nativo. */
   cancelarEco: true,
   suprimirRuido: true,
   ganhoAutomatico: true,
@@ -50,8 +50,8 @@ export const AUDIO_PADRAO = {
   /** Limiar mínimo de abertura, em dB. O limiar real nunca fica abaixo do
    *  piso de ruído medido mais a margem — este valor é o chão dele. */
   limiar: -50,
-  /** Bits por segundo do Opus. 64k é o que o Discord usa em canal comum. */
-  bitrate: 64000,
+  /** 96 kbps deixa o Opus mono full-band respirar e ainda é leve na rede. */
+  bitrate: 96000,
   /** Envio contínuo. O `usedtx` economiza banda no silêncio às custas de um
    *  ruído de conforto sintético na entrada da fala. */
   bandaLarga: true,
@@ -74,14 +74,50 @@ export const DURACAO_CLIPE_MAX = 5;
 /** Escolhas oferecidas na interface, com o custo declarado. */
 export const BITRATES_AUDIO = [
   { valor: 32000, nome: "Econômico", detalhe: "32 kbps — para redes ruins" },
-  { valor: 64000, nome: "Padrão", detalhe: "64 kbps — o mesmo do Discord" },
-  { valor: 96000, nome: "Alta", detalhe: "96 kbps — voz nitidamente mais aberta" },
+  { valor: 64000, nome: "Equilibrado", detalhe: "64 kbps — voz clara com pouca banda" },
+  { valor: 96000, nome: "Recomendado", detalhe: "96 kbps — voz cheia e natural" },
   { valor: 128000, nome: "Máxima", detalhe: "128 kbps — praticamente transparente" },
 ];
 
 /** Frequência de corte da passa-alta. Abaixo disto não existe voz humana:
  *  existe ronco de 50/60 Hz, mesa batendo e sopro. */
 const CORTE_GRAVES = 85;
+
+/** Curva sem ganho de compensação: reta até 0,8 e joelho suave até o teto. */
+const CURVA_LIMITADOR = (() => {
+  const curva = new Float32Array(4096);
+  for (let i = 0; i < curva.length; i++) {
+    const x = (i / (curva.length - 1)) * 2 - 1;
+    const absoluto = Math.abs(x);
+    curva[i] =
+      absoluto <= 0.8
+        ? x
+        : Math.sign(x) * (0.8 + 0.2 * (1 - Math.exp(-(absoluto - 0.8) / 0.2)));
+  }
+  return curva;
+})();
+
+/** Protege a saída contra clipping sem tocar na voz em nível normal. */
+export function criarLimitador(contexto) {
+  const no = contexto.createWaveShaper();
+  no.curve = CURVA_LIMITADOR;
+  no.oversample = "2x";
+  return no;
+}
+
+/** Constraints efetivamente pedidas ao dispositivo. Exportada para que os
+ * testes garantam que RNNoise e supressão nativa nunca atuem em série. */
+export function restricoesDoMicrofone(config, reducaoNeural = false) {
+  return {
+    echoCancellation: config.cancelarEco,
+    noiseSuppression: reducaoNeural ? false : config.suprimirRuido,
+    autoGainControl: config.ganhoAutomatico,
+    channelCount: 1,
+    sampleRate: 48000,
+    latency: { ideal: 0.01 },
+    ...(config.entrada ? { deviceId: { exact: config.entrada } } : {}),
+  };
+}
 
 /** Dois avisos mais próximos do que isto viram um só. Quando três pessoas
  *  entram na voz ao mesmo tempo, três sinos sobrepostos não são três avisos:
@@ -105,8 +141,13 @@ export class MotorDeAudio {
   #fluxoBruto = null; // o que veio do getUserMedia
   #fonteEntrada = null;
   #passaAlta = null;
+  #rnnoise = null; // supressor neural local, antes da porta de ruído
+  #rnnoiseDisponivel = null;
   #destino = null; // MediaStreamAudioDestinationNode
+  #misturaEnvio = null; // voz + soundboard antes do limitador
+  #limitadorEnvio = null;
   #geral = null; // GainNode mestre da reprodução
+  #limitadorSaida = null; // protege a soma de várias pessoas falando
   #avisos = null; // GainNode dos sons de entrar e sair
   #soundboard = null; // GainNode dos clipes tocados manualmente
   #retornoLocal = null; // retorno tratado do microfone, só para o teste
@@ -169,15 +210,17 @@ export class MotorDeAudio {
       // antigo por conta própria.
       this.#ultimoAviso = -Infinity;
       this.#avisoAte = 0;
+      this.#limitadorSaida = criarLimitador(this.#contexto);
+      this.#limitadorSaida.connect(this.#contexto.destination);
       this.#geral = this.#contexto.createGain();
       this.#geral.gain.value = this.#config.volumeGeral;
-      this.#geral.connect(this.#contexto.destination);
+      this.#geral.connect(this.#limitadorSaida);
       this.#avisos = this.#contexto.createGain();
       this.#avisos.gain.value = this.#config.volumeSons;
-      this.#avisos.connect(this.#contexto.destination);
+      this.#avisos.connect(this.#limitadorSaida);
       this.#soundboard = this.#contexto.createGain();
       this.#soundboard.gain.value = this.#config.volumeSoundboard;
-      this.#soundboard.connect(this.#contexto.destination);
+      this.#soundboard.connect(this.#limitadorSaida);
       await this.#aplicarSaida();
     }
     if (this.#contexto.state === "suspended") await this.#contexto.resume().catch(() => {});
@@ -193,6 +236,7 @@ export class MotorDeAudio {
    */
   async abrirMicrofone() {
     const contexto = await this.contexto();
+    await this.#prepararReducaoNeural(contexto);
     const fluxo = await this.#capturar();
 
     // Só troca depois de ter o novo em mãos: se o dispositivo escolhido sumiu,
@@ -204,12 +248,16 @@ export class MotorDeAudio {
     if (!this.#destino) {
       this.#destino = contexto.createMediaStreamDestination();
       this.#destino.channelCount = 1;
+      this.#misturaEnvio = contexto.createGain();
+      this.#limitadorEnvio = criarLimitador(contexto);
+      this.#misturaEnvio.connect(this.#limitadorEnvio);
+      this.#limitadorEnvio.connect(this.#destino);
     }
     // Liga o soundboard ao destino uma única vez: `connect` chamado duas
     // vezes entre o mesmo par de nós somaria o sinal em dobro, não é
     // idempotente.
     if (!this.#soundboardLigadoAoDestino && this.#soundboard) {
-      this.#soundboard.connect(this.#destino);
+      this.#soundboard.connect(this.#misturaEnvio);
       this.#soundboardLigadoAoDestino = true;
     }
     if (!this.#passaAlta) {
@@ -223,22 +271,47 @@ export class MotorDeAudio {
     this.#fonteEntrada = contexto.createMediaStreamSource(fluxo);
     this.#fonteEntrada.connect(this.#passaAlta);
 
+    const trilhaBruta = fluxo.getAudioTracks()[0];
+    if (trilhaBruta) trilhaBruta.contentHint = "speech";
+    const trilhaTratada = this.#destino.stream.getAudioTracks()[0];
+    if (trilhaTratada) trilhaTratada.contentHint = "speech";
+
     return this.#destino.stream;
+  }
+
+  /**
+   * RNNoise roda inteiramente na thread de áudio, em WASM e sem rede. Se o
+   * WebView2 recusar o módulo, a captura segue com a supressão do Chromium.
+   */
+  async #prepararReducaoNeural(contexto) {
+    if (!this.#config.suprimirRuido || this.#rnnoise) return;
+    try {
+      const { RNNoiseNode } = await import("./rnnoise.mjs");
+      const script = new URL("./rnnoise.worklet.js", import.meta.url).href;
+      const binario = new URL("./rnnoise.wasm", import.meta.url).href;
+      const modulo = fetch(binario)
+        .then((resposta) => {
+          if (!resposta.ok) throw new Error(`RNNoise HTTP ${resposta.status}`);
+          return resposta.arrayBuffer();
+        })
+        .then((bytes) => WebAssembly.compile(bytes));
+      const recursos = [script, modulo];
+      await RNNoiseNode.register(contexto, recursos);
+      this.#rnnoise = new RNNoiseNode(contexto);
+      this.#rnnoiseDisponivel = true;
+    } catch (erro) {
+      this.#rnnoiseDisponivel = false;
+      console.warn("[audio] RNNoise indisponível; usando supressão do Chromium", erro);
+    }
   }
 
   async #capturar() {
     const c = this.#config;
+    const reducaoNeural = c.suprimirRuido && this.#rnnoiseDisponivel === true;
     const pedido = {
-      audio: {
-        echoCancellation: c.cancelarEco,
-        noiseSuppression: c.suprimirRuido,
-        autoGainControl: c.ganhoAutomatico,
-        // Voz é mono. Pedir dois canais dobra o trabalho do codificador e da
-        // rede para transportar duas cópias do mesmo microfone.
-        channelCount: 1,
-        sampleRate: 48000,
-        ...(c.entrada ? { deviceId: { exact: c.entrada } } : {}),
-      },
+      // Voz é mono: dois canais dobrariam codificação e rede para transportar
+      // duas cópias do mesmo microfone.
+      audio: restricoesDoMicrofone(c, reducaoNeural),
       video: false,
     };
 
@@ -257,7 +330,10 @@ export class MotorDeAudio {
   }
 
   async #montarPorta(contexto) {
-    if (this.#worklet) return;
+    if (this.#worklet) {
+      this.#conectarTratamento();
+      return;
+    }
 
     if (!this.#moduloCarregado) {
       await contexto.audioWorklet.addModule("./porta-de-ruido.js");
@@ -276,14 +352,26 @@ export class MotorDeAudio {
     this.#worklet.parameters.get("limiar").value = this.#config.limiar;
     this.#worklet.parameters.get("ganho").value = this.#config.ganhoEntrada;
 
-    this.#passaAlta.connect(this.#worklet);
-    this.#worklet.connect(this.#destino);
+    this.#worklet.connect(this.#misturaEnvio);
     // O retorno usa exatamente o áudio que seria enviado a outra pessoa — já
     // com porta, filtros e ganho — mas fica fechado até alguém pedir o teste.
     this.#retornoLocal = contexto.createGain();
     this.#retornoLocal.gain.value = this.#monitorandoEntrada ? 1 : 0;
     this.#worklet.connect(this.#retornoLocal);
     this.#retornoLocal.connect(this.#geral);
+    this.#conectarTratamento();
+  }
+
+  /** Reconecta o ramo sem trocar a trilha WebRTC nem renegociar a chamada. */
+  #conectarTratamento() {
+    this.#passaAlta?.disconnect();
+    this.#rnnoise?.disconnect();
+    if (this.#config.suprimirRuido && this.#rnnoise) {
+      this.#passaAlta.connect(this.#rnnoise);
+      this.#rnnoise.connect(this.#worklet);
+    } else {
+      this.#passaAlta?.connect(this.#worklet);
+    }
   }
 
   /** Reproduz localmente a voz já tratada. É deliberadamente temporário: a
@@ -516,15 +604,25 @@ export class MotorDeAudio {
     this.#cacheClipes.clear();
 
     this.#worklet?.disconnect();
+    this.#rnnoise?.update(false);
+    this.#rnnoise?.disconnect();
     this.#retornoLocal?.disconnect();
     this.#passaAlta?.disconnect();
+    this.#misturaEnvio?.disconnect();
+    this.#limitadorEnvio?.disconnect();
     this.#destino?.disconnect();
+    this.#limitadorSaida?.disconnect();
     this.#worklet = null;
+    this.#rnnoise = null;
+    this.#rnnoiseDisponivel = null;
     this.#retornoLocal = null;
     this.#monitorandoEntrada = false;
     this.#passaAlta = null;
+    this.#misturaEnvio = null;
+    this.#limitadorEnvio = null;
     this.#destino = null;
     this.#geral = null;
+    this.#limitadorSaida = null;
     this.#moduloCarregado = false;
 
     await this.#contexto?.close().catch(() => {});

@@ -16,8 +16,9 @@
  *    ele acompanha o ruído de fundo medido, com uma margem por cima. O mesmo
  *    ajuste funciona num quarto silencioso e ao lado de um ar-condicionado.
  *
- * 3. **Histerese e permanência.** Abre num limiar mais baixo do que fecha, e
- *    continua aberta por um tempo depois da última sílaba. Sem isso a porta
+ * 3. **Histerese e permanência.** Abre acima de um limiar, fecha abaixo de
+ *    outro mais baixo e continua aberta por um tempo depois da última sílaba.
+ *    Sem isso a porta
  *    treme nas pausas entre palavras — o defeito que faz todo mundo desligar
  *    a supressão de ruído.
  */
@@ -113,10 +114,14 @@ class PortaDeRuido extends AudioWorkletProcessor {
     const ganhoEntrada = parametros.ganho[0];
 
     // Envelope do bloco, amostra a amostra: é ele que decide abrir ou fechar.
+    // O piso usa RMS, não pico; um clique de teclado não pode ensinar à porta
+    // que a sala inteira ficou mais barulhenta.
     let pico = 0;
+    let somaQuadrados = 0;
     for (let i = 0; i < quadros; i++) {
       const amostra = Math.abs(canalEntrada[i]);
       if (amostra > pico) pico = amostra;
+      somaQuadrados += canalEntrada[i] * canalEntrada[i];
       const coef = amostra > this.envelope ? this.subidaDetector : this.descidaDetector;
       this.envelope = amostra + (this.envelope - amostra) * coef;
     }
@@ -124,11 +129,13 @@ class PortaDeRuido extends AudioWorkletProcessor {
 
     const nivelDb = paraDb(this.envelope);
 
-    // O piso persegue o nível para baixo e sobe com muita relutância: assim ele
-    // acaba representando o silêncio da sala, e não a voz que passou por cima.
-    if (nivelDb > PISO_ABSOLUTO_DB) {
-      const coef = nivelDb < this.piso ? this.pisoDescendo : this.pisoSubindo;
-      this.piso = nivelDb + (this.piso - nivelDb) * coef;
+    // O piso só aprende quando a porta está fechada. A versão anterior o fazia
+    // subir lentamente durante falas longas; depois de alguns segundos ela
+    // passava a classificar a própria voz como ruído e mordia palavras.
+    const nivelPisoDb = paraDb(Math.sqrt(somaQuadrados / Math.max(quadros, 1)));
+    if (!this.aberta && this.restaAberta <= 0 && nivelPisoDb > PISO_ABSOLUTO_DB) {
+      const coef = nivelPisoDb < this.piso ? this.pisoDescendo : this.pisoSubindo;
+      this.piso = nivelPisoDb + (this.piso - nivelPisoDb) * coef;
     }
 
     const limiarPedido = parametros.limiar[0];

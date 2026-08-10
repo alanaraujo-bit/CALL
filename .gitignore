@@ -9,6 +9,13 @@
 # Esquemas gerados pelo Tauri a cada build
 /src-tauri/gen/
 
+# RNNoise: copiado do pacote npm antes de desenvolver/compilar. O binario WASM
+# e os dois carregadores sao artefatos reproduziveis, nao fonte do CALL.
+/src/rnnoise.mjs
+/src/rnnoise.worklet.js
+/src/rnnoise.wasm
+/src/RNNOISE-LICENSE.txt
+
 # Saída dos testes: capturas de tela da máquina real e relatórios
 /testes/capturas/
 /testes/resultado.json

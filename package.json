@@ -1,13 +1,18 @@
 {
   "name": "call",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "private": true,
   "description": "Aplicativo de comunicacao: grupos, chat de voz e transmissao de tela",
   "scripts": {
-    "dev:web": "node testes/ao-vivo.mjs",
+    "preparar:audio": "node scripts/preparar-audio.mjs",
+    "postinstall": "npm run preparar:audio",
+    "dev:web": "npm run preparar:audio && node testes/ao-vivo.mjs",
     "dev": "tauri dev",
     "build": "tauri build",
     "tauri": "tauri"
+  },
+  "dependencies": {
+    "simple-rnnoise-wasm": "1.1.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.1"

@@ -114,7 +114,12 @@ async function limitarAudio(remetente, bits) {
   try {
     const parametros = remetente.getParameters();
     parametros.encodings = parametros.encodings?.length ? parametros.encodings : [{}];
-    for (const codificacao of parametros.encodings) codificacao.maxBitrate = bits;
+    for (const codificacao of parametros.encodings) {
+      codificacao.maxBitrate = bits;
+      // Voz precisa sobreviver antes de vídeo e dados quando a rede aperta.
+      codificacao.priority = "high";
+      codificacao.networkPriority = "high";
+    }
     await remetente.setParameters(parametros);
   } catch (erro) {
     console.warn("[rtc] não foi possível ajustar o áudio", erro);
@@ -188,6 +193,7 @@ export function ajustarOpus(sdp, { bitrate = TETO_RECEPCAO_OPUS, dtx = false } =
     "minptime=10",
     "useinbandfec=1",
     `usedtx=${dtx ? 1 : 0}`,
+    "cbr=0",
     "stereo=0",
     "sprop-stereo=0",
     `maxaveragebitrate=${bitrate}`,
@@ -316,7 +322,7 @@ class Elo {
           // depois que a seção de vídeo foi negociada. Reaplicar aqui impede
           // que uma configuração feita logo após addTrack seja silenciosamente
           // substituída pelos padrões do navegador.
-          await this.malha.ajustarTelaDoElo(this);
+          await this.malha.ajustarMidiaDoElo(this);
         } finally {
           this.aplicandoDescricao = false;
         }
@@ -369,7 +375,7 @@ export class Malha {
   #trilhaTela = null;
   #fluxoTela = null;
   #trilhaAudioTela = null;
-  #bitrateAudio = 64000;
+  #bitrateAudio = 96000;
   #dtx = false;
   #perfilTela = acharPerfilDeTela(PERFIL_TELA_PADRAO);
 
@@ -397,11 +403,19 @@ export class Malha {
    * muda no meio de uma conversa.
    */
   async definirAudio({ bitrate, dtx }) {
+    const dtxMudou = dtx !== undefined && dtx !== this.#dtx;
     if (bitrate !== undefined) this.#bitrateAudio = bitrate;
     if (dtx !== undefined) this.#dtx = dtx;
     await Promise.all(
       [...this.#elos.values()].map((elo) => limitarAudio(elo.remetenteAudio, this.#bitrateAudio))
     );
+    // DTX vive no SDP; sem uma oferta nova o botão só teria efeito na próxima
+    // pessoa que entrasse na call.
+    if (dtxMudou) {
+      for (const elo of this.#elos.values()) {
+        if (elo.pc.signalingState === "stable") await elo.ofertar();
+      }
+    }
   }
 
   /**
@@ -425,10 +439,11 @@ export class Malha {
     }
   }
 
-  /** Chamado depois de cada negociação para garantir que o encoder recém-
-   * criado preserve o perfil escolhido. Público apenas para `Elo`, que vive
-   * neste mesmo módulo e é quem conhece o instante exato da negociação. */
-  async ajustarTelaDoElo(elo) {
+  /** Chamado depois de cada negociação para reaplicar os parâmetros que alguns
+   * Chromium recriam com o encoder. Público apenas para `Elo`, que conhece o
+   * instante exato da negociação. */
+  async ajustarMidiaDoElo(elo) {
+    if (elo.remetenteAudio) await limitarAudio(elo.remetenteAudio, this.#bitrateAudio);
     if (elo.remetenteTela) await limitarTela(elo.remetenteTela, this.#perfilTela);
     if (elo.remetenteAudioTela) await limitarAudio(elo.remetenteAudioTela, BITRATE_AUDIO_TELA);
   }
@@ -448,6 +463,9 @@ export class Malha {
   }
 
   definirAudioLocal(trilha, fluxo) {
+    // A trilha vem de um MediaStreamAudioDestinationNode e, por isso, não
+    // carrega a intenção do getUserMedia. Declarar fala orienta o Opus.
+    trilha.contentHint = "speech";
     this.#trilhaAudio = trilha;
     this.#fluxoAudio = fluxo;
     for (const elo of this.#elos.values()) {

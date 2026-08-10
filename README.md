@@ -5,7 +5,7 @@ texto**, **chat de voz** e **transmissão de tela**. Interface inteiramente em
 português do Brasil.
 
 Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
-empacotador e sem Electron. O instalador tem 1,95 MB e o executável ocupa
+empacotador e sem Electron. O instalador tem 2,01 MB e o executável ocupa
 32 MB de memória residente em repouso — 7,9 MB deles em memória privada.
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
@@ -118,12 +118,13 @@ canais. O convite dá acesso à conversa, não à estrutura.
 
 A engrenagem ao lado do seu nome, no canto inferior esquerdo, abre os ajustes.
 
-Em **Voz**: microfone e saída de som, volume de entrada e geral, e uma
-**porta de ruído** que cala o ruído de fundo entre as falas. Ela não é um corte
-seco — o limiar acompanha o ruído medido da sua sala, e o medidor ao vivo mostra
-o seu nível, o piso da sala e onde a porta abre, para o ajuste ser visto e não
-adivinhado. A qualidade da voz vai de 32 a 128 kbps e vale só para o que sai da
-sua máquina: a sua escolha não limita a voz de ninguém.
+Em **Voz**: microfone e saída de som, volume de entrada e geral, redução neural
+de ruído com **RNNoise** rodando localmente e uma porta adaptativa que cala o
+que ainda sobra entre as falas sem aprender a própria voz como ruído. O medidor
+ao vivo mostra nível, piso da sala e ponto de abertura. Limitadores transparentes
+protegem tanto o envio quanto a soma de várias pessoas contra clipping. A voz
+usa Opus mono full-band, VBR, FEC e prioridade alta; a qualidade vai de 32 a
+128 kbps, com 96 kbps como padrão para novas instalações.
 
 Em **Transmissão**: quatro perfis, de 720p a 30 quadros até 1440p a 60. Todos
 preferem H.264 para aproveitar o codificador da GPU e preservar o FPS escolhido;
@@ -265,6 +266,8 @@ KB viaja no instalador do CALL: o sidecar continua nos 599 KB de sempre.
 | `src/perfil.js` | Painel do próprio perfil e cartão de outra pessoa |
 | `src/sons.js` | O sino de entrada e saída, sintetizado |
 | `src/audio.js` | Motor de áudio: voz, soundboard e saídas por pessoa |
+| `src/porta-de-ruido.js` | Porta adaptativa, ganho e medição na thread de áudio |
+| `scripts/preparar-audio.mjs` | Leva RNNoise/WASM do pacote npm ao frontend do instalador |
 | `src/tempo.js` | Tempo em call e histórico de quem passou por ela |
 | `src/atividade.js` | O que mostrar do programa em uso, e com que calma |
 | `src/emojis.js` | Emojis Unicode e os cinco emojis próprios do CALL |

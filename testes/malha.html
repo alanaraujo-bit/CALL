@@ -17,6 +17,8 @@
     <script type="module">
       import { Sinal } from "../src/sinal.js";
       import { Malha, acharPerfilDeTela, ajustarOpus, restricoesDoPerfil } from "../src/rtc.js";
+      import { AUDIO_PADRAO, criarLimitador, restricoesDoMicrofone } from "../src/audio.js";
+      import { RNNoiseNode } from "../src/rnnoise.mjs";
 
       const entregar = (dados, rota = "/resultado") =>
         fetch(`http://127.0.0.1:8123${rota}`, {
@@ -258,7 +260,17 @@
         conferir(/a=fmtp:\d+ .*useinbandfec=1/.test(sdpAna), "o SDP pede correção de erro em banda (FEC)");
         conferir(/a=fmtp:\d+ .*maxaveragebitrate=128000/.test(sdpAna), "o SDP declara o teto de recepção do Opus");
         conferir(/a=fmtp:\d+ .*usedtx=0/.test(sdpAna), "o corte no silêncio (DTX) sai desligado por padrão");
+        conferir(/a=fmtp:\d+ .*cbr=0/.test(sdpAna), "o Opus usa VBR para gastar bits onde a voz precisa");
         conferir(/a=fmtp:\d+ .*stereo=0/.test(sdpAna), "o SDP declara voz mono explicitamente");
+        conferir(audioAna.getAudioTracks()[0].contentHint === "speech", "a trilha é declarada como fala");
+        const capturaComRnnoise = restricoesDoMicrofone(AUDIO_PADRAO, true);
+        conferir(
+          capturaComRnnoise.echoCancellation === true &&
+            capturaComRnnoise.noiseSuppression === false &&
+            capturaComRnnoise.channelCount === 1 &&
+            capturaComRnnoise.sampleRate === 48000,
+          "RNNoise mantém eco ativo sem empilhar dois supressores"
+        );
 
         const remetenteDeAudio = (p) =>
           [...p.malha.conexoes.values()][0].getSenders().find((r) => r.track?.kind === "audio");
@@ -267,6 +279,11 @@
         conferir(
           remetenteDeAudio(ana)?.getParameters().encodings?.[0]?.maxBitrate === 96000,
           "o teto de banda do áudio chega ao remetente"
+        );
+        conferir(
+          remetenteDeAudio(ana)?.getParameters().encodings?.[0]?.priority === "high" &&
+            remetenteDeAudio(ana)?.getParameters().encodings?.[0]?.networkPriority === "high",
+          "a voz recebe prioridade máxima no congestionamento"
         );
 
         /** Taxa real de envio de áudio, medida na janela pedida. */
@@ -295,7 +312,7 @@
           kbpsAlto > kbpsBaixo * 1.8,
           `mudar a qualidade muda o tráfego de verdade (${kbpsBaixo.toFixed(0)} → ${kbpsAlto.toFixed(0)} kbps)`
         );
-        await ana.malha.definirAudio({ bitrate: 64000 });
+        await ana.malha.definirAudio({ bitrate: 96000 });
 
         titulo("Transmissão de tela");
 
@@ -457,19 +474,19 @@
          *   2,0–3,0 s fala a −20 dBFS sobre o mesmo ruído
          *   3,0–4,0 s ruído de sala de novo
          */
-        async function renderizarPorta({ ligada }) {
+        async function renderizarPorta({ ligada, duracao = 4, falaAte = 3 }) {
           const taxa = 48000;
-          const ctx = new OfflineAudioContext(1, taxa * 4, taxa);
+          const ctx = new OfflineAudioContext(1, taxa * duracao, taxa);
           await ctx.audioWorklet.addModule("../src/porta-de-ruido.js");
 
-          const buffer = ctx.createBuffer(1, taxa * 4, taxa);
+          const buffer = ctx.createBuffer(1, taxa * duracao, taxa);
           const dados = buffer.getChannelData(0);
           const ruido = 10 ** (-58 / 20);
           const voz = 10 ** (-20 / 20);
           for (let i = 0; i < dados.length; i++) {
             const t = i / taxa;
             let amostra = (Math.random() * 2 - 1) * ruido;
-            if (t >= 2 && t < 3) {
+            if (t >= 2 && t < falaAte) {
               // Fala aproximada: fundamental grave com dois harmônicos e uma
               // modulação silábica. Um seno puro não exercita nem o detector
               // nem o codificador de forma parecida com voz.
@@ -541,11 +558,50 @@
         const desvio = Math.abs(desligada.rmsEntrada(1.5, 2.0) - desligada.rms(1.5, 2.0));
         conferir(desvio < 0.5, `desligada, a porta é transparente (${desvio.toFixed(2)} dB)`);
 
+        const falaLonga = await renderizarPorta({ ligada: true, duracao: 13, falaAte: 12 });
+        const perdaDepoisDeDezSegundos =
+          falaLonga.rmsEntrada(10.0, 11.5) - falaLonga.rms(10.0, 11.5);
+        conferir(
+          Math.abs(perdaDepoisDeDezSegundos) < 1,
+          `fala longa não vira o novo piso de ruído (${Math.abs(perdaDepoisDeDezSegundos).toFixed(2)} dB)`
+        );
+
+        titulo("Proteção contra clipping");
+        const taxaLimitador = 48000;
+        const contextoLimitador = new OfflineAudioContext(1, taxaLimitador, taxaLimitador);
+        const bufferLimitador = contextoLimitador.createBuffer(1, taxaLimitador, taxaLimitador);
+        const entradaLimitador = bufferLimitador.getChannelData(0);
+        for (let i = 0; i < entradaLimitador.length; i++) {
+          const t = i / taxaLimitador;
+          const amplitude = t < 0.45 ? 0.2 : 1.8;
+          entradaLimitador[i] = Math.sin(2 * Math.PI * 220 * t) * amplitude;
+        }
+        const fonteLimitador = contextoLimitador.createBufferSource();
+        fonteLimitador.buffer = bufferLimitador;
+        fonteLimitador.connect(criarLimitador(contextoLimitador)).connect(contextoLimitador.destination);
+        fonteLimitador.start();
+        const saidaLimitador = (await contextoLimitador.startRendering()).getChannelData(0);
+        const rmsTrecho = (dados, de, ate) => {
+          let soma = 0;
+          const inicio = Math.round(de * taxaLimitador);
+          const fim = Math.round(ate * taxaLimitador);
+          for (let i = inicio; i < fim; i++) soma += dados[i] * dados[i];
+          return 20 * Math.log10(Math.sqrt(soma / (fim - inicio)) + 1e-12);
+        };
+        const perdaNormal = rmsTrecho(entradaLimitador, 0.1, 0.35) - rmsTrecho(saidaLimitador, 0.1, 0.35);
+        let picoProtegido = 0;
+        for (let i = taxaLimitador * 0.6; i < taxaLimitador * 0.9; i++) {
+          picoProtegido = Math.max(picoProtegido, Math.abs(saidaLimitador[i]));
+        }
+        conferir(Math.abs(perdaNormal) < 0.2, `voz normal atravessa o limitador (${perdaNormal.toFixed(2)} dB)`);
+        conferir(picoProtegido < 1, `picos não clipam na saída (${picoProtegido.toFixed(2)})`);
+
         titulo("Ajuste do Opus fora da conexão");
         const sdpCru = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1\r\n";
         const ajustado = ajustarOpus(sdpCru, { bitrate: 96000, dtx: true });
         conferir(ajustado.includes("maxaveragebitrate=96000"), "ajustarOpus escreve o teto pedido");
         conferir(ajustado.includes("usedtx=1"), "ajustarOpus respeita o pedido de DTX");
+        conferir(ajustado.includes("cbr=0"), "ajustarOpus mantém o Opus em VBR");
         conferir(
           (ajustado.match(/a=fmtp:111/g) ?? []).length === 1,
           "ajustarOpus substitui a linha fmtp em vez de duplicá-la"
@@ -571,6 +627,61 @@
           microfone.getTracks().forEach((t) => t.stop());
         } catch (erro) {
           conferir(false, `getUserMedia falhou: ${erro?.name ?? erro}`);
+        }
+
+        titulo("Redução neural de ruído");
+        try {
+          const contextoRn = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
+          const scriptRn = new URL("../src/rnnoise.worklet.js", location.href).href;
+          const binarioRn = new URL("../src/rnnoise.wasm", location.href).href;
+          const moduloRn = fetch(binarioRn)
+            .then((resposta) => resposta.arrayBuffer())
+            .then((bytes) => WebAssembly.compile(bytes));
+          const recursosRn = [scriptRn, moduloRn];
+          await RNNoiseNode.register(contextoRn, recursosRn);
+          const rnnoise = new RNNoiseNode(contextoRn);
+          const fonteRn = contextoRn.createOscillator();
+          const mudo = contextoRn.createGain();
+          mudo.gain.value = 0;
+          fonteRn.connect(rnnoise);
+          rnnoise.connect(mudo);
+          mudo.connect(contextoRn.destination);
+          fonteRn.start();
+          await esperar(1200);
+
+          const estadoRn = await new Promise((resolve, reject) => {
+            const limite = setTimeout(() => reject(new Error("RNNoise não respondeu")), 2000);
+            rnnoise.addEventListener(
+              "status",
+              (evento) => {
+                clearTimeout(limite);
+                resolve(evento);
+              },
+              { once: true }
+            );
+            rnnoise.update("stat");
+          });
+          const estatisticas = estadoRn.stat;
+          const metade = estatisticas.length / 2;
+          const tempos = [];
+          for (let i = 0; i < metade; i++) {
+            const intervalo = estatisticas[i];
+            const total = estatisticas[i + metade];
+            if (intervalo > 0 && total >= intervalo) tempos.push(total - intervalo);
+          }
+          tempos.sort((a, b) => a - b);
+          const p95 = tempos[Math.floor((tempos.length - 1) * 0.95)] ?? Infinity;
+          conferir(tempos.length > 100, "RNNoise processa áudio continuamente no worklet");
+          conferir(
+            p95 < 2.67,
+            `RNNoise cabe no bloco de 2,67 ms (${p95.toFixed(2)} ms no percentil 95)`
+          );
+
+          rnnoise.update(false);
+          fonteRn.stop();
+          await contextoRn.close();
+        } catch (erro) {
+          conferir(false, `RNNoise falhou: ${erro?.message ?? erro}`);
         }
       } catch (erro) {
         falhas++;
