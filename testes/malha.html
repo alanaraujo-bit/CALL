@@ -637,7 +637,9 @@
         }
         const fonteLimitador = contextoLimitador.createBufferSource();
         fonteLimitador.buffer = bufferLimitador;
-        fonteLimitador.connect(criarLimitador(contextoLimitador)).connect(contextoLimitador.destination);
+        const limitadorSobTeste = criarLimitador(contextoLimitador);
+        fonteLimitador.connect(limitadorSobTeste.entrada);
+        limitadorSobTeste.saida.connect(contextoLimitador.destination);
         fonteLimitador.start();
         const saidaLimitador = (await contextoLimitador.startRendering()).getChannelData(0);
         const rmsTrecho = (dados, de, ate) => {
@@ -647,13 +649,48 @@
           for (let i = inicio; i < fim; i++) soma += dados[i] * dados[i];
           return 20 * Math.log10(Math.sqrt(soma / (fim - inicio)) + 1e-12);
         };
-        const perdaNormal = rmsTrecho(entradaLimitador, 0.1, 0.35) - rmsTrecho(saidaLimitador, 0.1, 0.35);
+        // Janela tardia de propósito. O `DynamicsCompressorNode` leva algumas
+        // centenas de ms para assentar a partir do estado inicial — medindo de
+        // 0,1 s dava 0,185 dB de perda aparente, que é o transitório de
+        // partida do render offline e não o comportamento do limitador. Em
+        // regime a perda é 0,002 dB. Num contexto de verdade isso acontece uma
+        // vez, na abertura, quando ainda não há nada tocando.
+        const perdaNormal = rmsTrecho(entradaLimitador, 0.3, 0.44) - rmsTrecho(saidaLimitador, 0.3, 0.44);
         let picoProtegido = 0;
         for (let i = taxaLimitador * 0.6; i < taxaLimitador * 0.9; i++) {
           picoProtegido = Math.max(picoProtegido, Math.abs(saidaLimitador[i]));
         }
-        conferir(Math.abs(perdaNormal) < 0.2, `voz normal atravessa o limitador (${perdaNormal.toFixed(2)} dB)`);
+        // Tolerância apertada de propósito. Esta é a única verificação que
+        // guarda `COMPENSACAO_MAKEUP`, que é um valor medido do Chromium: se
+        // um WebView2 futuro mudar a fórmula do *makeup* interno do
+        // `DynamicsCompressorNode`, a compensação para de bater e todo o áudio
+        // sai mais alto ou mais baixo. Com folga de 0,2 dB uma deriva de
+        // 0,15 dB passaria calada; com 0,05 dB ela falha aqui.
+        conferir(
+          Math.abs(perdaNormal) < 0.05,
+          `voz normal atravessa o limitador (${perdaNormal.toFixed(3)} dB)`
+        );
         conferir(picoProtegido < 1, `picos não clipam na saída (${picoProtegido.toFixed(2)})`);
+
+        // Os dois testes acima passavam com o ceifador que existia antes: um
+        // `WaveShaperNode` clampa a entrada em [-1, 1], então tudo acima de 1
+        // saía como 0,9264 — pico protegido, sim, mas com o topo da onda
+        // cortado quadrado. O que separa limitar de ceifar é a *forma* da
+        // onda, e o fator de crista mede isso: uma senoide tem pico/RMS de
+        // 1,414, e achatar o topo empurra esse número para 1.
+        let somaQuadradosSaida = 0;
+        let amostrasSaida = 0;
+        for (let i = taxaLimitador * 0.6; i < taxaLimitador * 0.9; i++) {
+          somaQuadradosSaida += saidaLimitador[i] * saidaLimitador[i];
+          amostrasSaida++;
+        }
+        const rmsSaida = Math.sqrt(somaQuadradosSaida / amostrasSaida);
+        const fatorDeCrista = picoProtegido / rmsSaida;
+        conferir(
+          fatorDeCrista > 1.3,
+          `o limitador preserva a forma da onda em vez de ceifar ` +
+            `(fator de crista ${fatorDeCrista.toFixed(2)}; senoide = 1,41, ceifada ≈ 1,0)`
+        );
 
         titulo("Ajuste do Opus fora da conexão");
         const sdpCru = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1\r\n";

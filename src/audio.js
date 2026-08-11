@@ -10,7 +10,7 @@
  * amostras, 375 vezes por segundo:
  *
  *   microfone  → filtros nativos → passa-alta → porta → limitador → WebRTC
- *   recebido   → ganho da pessoa → ganho geral → limitador → alto-falante
+ *   recebido   → ganho da pessoa → folga → ganho geral → limitador → alto-falante
  *   avisos     → ganho dos avisos → alto-falante
  *   soundboard → ganho do soundboard → destino (WebRTC) e alto-falante
  *
@@ -39,7 +39,7 @@ import { tocar as tocarSom } from "./sons.js";
 export const AUDIO_PADRAO = {
   entrada: "", // deviceId do microfone; vazio = o do sistema
   saida: "", // deviceId do alto-falante; vazio = o do sistema
-  ganhoEntrada: 1, // 0 a 2
+  ganhoEntrada: 1, // 0 a GANHO_ENTRADA_MAX
   volumeGeral: 1, // 0 a 2
   /** Eco, ruído e ganho usam o APM nativo do Chromium/WebView2. */
   cancelarEco: true,
@@ -66,6 +66,20 @@ export const AUDIO_PADRAO = {
   volumeSoundboard: 1,
 };
 
+/**
+ * Teto do "Volume do microfone", antes 2 (200%).
+ *
+ * O ganho é aplicado dentro do worklet, depois do AGC do Chromium — que já
+ * normalizou a voz para perto do fundo de escala. Dobrar aquilo não deixava a
+ * voz mais alta: enfiava +6 dBFS no limitador de envio, que antes ceifava e
+ * agora comprimiria sem parar. Nos dois casos quem ouve leva a pior, e quem
+ * mexeu no controle não tem como saber.
+ *
+ * 1,5 (+3,5 dB) é o que ainda resolve um microfone fraco sem lutar contra o
+ * AGC. Valores gravados de versões antigas são presos a este teto ao carregar.
+ */
+export const GANHO_ENTRADA_MAX = 1.5;
+
 /** Clipe mais longo do que isto é recusado antes de tocar. Soundboard é
  *  efeito curto, não trilha sonora — e o teto evita que um clipe comprido
  *  fique pendurado no grafo de saída por muito tempo. */
@@ -83,26 +97,84 @@ export const BITRATES_AUDIO = [
  *  existe ronco de 50/60 Hz, mesa batendo e sopro. */
 const CORTE_GRAVES = 85;
 
-/** Curva sem ganho de compensação: reta até 0,8 e joelho suave até o teto. */
-const CURVA_LIMITADOR = (() => {
-  const curva = new Float32Array(4096);
-  for (let i = 0; i < curva.length; i++) {
-    const x = (i / (curva.length - 1)) * 2 - 1;
-    const absoluto = Math.abs(x);
-    curva[i] =
-      absoluto <= 0.8
-        ? x
-        : Math.sign(x) * (0.8 + 0.2 * (1 - Math.exp(-(absoluto - 0.8) / 0.2)));
-  }
-  return curva;
-})();
+/**
+ * Limiar do limitador, em dBFS. É uma rede de segurança, não um estágio de
+ * compressão — quem mantém a soma fora daqui é a folga de `HEADROOM_VOZES`.
+ *
+ * -3 saiu de medição, não de gosto: com uma voz forte típica (pico em
+ * -3 dBFS, que é o que o AGC do Chromium entrega) o limitador não mexe em
+ * nada — 0,00 dB de alteração — e mesmo com entrada 3,0 o pico de saída fica
+ * em 0,87. Um limiar mais baixo já começava a comprimir voz normal (-1,7 dB
+ * em -6, -4,4 dB em -9).
+ */
+const TETO_LIMITADOR = -3;
 
-/** Protege a saída contra clipping sem tocar na voz em nível normal. */
-export function criarLimitador(contexto) {
-  const no = contexto.createWaveShaper();
-  no.curve = CURVA_LIMITADOR;
-  no.oversample = "2x";
-  return no;
+/**
+ * Anula o ganho de compensação que o Chromium aplica por dentro do
+ * `DynamicsCompressorNode`.
+ *
+ * O nó não é transparente abaixo do limiar: o Blink embute um *makeup gain*
+ * calculado a partir de limiar/joelho/razão. Com os valores acima ele mede
+ * +1,20 dB — o bastante para o limitador *aumentar* o sinal em vez de só
+ * proteger, e para o teto de saída passar de 1,0 justamente quando ele
+ * deveria estar segurando.
+ *
+ * 10^(-1,20/20). O valor é medido, então está preso a estes parâmetros e a
+ * este motor. O teste do limitador verifica as duas pontas — transparência
+ * abaixo do limiar e teto acima — e falha alto se um Chromium futuro mudar a
+ * fórmula.
+ */
+const COMPENSACAO_MAKEUP = 0.871;
+
+/**
+ * Folga aplicada à soma das vozes, em ganho linear (-3 dB).
+ *
+ * O AGC do Chromium entrega cada voz com pico perto de -3 dBFS. Somar duas
+ * assim já passa de 0 dBFS, e três passam com folga — por isso o barramento
+ * precisa de espaço antes do limitador. Sem esta folga o limitador atuaria em
+ * quase toda conversa cruzada, e atuação constante é bombeamento audível: o
+ * mix "respira" a cada sílaba. Com ela, uma pessoa falando nunca chega perto
+ * do teto e o limitador só aparece quando três ou mais falam junto — que é
+ * exatamente para isso que ele existe.
+ *
+ * O custo é 3 dB a menos numa voz sozinha. É um custo real e escolhido: o
+ * caminho antigo era mais alto porque estava ceifando o topo da onda.
+ */
+const HEADROOM_VOZES = 0.707;
+
+/**
+ * Limitador de verdade, com lookahead — não um ceifador.
+ *
+ * A versão anterior era um `WaveShaperNode` com uma curva de joelho suave. A
+ * curva estava certa; o nó, não. O `WaveShaperNode` **clampa a entrada em
+ * [-1, 1] antes de consultar a curva**, então tudo acima de 1 caía no último
+ * ponto da tabela: 1,1 / 1,4 / 3,0 saíam todos como 0,9264. Isso é topo
+ * cortado quadrado — distorção harmônica, e não compressão. Numa call com
+ * três pessoas falando junto a soma passa de 1,0 rotineiramente, ou seja, o
+ * mix distorcia justo no momento em que mais importa entender quem falou.
+ *
+ * O `DynamicsCompressorNode` tem lookahead, então ele reduz o ganho *antes* do
+ * pico chegar, em vez de achatá-lo depois. Razão 20:1 é limitador; o joelho de
+ * 3 dB evita que a entrada em ação seja um degrau audível.
+ *
+ * Devolve os dois extremos da cadeia porque ela tem dois nós — o compressor e
+ * a compensação. Ligue em `entrada` e siga a partir de `saida`.
+ */
+export function criarLimitador(contexto, { teto = TETO_LIMITADOR } = {}) {
+  const compressor = contexto.createDynamicsCompressor();
+  compressor.threshold.value = teto;
+  compressor.knee.value = 3;
+  compressor.ratio.value = 20;
+  // Ataque curto o bastante para segurar uma sílaba explosiva; soltura longa a
+  // ponto de a recuperação não ser ouvida como um pulso de volume.
+  compressor.attack.value = 0.003;
+  compressor.release.value = 0.2;
+
+  const compensacao = contexto.createGain();
+  compensacao.gain.value = COMPENSACAO_MAKEUP;
+  compressor.connect(compensacao);
+
+  return { entrada: compressor, saida: compensacao };
 }
 
 /** Constraints efetivamente pedidas ao dispositivo. Exportada para que os
@@ -114,7 +186,10 @@ export function restricoesDoMicrofone(config) {
     autoGainControl: config.ganhoAutomatico,
     channelCount: 1,
     sampleRate: 48000,
-    latency: { ideal: 0.01 },
+    // Sem pedido de latência. `latency: { ideal: 0.01 }` pedia buffer de 10 ms
+    // ao WASAPI; no WebView2, com um jogo aberto na mesma máquina, isso é
+    // underrun — crepitação. E o ganho é irrelevante numa call pela internet,
+    // onde a rede sozinha já custa de 30 a 80 ms. Deixar o sistema escolher.
     ...(config.entrada ? { deviceId: { exact: config.entrada } } : {}),
   };
 }
@@ -144,6 +219,7 @@ export class MotorDeAudio {
   #destino = null; // MediaStreamAudioDestinationNode
   #misturaEnvio = null; // voz + soundboard antes do limitador
   #limitadorEnvio = null;
+  #vozes = null; // soma do que vem dos outros (voz e som de tela), com folga
   #geral = null; // GainNode mestre da reprodução
   #limitadorSaida = null; // protege a soma de várias pessoas falando
   #avisos = null; // GainNode dos sons de entrar e sair
@@ -210,16 +286,24 @@ export class MotorDeAudio {
       this.#ultimoAviso = -Infinity;
       this.#avisoAte = 0;
       this.#limitadorSaida = criarLimitador(this.#contexto);
-      this.#limitadorSaida.connect(this.#contexto.destination);
+      this.#limitadorSaida.saida.connect(this.#contexto.destination);
       this.#geral = this.#contexto.createGain();
       this.#geral.gain.value = this.#config.volumeGeral;
-      this.#geral.connect(this.#limitadorSaida);
+      this.#geral.connect(this.#limitadorSaida.entrada);
+      // Tudo o que vem dos outros soma aqui, com folga, antes do volume geral
+      // — voz e som de transmissão, que é justamente a fonte mais alta e mais
+      // contínua de todas. Avisos e soundboard não passam por este nó: são
+      // fonte única, em nível conhecido, e não é a soma deles que estoura o
+      // barramento.
+      this.#vozes = this.#contexto.createGain();
+      this.#vozes.gain.value = HEADROOM_VOZES;
+      this.#vozes.connect(this.#geral);
       this.#avisos = this.#contexto.createGain();
       this.#avisos.gain.value = this.#config.volumeSons;
-      this.#avisos.connect(this.#limitadorSaida);
+      this.#avisos.connect(this.#limitadorSaida.entrada);
       this.#soundboard = this.#contexto.createGain();
       this.#soundboard.gain.value = this.#config.volumeSoundboard;
-      this.#soundboard.connect(this.#limitadorSaida);
+      this.#soundboard.connect(this.#limitadorSaida.entrada);
       await this.#aplicarSaida();
     }
     if (this.#contexto.state === "suspended") await this.#contexto.resume().catch(() => {});
@@ -248,8 +332,8 @@ export class MotorDeAudio {
       this.#destino.channelCount = 1;
       this.#misturaEnvio = contexto.createGain();
       this.#limitadorEnvio = criarLimitador(contexto);
-      this.#misturaEnvio.connect(this.#limitadorEnvio);
-      this.#limitadorEnvio.connect(this.#destino);
+      this.#misturaEnvio.connect(this.#limitadorEnvio.entrada);
+      this.#limitadorEnvio.saida.connect(this.#destino);
     }
     // Liga o soundboard ao destino uma única vez: `connect` chamado duas
     // vezes entre o mesmo par de nós somaria o sinal em dobro, não é
@@ -378,7 +462,7 @@ export class MotorDeAudio {
     const fonte = contexto.createMediaStreamSource(fluxo);
     const ganho = contexto.createGain();
     fonte.connect(ganho);
-    ganho.connect(this.#geral);
+    ganho.connect(this.#vozes);
 
     this.#saidas.set(id, { fonte, ganho });
     return ganho;
@@ -499,6 +583,9 @@ export class MotorDeAudio {
   async aplicar(mudancas) {
     const antes = this.#config;
     const depois = { ...antes, ...mudancas };
+    // Preso aqui, e não só no controle da interface: uma preferência gravada
+    // por uma versão antiga chega a 2 e não passa por nenhum controle.
+    depois.ganhoEntrada = Math.min(Math.max(depois.ganhoEntrada, 0), GANHO_ENTRADA_MAX);
     this.#config = depois;
 
     if (this.#geral) this.#geral.gain.value = depois.volumeGeral;
@@ -606,13 +693,17 @@ export class MotorDeAudio {
     // um contexto novo não pode tocar um buffer decodificado pelo anterior.
     this.#cacheClipes.clear();
 
+    this.#vozes?.disconnect();
+    this.#vozes = null;
     this.#worklet?.disconnect();
     this.#retornoLocal?.disconnect();
     this.#passaAlta?.disconnect();
     this.#misturaEnvio?.disconnect();
-    this.#limitadorEnvio?.disconnect();
+    this.#limitadorEnvio?.entrada.disconnect();
+    this.#limitadorEnvio?.saida.disconnect();
     this.#destino?.disconnect();
-    this.#limitadorSaida?.disconnect();
+    this.#limitadorSaida?.entrada.disconnect();
+    this.#limitadorSaida?.saida.disconnect();
     this.#worklet = null;
     this.#retornoLocal = null;
     this.#monitorandoEntrada = false;
