@@ -192,6 +192,10 @@ class PortaDeRuido extends AudioWorkletProcessor {
         piso: this.piso,
         abertura,
         aberta: this.ganhoAtual > 0.5,
+        // O indicador de fala precisa continuar correto mesmo com a porta
+        // desligada. `aberta` descreve o ganho aplicado; `falando` descreve o
+        // detector de voz, que continua funcionando nos dois modos.
+        falando: this.aberta || this.restaAberta > 0,
       });
       this.picoDoPeriodo = 0;
     }

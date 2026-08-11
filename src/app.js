@@ -33,7 +33,7 @@ const invocar = (comando, args) =>
     : Promise.reject(new Error("Recurso disponível apenas no aplicativo."));
 
 const CHAVE = "call.preferencias";
-const VERSAO_ATUAL = "0.10.1";
+const VERSAO_ATUAL = "0.10.2";
 /** Servidor oficial do CALL, hospedado. É o padrão para que ninguém precise
  *  subir nada na própria máquina para conversar com os amigos. */
 const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
@@ -172,6 +172,7 @@ const audiosRemotos = new Map(); // id -> HTMLAudioElement de sustentação
 const telas = new Map(); // id -> HTMLElement do palco
 const linhas = new Map(); // id -> [HTMLElement] que recebem a marca de fala
 const medidores = new Map(); // id -> { no, analisador, dados, ateQuando, falando }
+const falas = new Map(); // id -> estado visual, preservado quando a lista é redesenhada
 const saneadoAtalho = (atalho) => ({
   codigo: String(atalho?.codigo ?? ""),
   nome: saneadoGrupo({ nome: atalho?.nome }).nome,
@@ -180,6 +181,7 @@ const saneadoAtalho = (atalho) => ({
 
 const motor = new MotorDeAudio();
 let cronometroVoz = null;
+let pararIndicadorLocal = null;
 
 /** Quem está na call e quem já passou por ela. A regra mora em `tempo.js`. */
 const historicoDaCall = new HistoricoDaCall();
@@ -239,6 +241,11 @@ const livekit = new SalaLiveKit({
     else if (origem === "screen_share_audio") motor.desligarSaida(`tela:${id}`);
   },
   aoEstado: aoEstadoDaConexao,
+  // O detector local vem da porta de ruído, que representa melhor o que este
+  // usuário está enviando. O LiveKit fica como fonte de verdade para os demais.
+  aoFala: (id, falando) => {
+    if (id !== estado.meuId) marcarFala(id, falando);
+  },
 });
 
 /** O servidor escolhe o transporte por call. Servidores antigos não enviam
@@ -2112,7 +2119,7 @@ function desenharMembroNaVoz(membro) {
   const linha = document.createElement("button");
   linha.type = "button";
   linha.className = "vozinho";
-  linha.dataset.falando = medidores.get(membro.id)?.falando ? "sim" : "nao";
+  linha.dataset.falando = falas.get(membro.id) ? "sim" : "nao";
 
   const avatar = document.createElement("span");
   avatar.className = "avatar avatar--pequeno";
@@ -2239,7 +2246,7 @@ function desenharParticipantes() {
     linha.className = "participante";
     // A lista é redesenhada a cada mudança de estado; sem reaplicar a marca,
     // quem estivesse falando apagaria a cada silenciar de outra pessoa.
-    linha.dataset.falando = medidores.get(membro.id)?.falando ? "sim" : "nao";
+    linha.dataset.falando = falas.get(membro.id) ? "sim" : "nao";
 
     const avatar = document.createElement("span");
     avatar.className = "avatar";
@@ -3288,7 +3295,7 @@ async function aoEntrarNaVoz({ canal, pares, midia }) {
       return;
     }
   }
-  observarVoz(estado.meuId, motor.noLocal);
+  observarVozLocal();
 
   // Trocar de canal é entrar em outra call: o tempo e o histórico recomeçam.
   comecarCall();
@@ -3763,8 +3770,12 @@ function desmontarMalha(soltarMicrofone = true) {
   const fechamentoLiveKit = livekit.fecharTudo();
   provedorDeMidia = "malha";
 
+  pararIndicadorLocal?.();
+  pararIndicadorLocal = null;
+
   for (const id of [...audiosRemotos.keys()]) derrubarPar(id);
   for (const id of [...medidores.keys()]) esquecerVoz(id);
+  for (const id of [...falas.keys()]) marcarFala(id, false);
   for (const id of [...telas.keys()]) removerTela(id);
 
   if (!soltarMicrofone) return fechamentoLiveKit;
@@ -4610,7 +4621,18 @@ async function ligarAudioRemoto(id, fluxo) {
 
   const membro = estado.membros.get(id);
   ganho.gain.value = estado.volumes.get(membro?.usuario) ?? 1;
-  await observarVoz(id, ganho);
+  // No LiveKit o SFU entrega a lista de falantes ativos. A análise local fica
+  // como compatibilidade para servidores antigos que ainda usam malha P2P.
+  if (provedorDeMidia === "malha") await observarVoz(id, ganho);
+}
+
+/** Usa a mesma decisão da porta de ruído para destacar a própria fala. */
+function observarVozLocal() {
+  pararIndicadorLocal?.();
+  marcarFala(estado.meuId, false);
+  pararIndicadorLocal = motor.assinarNivel((dados) => {
+    marcarFala(estado.meuId, Boolean(dados.falando) && !estado.mudo);
+  });
 }
 
 /**
@@ -4642,7 +4664,10 @@ async function observarVoz(id, no) {
 
 function esquecerVoz(id) {
   const medidor = medidores.get(id);
-  if (!medidor) return;
+  if (!medidor) {
+    marcarFala(id, false);
+    return;
+  }
   // Desfaz só esta ligação: o nó medido também alimenta a chamada, e um
   // `disconnect()` sem argumento derrubaria o áudio junto com o medidor.
   try {
@@ -4652,6 +4677,7 @@ function esquecerVoz(id) {
   }
   medidor.analisador.disconnect();
   medidores.delete(id);
+  marcarFala(id, false);
 
   if (medidores.size === 0 && cronometroVoz) {
     clearInterval(cronometroVoz);
@@ -4688,6 +4714,8 @@ function medirVozes() {
 }
 
 function marcarFala(id, falando) {
+  if (falando) falas.set(id, true);
+  else falas.delete(id);
   for (const linha of linhas.get(id) ?? []) {
     linha.dataset.falando = falando ? "sim" : "nao";
   }
@@ -5084,7 +5112,7 @@ async function aplicarAudio(mudancas, gravar = false) {
       trilha.enabled = !estado.mudo;
       malha.definirAudioLocal(trilha, estado.fluxoMicrofone);
       livekit.definirAudioLocal(trilha, estado.fluxoMicrofone);
-      await observarVoz(estado.meuId, motor.noLocal);
+      observarVozLocal();
     }
     if ("bitrate" in mudancas || "bandaLarga" in mudancas) {
       await Promise.all([

@@ -164,7 +164,8 @@ export class MotorDeAudio {
   #mudoAteMs = 0; // Date.now() até quando o aviso fica suprimido
   #saidas = new Map(); // id -> { fonte, ganho }
   #config = { ...AUDIO_PADRAO };
-  #ouvinteDeNivel = null;
+  #ouvintesDeNivel = new Set();
+  #ouvinteDoMedidor = null;
   #moduloCarregado = false;
   #encerrando = null; // promessa do `encerrar()` em andamento, se houver
 
@@ -347,7 +348,15 @@ export class MotorDeAudio {
       channelCount: 1,
       channelCountMode: "explicit",
     });
-    this.#worklet.port.onmessage = ({ data }) => this.#ouvinteDeNivel?.(data);
+    this.#worklet.port.onmessage = ({ data }) => {
+      for (const ouvinte of [...this.#ouvintesDeNivel]) {
+        try {
+          ouvinte(data);
+        } catch (erro) {
+          console.error("[audio] ouvinte do nível falhou", erro);
+        }
+      }
+    };
     this.#worklet.parameters.get("ativa").value = this.#config.porta ? 1 : 0;
     this.#worklet.parameters.get("limiar").value = this.#config.limiar;
     this.#worklet.parameters.get("ganho").value = this.#config.ganhoEntrada;
@@ -556,10 +565,35 @@ export class MotorDeAudio {
     }
   }
 
-  /** Liga o medidor da porta. Sem ouvinte, o worklet nem calcula o envio. */
+  #atualizarRelatorioDeNivel() {
+    this.#worklet?.port.postMessage({ reportando: this.#ouvintesDeNivel.size > 0 });
+  }
+
+  /**
+   * Assina o detector que roda dentro da própria porta de ruído. Mais de uma
+   * parte da interface pode acompanhar a mesma leitura sem uma desligar a
+   * outra (por exemplo, o avatar da call e o painel de ajustes).
+   */
+  assinarNivel(ouvinte) {
+    if (typeof ouvinte !== "function") return () => {};
+    this.#ouvintesDeNivel.add(ouvinte);
+    this.#atualizarRelatorioDeNivel();
+
+    let ativa = true;
+    return () => {
+      if (!ativa) return;
+      ativa = false;
+      this.#ouvintesDeNivel.delete(ouvinte);
+      this.#atualizarRelatorioDeNivel();
+    };
+  }
+
+  /** Liga o medidor visual dos ajustes sem interferir em outras assinaturas. */
   medir(ouvinte) {
-    this.#ouvinteDeNivel = ouvinte;
-    this.#worklet?.port.postMessage({ reportando: Boolean(ouvinte) });
+    if (this.#ouvinteDoMedidor) this.#ouvintesDeNivel.delete(this.#ouvinteDoMedidor);
+    this.#ouvinteDoMedidor = typeof ouvinte === "function" ? ouvinte : null;
+    if (this.#ouvinteDoMedidor) this.#ouvintesDeNivel.add(this.#ouvinteDoMedidor);
+    this.#atualizarRelatorioDeNivel();
   }
 
   /* ── Encerramento ──────────────────────────────────────────────── */
@@ -586,6 +620,7 @@ export class MotorDeAudio {
     this.soltarMicrofone();
     for (const id of [...this.#saidas.keys()]) this.desligarSaida(id);
     this.medir(null);
+    this.#ouvintesDeNivel.clear();
 
     // Sair da voz toca um aviso e desmonta tudo em seguida. Fechar o contexto
     // agora cortaria esse som no meio da primeira nota — daí a espera pela

@@ -326,6 +326,7 @@ powershell -File testes/rodar-malha.ps1      # malha WebRTC e áudio no motor re
 powershell -File testes/rodar-portal.ps1     # entrar e criar conta na aplicação real
 powershell -File testes/rodar-perfil.ps1     # perfil, mascotes e cartão de alguém
 powershell -File testes/rodar-interface.ps1  # painel de ajustes na aplicação real
+powershell -File testes/rodar-livekit-nuvem.ps1 # SFU e falantes ativos na infraestrutura real
 powershell -File testes/rodar-sons.ps1       # o sino, medido na amostra renderizada
 powershell -File testes/duas-instancias.ps1  # duas janelas reais no mesmo grupo
 powershell -File testes/convite.ps1          # o link call:// abrindo o grupo

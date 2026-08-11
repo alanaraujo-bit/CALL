@@ -22,6 +22,7 @@ const RoomEvent = {
   TrackSubscribed: "trackSubscribed",
   TrackUnsubscribed: "trackUnsubscribed",
   ParticipantDisconnected: "participantDisconnected",
+  ActiveSpeakersChanged: "activeSpeakersChanged",
 };
 
 const Track = {
@@ -76,10 +77,12 @@ const trilha = (id, kind) => ({ id, kind, contentHint: "", readyState: "live" })
 
 test("publica voz tratada e tela com fontes e limites corretos", async () => {
   const recebidas = [];
+  const falas = [];
   const midia = new SalaLiveKit({
     carregarSdk: async () => sdk,
     aoTrilha: (...args) => recebidas.push(args),
     aoFimDeTrilha: () => {},
+    aoFala: (...args) => falas.push(args),
   });
   const microfone = trilha("microfone", "audio");
   midia.definirAudioLocal(microfone);
@@ -123,6 +126,18 @@ test("publica voz tratada e tela com fontes e limites corretos", async () => {
   assert.equal(recebidas[0][4], vozRemota);
   assert.deepEqual(recebidas[0][2].getTracks(), [vozRemota.mediaStreamTrack]);
 
+  sala.emitir(RoomEvent.ActiveSpeakersChanged, [
+    { identity: "participante-2" },
+    { identity: "participante-3" },
+  ]);
+  sala.emitir(RoomEvent.ActiveSpeakersChanged, [{ identity: "participante-3" }]);
+  assert.deepEqual(falas, [
+    ["participante-2", true],
+    ["participante-3", true],
+    ["participante-2", false],
+  ]);
+
   await midia.fecharTudo();
+  assert.deepEqual(falas.at(-1), ["participante-3", false]);
   assert.equal(sala.desconectouCom, false, "o SDK não deve parar a trilha pertencente ao motor");
 });

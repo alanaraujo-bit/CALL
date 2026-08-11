@@ -24,11 +24,13 @@ export class SalaLiveKit {
   #dtx = false;
   #perfilTela = null;
   #fluxosRemotos = new Map();
+  #falantes = new Set();
 
-  constructor({ aoTrilha, aoFimDeTrilha, aoEstado, carregarSdk = carregarSdkPadrao }) {
+  constructor({ aoTrilha, aoFimDeTrilha, aoEstado, aoFala, carregarSdk = carregarSdkPadrao }) {
     this.aoTrilha = aoTrilha;
     this.aoFimDeTrilha = aoFimDeTrilha;
     this.aoEstado = aoEstado ?? (() => {});
+    this.aoFala = aoFala ?? (() => {});
     this.#carregarSdk = carregarSdk;
   }
 
@@ -146,6 +148,21 @@ export class SalaLiveKit {
       this.aoFimDeTrilha(participante.identity, track.mediaStreamTrack, publicacao.source);
     });
 
+    // O SFU já calcula níveis de áudio para todos os participantes. Usar esse
+    // resultado evita manter um segundo detector, com outro limiar, para cada
+    // voz remota e faz o destaque acompanhar exatamente o estado da sala.
+    sala.on(sdk.RoomEvent.ActiveSpeakersChanged, (participantes) => {
+      if (!vigente()) return;
+      const atuais = new Set(participantes.map((participante) => String(participante.identity)));
+      for (const id of this.#falantes) {
+        if (!atuais.has(id)) this.aoFala(id, false);
+      }
+      for (const id of atuais) {
+        if (!this.#falantes.has(id)) this.aoFala(id, true);
+      }
+      this.#falantes = atuais;
+    });
+
     sala.on(sdk.RoomEvent.ParticipantDisconnected, (participante) => {
       if (!vigente()) return;
       this.#fluxosRemotos.delete(participante.identity);
@@ -242,6 +259,8 @@ export class SalaLiveKit {
   async #fecharSala(limparTrilhas) {
     const sala = this.#sala;
     this.#sala = null;
+    for (const id of this.#falantes) this.aoFala(id, false);
+    this.#falantes.clear();
     this.#fluxosRemotos.clear();
     this.#publicacaoAudio = null;
     this.#publicacaoTela = null;

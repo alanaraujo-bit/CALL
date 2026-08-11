@@ -163,6 +163,7 @@
       function participante(apelido) {
         const sinal = new Sinal();
         const recebidas = [];
+        const falas = new Map();
         const sala = new SalaLiveKit({
           aoTrilha: (id, trilha, fluxo, origem, trilhaLiveKit) => {
             if (origem === "microphone") {
@@ -177,8 +178,9 @@
           },
           aoFimDeTrilha: () => {},
           aoEstado: () => {},
+          aoFala: (id, falando) => falas.set(id, falando),
         });
-        return { apelido, sinal, sala, recebidas };
+        return { apelido, sinal, sala, recebidas, falas };
       }
 
       async function entrarNaVoz(participante, canal, audio) {
@@ -198,7 +200,8 @@
         return voz;
       }
 
-      const ENDERECO = "ws://127.0.0.1:8898";
+      const ENDERECO =
+        new URLSearchParams(location.search).get("servidor") ?? "ws://127.0.0.1:8898";
       const ana = participante("Ana");
       const bruno = participante("Bruno");
       let audioAna;
@@ -219,7 +222,7 @@
           .find((item) => item.tipo === "voz");
         conferir(Boolean(canal), "servidor efêmero criou o canal de voz");
 
-        await bruno.sinal.conectar(ENDERECO, {
+        const boasVindasBruno = await bruno.sinal.conectar(ENDERECO, {
           tipo: "entrar",
           codigo: boasVindasAna.grupo.codigo,
           apelido: "Bruno",
@@ -235,6 +238,14 @@
           () => ana.recebidas.length >= 1 && bruno.recebidas.length >= 1
         );
         conferir(duasTrilhas, "o SFU entregou a trilha remota nos dois sentidos");
+
+        const detectouFalantes = await aguardar(
+          () =>
+            ana.falas.get(boasVindasBruno.eu.id) === true &&
+            bruno.falas.get(boasVindasAna.eu.id) === true,
+          10_000
+        );
+        conferir(detectouFalantes, "o LiveKit identifica os dois participantes falando");
 
         if (duasTrilhas) {
           const [audioChegouAna, audioChegouBruno] = await Promise.all([
