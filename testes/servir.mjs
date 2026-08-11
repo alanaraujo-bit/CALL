@@ -4,6 +4,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 
 const RAIZ = process.cwd();
+const CSP_TAURI = JSON.parse(
+  await readFile(join(RAIZ, "src-tauri", "tauri.conf.json"), "utf8")
+).app.security.csp;
 const TIPOS = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -42,7 +45,22 @@ createServer(async (req, res) => {
   const caminho = join(RAIZ, normalize(decodeURI(req.url.split("?")[0])).replace(/^(\.\.[/\\])+/, ""));
   try {
     const corpo = await readFile(caminho);
-    res.writeHead(200, { "Content-Type": TIPOS[extname(caminho)] ?? "application/octet-stream" });
+    const cabecalhos = {
+      "Content-Type": TIPOS[extname(caminho)] ?? "application/octet-stream",
+    };
+    // Este teste precisa rodar sob a mesma política da WebView2. Foi justamente
+    // uma diferença entre o Edge solto e o aplicativo empacotado que deixou a
+    // consulta HTTPS de regiões do LiveKit passar no teste e falhar em produção.
+    if (req.url.split("?")[0] === "/testes/livekit-nuvem.html") {
+      // O aplicativo recebe nonces gerados pelo Tauri. O roteiro inline ganha
+      // um nonce fixo só para poder executar; `connect-src`, que é o alvo desta
+      // regressão, continua idêntico ao pacote real.
+      cabecalhos["Content-Security-Policy"] = CSP_TAURI.replace(
+        "script-src 'self'",
+        "script-src 'self' 'nonce-livekit-nuvem'"
+      );
+    }
+    res.writeHead(200, cabecalhos);
     res.end(corpo);
   } catch {
     res.writeHead(404).end("nao encontrado");
