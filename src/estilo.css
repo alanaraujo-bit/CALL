@@ -2191,10 +2191,16 @@ svg {
   align-content: stretch;
 }
 
-.palco__grade[data-quantidade="2"],
-.palco__grade[data-quantidade="3"],
-.palco__grade[data-quantidade="4"] {
+.palco__grade[data-colunas="2"] {
   grid-template-columns: 1fr 1fr;
+}
+
+.palco__grade[data-colunas="3"] {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.palco__grade[data-colunas="4"] {
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .transmissao {
@@ -2311,6 +2317,83 @@ svg {
 
 .transmissao--cheia .transmissao__expandir {
   opacity: 1;
+}
+
+/* Quadro de presença — quem está na voz sem transmitir tela. Mesmo cartão
+   escuro e mesmo canto arredondado de `.transmissao`, com um avatar grande
+   no centro no lugar do vídeo. */
+.presenca {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+  overflow: hidden;
+  cursor: var(--cursor-clicavel);
+  animation: surgir 220ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.presenca:hover {
+  background: var(--superficie-3);
+}
+
+.avatar--palco {
+  width: 30%;
+  aspect-ratio: 1;
+  min-width: 44px;
+  max-width: 96px;
+  font-size: 28px;
+  border: 2px solid transparent;
+  transition: border-color var(--transicao), box-shadow var(--transicao);
+}
+
+/* Mesma marca de fala do resto do app (`.vozinho`, `.participante`), só que
+   grande o bastante para se ver do outro lado da sala. */
+.presenca[data-falando="sim"] .avatar--palco {
+  border-color: rgba(79, 201, 140, 0.6);
+  box-shadow: 0 0 0 4px rgba(79, 201, 140, 0.14);
+}
+
+.presenca__etiqueta {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 20px);
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(14, 15, 17, 0.78);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--borda);
+  font-size: 11.5px;
+  color: var(--texto-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presenca__mudo {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--raio-p);
+  background: rgba(14, 15, 17, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.presenca__mudo svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--perigo);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 @keyframes surgir {

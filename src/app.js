@@ -34,7 +34,7 @@ const invocar = (comando, args) =>
     : Promise.reject(new Error("Recurso disponível apenas no aplicativo."));
 
 const CHAVE = "call.preferencias";
-const VERSAO_ATUAL = "0.10.3";
+const VERSAO_ATUAL = "0.12.0";
 /** Servidor oficial do CALL, hospedado. É o padrão para que ninguém precise
  *  subir nada na própria máquina para conversar com os amigos. */
 const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
@@ -171,6 +171,10 @@ const estado = {
 
 const audiosRemotos = new Map(); // id -> HTMLAudioElement de sustentação
 const telas = new Map(); // id -> HTMLElement do palco
+// id -> HTMLElement do quadro de presença no palco — quem está na voz mas não
+// está transmitindo tela. Mapa à parte de `telas`: um vídeo de verdade nunca
+// pode ser desmontado e remontado só porque o palco foi redesenhado.
+const presencasDeVoz = new Map();
 const linhas = new Map(); // id -> [HTMLElement] que recebem a marca de fala
 const medidores = new Map(); // id -> { no, analisador, dados, ateQuando, falando }
 const falas = new Map(); // id -> estado visual, preservado quando a lista é redesenhada
@@ -1988,6 +1992,7 @@ function redesenhar() {
   desenharArvore();
   desenharParticipantes();
   desenharPassaram();
+  sincronizarPalcoDeVoz();
 }
 
 /** A coluna 2 mostra a árvore de canais do grupo ou a lista de amigos —
@@ -4493,7 +4498,9 @@ function mostrarTela(id, fluxo, rotulo, trilhaLiveKit = null) {
   $("palco-grade").append(quadro);
   telas.set(id, quadro);
   quadro.trilhaLiveKit = trilhaLiveKit;
-  atualizarPalco();
+  // Tira o quadro de presença dessa pessoa na hora — sem isto, os dois
+  // conviveriam até o próximo `redesenhar()`.
+  sincronizarPalcoDeVoz();
 }
 
 function removerTela(id) {
@@ -4505,7 +4512,8 @@ function removerTela(id) {
   quadro.remove();
   telas.delete(id);
   if (telaMaximizada === id) telaMaximizada = null;
-  atualizarPalco();
+  // Devolve o quadro de presença dessa pessoa, se ela ainda estiver na voz.
+  sincronizarPalcoDeVoz();
 }
 
 /** Maximizar não move o quadro nem mexe no `<video>` — só empresta a tela
@@ -4517,8 +4525,14 @@ function alternarMaximizarTela(id) {
 }
 
 function atualizarPalco() {
-  const total = telas.size;
-  $("palco-grade").dataset.quantidade = String(total);
+  const total = telas.size + presencasDeVoz.size;
+  const grade = $("palco-grade");
+  grade.dataset.quantidade = String(total);
+  // Colunas por contagem, e não uma regra por quantidade exata: uma
+  // transmissão de tela nunca passou de 4 pessoas na prática, mas a sala de
+  // voz inteira agora aparece aqui, e uma call de 8 não pode ficar numa
+  // coluna só.
+  grade.dataset.colunas = String(total <= 1 ? 1 : total <= 4 ? 2 : total <= 9 ? 3 : 4);
   $("palco").classList.toggle("oculto", total === 0);
 
   for (const [id, quadro] of telas) {
@@ -4532,6 +4546,79 @@ function atualizarPalco() {
       maximizada ? GLIFO_RECOLHER : GLIFO_EXPANDIR
     }</svg>`;
   }
+}
+
+/**
+ * O palco não é só para quem transmite tela — é a sala de voz inteira, do
+ * jeito que o Discord mostra um quadro por pessoa mesmo sem vídeo nenhum.
+ * Quem não está transmitindo ganha um quadro de presença (avatar grande,
+ * nome, marca de fala); quem está, continua com o quadro de vídeo de sempre,
+ * montado à parte por `mostrarTela` — os dois nunca coexistem para a mesma
+ * pessoa, e por isso um quadro de presença é desfeito assim que o de vídeo
+ * aparece, e refeito quando ele some.
+ */
+function sincronizarPalcoDeVoz() {
+  const grade = $("palco-grade");
+  const presentes = estado.canalVoz ? membrosNaVoz(estado.canalVoz) : [];
+  const idsPresentes = new Set(presentes.map((m) => m.id));
+
+  for (const [id, quadro] of presencasDeVoz) {
+    if (!idsPresentes.has(id) || telas.has(id)) {
+      quadro.remove();
+      presencasDeVoz.delete(id);
+    }
+  }
+
+  for (const membro of presentes) {
+    // Já tem quadro de vídeo — o de presença seria um segundo cartão da
+    // mesma pessoa, e não entra.
+    if (telas.has(membro.id)) continue;
+
+    let quadro = presencasDeVoz.get(membro.id);
+    if (!quadro) {
+      quadro = criarQuadroDeVoz(membro);
+      grade.append(quadro);
+      presencasDeVoz.set(membro.id, quadro);
+    } else {
+      atualizarQuadroDeVoz(quadro, membro);
+    }
+    // `linhas` é zerado a cada `redesenhar()`, então um quadro que já
+    // existia precisa se reinscrever para continuar recebendo a marca de
+    // fala — não só o que acabou de nascer.
+    registrarLinha(membro.id, quadro);
+  }
+
+  atualizarPalco();
+}
+
+function criarQuadroDeVoz(membro) {
+  const quadro = document.createElement("button");
+  quadro.type = "button";
+  quadro.className = "presenca";
+  quadro.addEventListener("click", () => abrirCartaoDe(membro));
+
+  const avatar = document.createElement("span");
+  avatar.className = "avatar avatar--palco";
+  quadro.append(avatar);
+
+  const etiqueta = document.createElement("span");
+  etiqueta.className = "presenca__etiqueta";
+  quadro.append(etiqueta);
+
+  const mudo = document.createElement("span");
+  mudo.className = "presenca__mudo oculto";
+  mudo.innerHTML = SVG_MUDO;
+  quadro.append(mudo);
+
+  atualizarQuadroDeVoz(quadro, membro);
+  return quadro;
+}
+
+function atualizarQuadroDeVoz(quadro, membro) {
+  pintarAvatar(quadro.querySelector(".avatar"), membro);
+  quadro.querySelector(".presenca__etiqueta").textContent =
+    membro.id === estado.meuId ? `${membro.apelido} (você)` : membro.apelido;
+  quadro.querySelector(".presenca__mudo").classList.toggle("oculto", !membro.mudo);
 }
 
 /** A estatística real de vídeo por trás de um quadro do palco — o que está
