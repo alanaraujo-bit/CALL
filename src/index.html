@@ -321,7 +321,7 @@
            botão direito sobre o grupo, na coluna anterior. Duas portas para o
            mesmo lugar não é conveniência, é ruído — daí este topo só ter o
            nome. -->
-      <aside class="canais">
+      <aside class="canais" id="coluna-canais">
         <header class="canais__topo" id="canais-topo">
           <div class="canais__grupo">
             <span class="grupo__marca canais__grupo-marca" id="avatar-grupo" aria-hidden="true">?</span>
@@ -855,6 +855,7 @@
                   <p class="ajuste__dica">
                     Fale para ver o nível. O traço marca o limiar de ativação.
                   </p>
+                  <p class="ajuste__dica ajuste__dica--erro" id="aviso-microfone-sem-sinal" hidden></p>
                 </div>
 
                 <label class="chave">
@@ -875,6 +876,7 @@
                   <button class="botao botao--sutil ajuste__testar" type="button" id="testar-saida">
                     Tocar um som de teste
                   </button>
+                  <p class="ajuste__dica" id="dica-teste-saida" hidden></p>
                 </div>
               </div>
             </div>
@@ -1052,7 +1054,7 @@
               <div class="ajustes__secao-corpo">
                 <div class="atualizacoes__linha">
                   <div>
-                    <span class="ajuste__rotulo" id="versao-atual">CALL 0.10.2</span>
+                    <span class="ajuste__rotulo" id="versao-atual">CALL 0.10.3</span>
                     <p class="ajuste__dica" id="estado-atualizacao">Verifique se há uma versão nova.</p>
                   </div>
                   <button class="botao botao--sutil" type="button" id="botao-buscar-atualizacao">Buscar agora</button>

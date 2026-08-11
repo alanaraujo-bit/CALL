@@ -9,12 +9,7 @@
 # Esquemas gerados pelo Tauri a cada build
 /src-tauri/gen/
 
-# RNNoise: copiado do pacote npm antes de desenvolver/compilar. O binario WASM
-# e os dois carregadores sao artefatos reproduziveis, nao fonte do CALL.
-/src/rnnoise.mjs
-/src/rnnoise.worklet.js
-/src/rnnoise.wasm
-/src/RNNOISE-LICENSE.txt
+# Cliente LiveKit copiado do pacote npm antes de desenvolver/compilar.
 /src/livekit-client.esm.mjs
 /src/LIVEKIT-LICENSE.txt
 

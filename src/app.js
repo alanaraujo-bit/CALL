@@ -33,7 +33,7 @@ const invocar = (comando, args) =>
     : Promise.reject(new Error("Recurso disponível apenas no aplicativo."));
 
 const CHAVE = "call.preferencias";
-const VERSAO_ATUAL = "0.10.2";
+const VERSAO_ATUAL = "0.10.3";
 /** Servidor oficial do CALL, hospedado. É o padrão para que ninguém precise
  *  subir nada na própria máquina para conversar com os amigos. */
 const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
@@ -1159,6 +1159,19 @@ function prepararAplicacao() {
     abrirMenu(pontoDoClique(evento), itensDeNovoGrupo());
   });
 
+  // O mesmo menu do ícone do grupo, agora em qualquer ponto da coluna dele —
+  // o ícone é um alvo de 48px, e a coluna inteira é o espaço que a pessoa
+  // reconhece como "este grupo". Registrado aqui, e não em `desenharArvore`:
+  // a árvore é refeita a cada redesenho, e o ouvinte se empilharia.
+  $("coluna-canais").addEventListener("contextmenu", (evento) => {
+    // A vista de amigos mora dentro desta mesma coluna e só troca de
+    // visibilidade — `estado.grupo` continua de pé atrás dela.
+    if (!estado.grupo || estado.vistaAmigos) return;
+    evento.preventDefault();
+    const atalho = estado.atalhos.find((a) => a.codigo === estado.grupo.codigo) ?? estado.grupo;
+    menuDoAtalho(pontoDoClique(evento), atalho);
+  });
+
   $("botao-presentes").addEventListener("click", () => {
     presentesForcado = !presentesDeveAbrir();
     atualizarPresentes();
@@ -1348,6 +1361,10 @@ async function abrirMeuPerfil() {
     sinal.enviar({ tipo: "perfil", apelido, avatar, bio });
     redesenhar();
   }
+  // `redesenhar` não alcança a linha do tempo, e as mensagens da própria
+  // pessoa pintam a foto de agora: sem isto a conversa ficaria com a antiga
+  // até trocar de canal. Fora de grupo também vale, por causa das PVs.
+  desenharConversa();
 
   avisar("Perfil salvo.", "bom");
 }
@@ -2683,7 +2700,13 @@ function blocoDeMensagem(mensagem) {
   avatar.className = "avatar";
   // O avatar vem da própria mensagem, e não de quem está no grupo agora: o
   // histórico é de quem escreveu naquele dia, e a pessoa pode nem estar aqui.
-  pintarAvatar(avatar, mensagem);
+  // `foto` é a única exceção, e por falta de alternativa: ela nunca é gravada
+  // na mensagem nem trafega pela rede, então a foto atual desta máquina é a
+  // única que existe — e só para as mensagens da própria pessoa.
+  pintarAvatar(
+    avatar,
+    mensagem.autor === estado.usuario ? { ...mensagem, foto: estado.foto } : mensagem
+  );
 
   const conteudo = document.createElement("div");
   conteudo.className = "mensagem__conteudo";
@@ -4730,6 +4753,27 @@ const posicaoNoMedidor = (db) =>
   Math.min(100, Math.max(0, ((db - MEDIDOR_MIN) / -MEDIDOR_MIN) * 100));
 
 let ajustesPreparados = false;
+let diagnosticoSemSinal = null;
+let maiorNivelNoTeste = -Infinity;
+
+function pararDiagnosticoDoMicrofone() {
+  if (diagnosticoSemSinal) clearTimeout(diagnosticoSemSinal);
+  diagnosticoSemSinal = null;
+  maiorNivelNoTeste = -Infinity;
+  $("aviso-microfone-sem-sinal").hidden = true;
+}
+
+function iniciarDiagnosticoDoMicrofone() {
+  pararDiagnosticoDoMicrofone();
+  diagnosticoSemSinal = setTimeout(() => {
+    diagnosticoSemSinal = null;
+    if (!$("ajuste-retorno-microfone").checked || maiorNivelNoTeste > -75) return;
+    const nome = $("ajuste-entrada").selectedOptions[0]?.textContent?.trim() || "microfone escolhido";
+    const aviso = $("aviso-microfone-sem-sinal");
+    aviso.textContent = `Nenhum sinal chegou de “${nome}”. Confira o botão de mudo, o cabo ou escolha outro microfone.`;
+    aviso.hidden = false;
+  }, 3000);
+}
 
 function prepararAjustes() {
   if (ajustesPreparados) return;
@@ -4784,9 +4828,12 @@ function prepararAjustes() {
     try {
       if (e.target.checked && !motor.ativo) await motor.abrirMicrofone();
       motor.monitorarEntrada(e.target.checked);
+      if (e.target.checked) iniciarDiagnosticoDoMicrofone();
+      else pararDiagnosticoDoMicrofone();
     } catch {
       e.target.checked = false;
       motor.monitorarEntrada(false);
+      pararDiagnosticoDoMicrofone();
       avisar("Não foi possível iniciar a prévia do microfone.", "erro");
     }
   });
@@ -4836,7 +4883,13 @@ function prepararAjustes() {
 
   // O microfone se prova sozinho no medidor logo acima; a saída não tem como
   // se provar sem alguém mandar um som por ela.
-  $("testar-saida").addEventListener("click", () => motor.ouvirAviso("entrei"));
+  $("testar-saida").addEventListener("click", () => {
+    motor.ouvirAviso("entrei");
+    const nome = $("ajuste-saida").selectedOptions[0]?.textContent?.trim() || "saída escolhida";
+    const dica = $("dica-teste-saida");
+    dica.textContent = `Som enviado para “${nome}”. Se não ouviu, escolha outra saída.`;
+    dica.hidden = false;
+  });
 
   const escala = $("ajuste-escala-interface");
   escala.addEventListener("input", () => {
@@ -5150,6 +5203,7 @@ function fecharAjustes() {
   $("ajustes").classList.add("oculto");
   motor.medir(null);
   motor.monitorarEntrada(false);
+  pararDiagnosticoDoMicrofone();
   $("ajuste-retorno-microfone").checked = false;
 
   // Fora de um canal de voz, o microfone aberto era só para o teste.
@@ -5245,6 +5299,8 @@ async function observarNivel() {
   const marca = $("medidor-limiar");
 
   motor.medir((dados) => {
+    maiorNivelNoTeste = Math.max(maiorNivelNoTeste, dados.nivel);
+    if (dados.nivel > -75) $("aviso-microfone-sem-sinal").hidden = true;
     barra.style.width = `${posicaoNoMedidor(dados.nivel)}%`;
     piso.style.width = `${posicaoNoMedidor(dados.piso)}%`;
     // O limiar mostrado é o que a porta usa de fato: o pedido pelo deslizante

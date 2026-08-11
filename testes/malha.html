@@ -18,7 +18,6 @@
       import { Sinal } from "../src/sinal.js";
       import { Malha, acharPerfilDeTela, ajustarOpus, restricoesDoPerfil } from "../src/rtc.js";
       import { AUDIO_PADRAO, criarLimitador, restricoesDoMicrofone } from "../src/audio.js";
-      import { RNNoiseNode } from "../src/rnnoise.mjs";
 
       const entregar = (dados, rota = "/resultado") =>
         fetch(`http://127.0.0.1:8123${rota}`, {
@@ -310,13 +309,14 @@
         conferir(/a=fmtp:\d+ .*cbr=0/.test(sdpAna), "o Opus usa VBR para gastar bits onde a voz precisa");
         conferir(/a=fmtp:\d+ .*stereo=0/.test(sdpAna), "o SDP declara voz mono explicitamente");
         conferir(audioAna.getAudioTracks()[0].contentHint === "speech", "a trilha é declarada como fala");
-        const capturaComRnnoise = restricoesDoMicrofone(AUDIO_PADRAO, true);
+        const capturaPadrao = restricoesDoMicrofone(AUDIO_PADRAO);
         conferir(
-          capturaComRnnoise.echoCancellation === true &&
-            capturaComRnnoise.noiseSuppression === false &&
-            capturaComRnnoise.channelCount === 1 &&
-            capturaComRnnoise.sampleRate === 48000,
-          "RNNoise mantém eco ativo sem empilhar dois supressores"
+          capturaPadrao.echoCancellation === true &&
+            capturaPadrao.noiseSuppression === true &&
+            capturaPadrao.autoGainControl === true &&
+            capturaPadrao.channelCount === 1 &&
+            capturaPadrao.sampleRate === 48000,
+          "a captura ativa os filtros nativos e mantém voz mono em 48 kHz"
         );
 
         const remetenteDeAudio = (p) =>
@@ -688,60 +688,6 @@
           conferir(false, `getUserMedia falhou: ${erro?.name ?? erro}`);
         }
 
-        titulo("Redução neural de ruído");
-        try {
-          const contextoRn = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
-          const scriptRn = new URL("../src/rnnoise.worklet.js", location.href).href;
-          const binarioRn = new URL("../src/rnnoise.wasm", location.href).href;
-          const moduloRn = fetch(binarioRn)
-            .then((resposta) => resposta.arrayBuffer())
-            .then((bytes) => WebAssembly.compile(bytes));
-          const recursosRn = [scriptRn, moduloRn];
-          await RNNoiseNode.register(contextoRn, recursosRn);
-          const rnnoise = new RNNoiseNode(contextoRn);
-          const fonteRn = contextoRn.createOscillator();
-          const mudo = contextoRn.createGain();
-          mudo.gain.value = 0;
-          fonteRn.connect(rnnoise);
-          rnnoise.connect(mudo);
-          mudo.connect(contextoRn.destination);
-          fonteRn.start();
-          await esperar(1200);
-
-          const estadoRn = await new Promise((resolve, reject) => {
-            const limite = setTimeout(() => reject(new Error("RNNoise não respondeu")), 2000);
-            rnnoise.addEventListener(
-              "status",
-              (evento) => {
-                clearTimeout(limite);
-                resolve(evento);
-              },
-              { once: true }
-            );
-            rnnoise.update("stat");
-          });
-          const estatisticas = estadoRn.stat;
-          const metade = estatisticas.length / 2;
-          const tempos = [];
-          for (let i = 0; i < metade; i++) {
-            const intervalo = estatisticas[i];
-            const total = estatisticas[i + metade];
-            if (intervalo > 0 && total >= intervalo) tempos.push(total - intervalo);
-          }
-          tempos.sort((a, b) => a - b);
-          const p95 = tempos[Math.floor((tempos.length - 1) * 0.95)] ?? Infinity;
-          conferir(tempos.length > 100, "RNNoise processa áudio continuamente no worklet");
-          conferir(
-            p95 < 2.67,
-            `RNNoise cabe no bloco de 2,67 ms (${p95.toFixed(2)} ms no percentil 95)`
-          );
-
-          rnnoise.update(false);
-          fonteRn.stop();
-          await contextoRn.close();
-        } catch (erro) {
-          conferir(false, `RNNoise falhou: ${erro?.message ?? erro}`);
-        }
       } catch (erro) {
         falhas++;
         conferir(false, `erro inesperado: ${erro?.message ?? erro}`);

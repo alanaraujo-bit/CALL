@@ -5,8 +5,8 @@ texto**, **chat de voz** e **transmissão de tela**. Interface inteiramente em
 português do Brasil.
 
 Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
-Electron. RNNoise e o cliente de mídia são materializados no `frontendDist`
-durante o build, sem depender de CDN em tempo de execução.
+Electron. O cliente de mídia é materializado no `frontendDist` durante o
+build, sem depender de CDN em tempo de execução.
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
 instala com um clique, sem sair da tela. Quem responder "Depois" continua
@@ -113,10 +113,10 @@ canais. O convite dá acesso à conversa, não à estrutura.
 
 A engrenagem ao lado do seu nome, no canto inferior esquerdo, abre os ajustes.
 
-Em **Voz**: microfone e saída de som, volume de entrada e geral, redução neural
-de ruído com **RNNoise** rodando localmente e uma porta adaptativa que cala o
-que ainda sobra entre as falas sem aprender a própria voz como ruído. O medidor
-ao vivo mostra nível, piso da sala e ponto de abertura. Limitadores transparentes
+Em **Voz**: microfone e saída de som, volume de entrada e geral, filtros nativos
+do WebView2 para eco, ruído e ganho, mais uma porta adaptativa que cala o que
+ainda sobra entre as falas sem aprender a própria voz como ruído. O medidor ao
+vivo mostra nível, piso da sala e ponto de abertura. Limitadores transparentes
 protegem tanto o envio quanto a soma de várias pessoas contra clipping. A voz
 usa Opus mono full-band, VBR, FEC e prioridade alta; a qualidade vai de 32 a
 128 kbps, com 96 kbps como padrão para novas instalações.
@@ -280,7 +280,7 @@ dependências do servidor não viajam no sidecar do aplicativo.
 | `src/sons.js` | O sino de entrada e saída, sintetizado |
 | `src/audio.js` | Motor de áudio: voz, soundboard e saídas por pessoa |
 | `src/porta-de-ruido.js` | Porta adaptativa, ganho e medição na thread de áudio |
-| `scripts/preparar-audio.mjs` | Leva RNNoise/WASM do pacote npm ao frontend do instalador |
+| `scripts/preparar-audio.mjs` | Leva o cliente LiveKit do pacote npm ao frontend do instalador |
 | `src/tempo.js` | Tempo em call e histórico de quem passou por ela |
 | `src/atividade.js` | O que mostrar do programa em uso, e com que calma |
 | `src/emojis.js` | Emojis Unicode e os cinco emojis próprios do CALL |
@@ -326,6 +326,7 @@ powershell -File testes/rodar-malha.ps1      # malha WebRTC e áudio no motor re
 powershell -File testes/rodar-portal.ps1     # entrar e criar conta na aplicação real
 powershell -File testes/rodar-perfil.ps1     # perfil, mascotes e cartão de alguém
 powershell -File testes/rodar-interface.ps1  # painel de ajustes na aplicação real
+powershell -File testes/rodar-motor-audio.ps1 # captura, filtros, porta e trilha enviada
 powershell -File testes/rodar-livekit-nuvem.ps1 # SFU e falantes ativos na infraestrutura real
 powershell -File testes/rodar-sons.ps1       # o sino, medido na amostra renderizada
 powershell -File testes/duas-instancias.ps1  # duas janelas reais no mesmo grupo

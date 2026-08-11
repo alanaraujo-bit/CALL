@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head><meta charset="UTF-8" /><title>Teste do motor de áudio</title></head>
+  <body>
+    <script type="module">
+      import { AUDIO_PADRAO, MotorDeAudio } from "../src/audio.js";
+
+      const relatorio = [];
+      let falhas = 0;
+      const conferir = (condicao, descricao) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: Boolean(condicao), descricao });
+      };
+      const entregar = (dados) =>
+        fetch("http://127.0.0.1:8123/resultado", {
+          method: "POST",
+          body: JSON.stringify(dados, null, 2),
+        }).catch(() => {});
+      const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const microfoneReal = new URLSearchParams(location.search).get("microfone") === "real";
+      const testarReabertura = new URLSearchParams(location.search).get("reabrir") === "sim";
+
+      const motor = new MotorDeAudio();
+      const niveis = [];
+      const pararNivel = motor.assinarNivel((dados) => niveis.push(dados));
+      const contextoEntrada = new AudioContext({ sampleRate: 48000 });
+      const getUserMediaReal = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      let fonteFala = null;
+      let fluxoEntrada;
+
+      if (microfoneReal) {
+        fluxoEntrada = await getUserMediaReal({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: false,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 48000,
+          },
+          video: false,
+        });
+      } else {
+        const respostaFala = await fetch("/target/teste-fala.wav");
+        const fala = await contextoEntrada.decodeAudioData(await respostaFala.arrayBuffer());
+        fonteFala = contextoEntrada.createBufferSource();
+        const destinoFala = contextoEntrada.createMediaStreamDestination();
+        fonteFala.buffer = fala;
+        fonteFala.loop = true;
+        fonteFala.connect(destinoFala);
+        fonteFala.start();
+        fluxoEntrada = destinoFala.stream;
+      }
+
+      // Mede a captura antes de qualquer filtro e entrega a mesma trilha ao
+      // motor. Assim um único ensaio mostra exatamente em qual lado o sinal some.
+      const fonteEntrada = contextoEntrada.createMediaStreamSource(fluxoEntrada);
+      const analisadorEntrada = contextoEntrada.createAnalyser();
+      analisadorEntrada.fftSize = 512;
+      const consumidorEntrada = contextoEntrada.createGain();
+      consumidorEntrada.gain.value = 0;
+      fonteEntrada.connect(analisadorEntrada);
+      analisadorEntrada.connect(consumidorEntrada);
+      consumidorEntrada.connect(contextoEntrada.destination);
+      navigator.mediaDevices.getUserMedia = async () =>
+        new MediaStream(fluxoEntrada.getAudioTracks().map((trilha) => trilha.clone()));
+
+      try {
+        if (testarReabertura) {
+          const primeiroMotor = new MotorDeAudio();
+          await primeiroMotor.aplicar(AUDIO_PADRAO);
+          await primeiroMotor.abrirMicrofone();
+          await esperar(800);
+          await primeiroMotor.encerrar();
+        }
+        await motor.aplicar(AUDIO_PADRAO);
+        const fluxo = await motor.abrirMicrofone();
+        conferir(fluxo.getAudioTracks().length === 1, "o motor entrega uma trilha tratada");
+
+        // Consumir a trilha exatamente como o LiveKit/WebRTC faz. O ganho em
+        // zero mantém o teste inaudível, mas deixa o grafo sendo renderizado.
+        const contexto = await motor.contexto();
+        const fonte = contexto.createMediaStreamSource(fluxo);
+        const analisador = contexto.createAnalyser();
+        analisador.fftSize = 512;
+        const silencioso = contexto.createGain();
+        silencioso.gain.value = 0;
+        fonte.connect(analisador);
+        analisador.connect(silencioso);
+        silencioso.connect(contexto.destination);
+
+        const dados = new Uint8Array(analisador.fftSize);
+        const dadosEntrada = new Uint8Array(analisadorEntrada.fftSize);
+        let pico = 0;
+        let picoEntrada = 0;
+        const fim = performance.now() + (microfoneReal ? 10_000 : 2500);
+        while (performance.now() < fim) {
+          analisador.getByteTimeDomainData(dados);
+          analisadorEntrada.getByteTimeDomainData(dadosEntrada);
+          for (const amostra of dados) pico = Math.max(pico, Math.abs(amostra - 128));
+          for (const amostra of dadosEntrada)
+            picoEntrada = Math.max(picoEntrada, Math.abs(amostra - 128));
+          await esperar(30);
+        }
+
+        const trilhaEntrada = fluxoEntrada.getAudioTracks()[0];
+        conferir(
+          picoEntrada > 2,
+          `o microfone bruto entrega áudio (pico ${picoEntrada}; ${trilhaEntrada?.label || "sem rótulo"})`
+        );
+        conferir(pico > 2, `a cadeia completa mantém áudio na trilha (pico ${pico})`);
+        conferir(niveis.length > 10, `a porta reporta nível continuamente (${niveis.length} leituras)`);
+        conferir(
+          niveis.some((item) => item.nivel > -70),
+          `o detector recebe sinal (${Math.max(...niveis.map((item) => item.nivel)).toFixed(1)} dB)`
+        );
+
+        fonte.disconnect();
+        analisador.disconnect();
+        silencioso.disconnect();
+      } catch (erro) {
+        conferir(false, `execução sem exceções: ${erro?.message ?? erro}`);
+      } finally {
+        navigator.mediaDevices.getUserMedia = getUserMediaReal;
+        fonteFala?.stop();
+        fonteEntrada.disconnect();
+        analisadorEntrada.disconnect();
+        consumidorEntrada.disconnect();
+        await contextoEntrada.close().catch(() => {});
+        pararNivel();
+        await motor.encerrar().catch(() => {});
+      }
+
+      await entregar({ falhas, relatorio });
+      document.title = falhas ? "FALHOU" : "PASSOU";
+      window.close();
+    </script>
+  </body>
+</html>

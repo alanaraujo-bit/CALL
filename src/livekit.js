@@ -46,7 +46,7 @@ export class SalaLiveKit {
     if (dtx !== undefined) this.#dtx = dtx;
 
     // Os parâmetros são aplicados na publicação. Republicar é necessário para
-    // uma mudança feita durante a call; a trilha de RNNoise continua a mesma.
+    // uma mudança feita durante a call; a trilha tratada continua a mesma.
     if (mudou && this.#sala && this.#trilhaAudio) {
       const anterior = this.#publicacaoAudio;
       this.#publicacaoAudio = null;

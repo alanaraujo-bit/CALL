@@ -3964,6 +3964,10 @@ svg {
   margin-top: 16px;
 }
 
+.ajuste__dica--erro {
+  color: var(--perigo);
+}
+
 .ajuste__escala-rodape {
   display: flex;
   align-items: center;

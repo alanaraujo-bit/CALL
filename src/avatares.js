@@ -392,7 +392,8 @@ export function pintarMarcaDeGrupo(elemento, { nome, foto } = {}) {
  * `foto` é sempre local — a conta de outra pessoa nunca traz esse campo,
  * porque o servidor não guarda foto nenhuma ainda, só o mascote. Por isso ela
  * só aparece pintada em avatares que representam a própria pessoa usando o
- * CALL neste computador, nunca em quem está do outro lado do grupo.
+ * CALL neste computador — o rodapé, a linha dela na lista e as mensagens que
+ * ela mesma escreveu —, nunca em quem está do outro lado do grupo.
  */
 export function pintarAvatar(elemento, { avatar, apelido, foto } = {}) {
   elemento.classList.toggle("avatar--foto", Boolean(foto));
