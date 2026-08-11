@@ -170,6 +170,106 @@ const nave = { exe: "nave", nome: "Navegador" };
   igual(anunciado.length, 0, "sem nada em foco, nada é anunciado");
 }
 
+/* ─── Perder o foco não é ter fechado ────────────────────────────── */
+
+console.log("\nQuando o programa perde o foco mas continua aberto");
+
+{
+  // Sem `processoAtivo`, o comportamento é o de sempre: primeiro plano vazio
+  // já vale como fechado. Isto é o que garante que nada dos blocos acima
+  // mudou de comportamento.
+  const { vigia, anunciado } = comLeitura([jogo, jogo, null]);
+  await vigia.olhar();
+  await vigia.olhar();
+  await vigia.olhar();
+  igual(anunciado.join(","), "Meu Jogo,", "sem checagem de processo, sumir do foco ainda apaga na hora");
+}
+
+{
+  // Alt-Tab para o próprio CALL: o primeiro plano fica vazio, mas o jogo
+  // continua rodando atrás. `processoAtivo` diz que sim, e o anúncio fica.
+  let ainda = true;
+  const anunciado = [];
+  const vigia = new Vigia({
+    ler: async () => (ainda === "foco" ? jogo : null),
+    aoMudar: (v) => anunciado.push(v),
+    processoAtivo: async () => ainda === true,
+  });
+  ainda = "foco";
+  await vigia.olhar();
+  await vigia.olhar(); // anuncia o jogo
+  ainda = true; // saiu do foco, mas o processo continua de pé
+  await vigia.olhar();
+  await vigia.olhar();
+  igual(anunciado.join(","), "Meu Jogo", "só houve o anúncio de chegada");
+  igual(vigia.atual, "Meu Jogo", "o jogo continua no ar mesmo fora do foco");
+}
+
+{
+  // O mesmo alt-tab, só que agora o jogo foi fechado de verdade enquanto
+  // estava fora do foco — a próxima leitura tem de perceber e apagar.
+  let fase = "foco";
+  const anunciado = [];
+  const vigia = new Vigia({
+    ler: async () => (fase === "foco" ? jogo : null),
+    aoMudar: (v) => anunciado.push(v),
+    processoAtivo: async () => fase === "aberto",
+  });
+  await vigia.olhar();
+  await vigia.olhar(); // anuncia o jogo
+  fase = "aberto"; // saiu do foco, mas ainda está aberto
+  await vigia.olhar();
+  igual(anunciado.length, 1, "sair do foco sozinho não apaga nada");
+  fase = "fechado"; // fechou de vez
+  igual(await vigia.olhar(), true, "fechar de verdade apaga, mesmo fora do foco");
+  igual(anunciado.at(-1), null, "e o que se anuncia é a ausência");
+}
+
+{
+  // Trocar de programa de verdade continua valendo mesmo depois de um
+  // período sem foco: não é preciso o jogo "fechar" para o navegador assumir.
+  let fase = "jogo-foco";
+  const anunciado = [];
+  const vigia = new Vigia({
+    ler: async () => {
+      if (fase === "jogo-foco") return jogo;
+      if (fase === "fora") return null;
+      return nave;
+    },
+    aoMudar: (v) => anunciado.push(v),
+    processoAtivo: async () => fase === "fora",
+  });
+  await vigia.olhar();
+  await vigia.olhar(); // anuncia o jogo
+  fase = "fora";
+  await vigia.olhar(); // sem foco, mas o jogo ainda está aberto — continua
+  fase = "navegador";
+  await vigia.olhar(); // candidato
+  await vigia.olhar(); // confirma a troca
+  igual(anunciado.join(" → "), "Meu Jogo → Navegador", "uma troca de verdade substitui quem estava sticky");
+}
+
+{
+  // A checagem de processo também pode falhar — o mesmo comando fora do
+  // aplicativo, ou uma leitura que deu errado no meio do caminho. Não é
+  // motivo para apagar quem estava no ar, do mesmo jeito que uma leitura
+  // que falha não apaga.
+  let emFoco = true;
+  const anunciado = [];
+  const vigia = new Vigia({
+    ler: async () => (emFoco ? jogo : null),
+    aoMudar: (v) => anunciado.push(v),
+    processoAtivo: async () => {
+      throw new Error("comando indisponível");
+    },
+  });
+  await vigia.olhar();
+  await vigia.olhar(); // anuncia o jogo
+  emFoco = false;
+  igual(await vigia.olhar(), false, "uma checagem de processo que falha não anuncia nada");
+  igual(vigia.atual, "Meu Jogo", "e não apaga o que já estava no ar");
+}
+
 {
   // Fora do aplicativo o comando não existe. Uma falha de leitura não pode
   // derrubar nada nem apagar o que já estava anunciado.

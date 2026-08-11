@@ -23,6 +23,13 @@ import {
 
 const $ = (id) => document.getElementById(id);
 
+/** Substitui o ícone do programa quando não há um — a maioria dos casos,
+ *  já que só quem foi cadastrado a mão em `atividade.js` ganha imagem. */
+const GLIFO_ATIVIDADE =
+  '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="10" rx="1.5"/><path d="M7.5 17h5M10 14v3"/></svg>';
+/** A seta que diz "isto abre" — só aparece quando o quadro é clicável. */
+const GLIFO_SETA = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 7.5l4.5 4.5 4.5-4.5"/></svg>';
+
 export const APELIDO_MAX = 24;
 /** Uma linha, não uma página. O cartão tem largura fixa e a lista, não. */
 export const BIO_MAX = 160;
@@ -841,7 +848,16 @@ export function iniciarOnboarding(atual) {
  * botões — o ajuste de volume mora aqui, que é onde se está pensando na
  * pessoa, e não num menu de contexto que ninguém descobre.
  */
-export function mostrarCartao({ apelido, avatar, bio, atividade, atividadeIcone, etiquetas = [], acoes = [] }) {
+export function mostrarCartao({
+  apelido,
+  avatar,
+  bio,
+  atividade,
+  atividadeIcone,
+  etiquetas = [],
+  acoes = [],
+  buscarAtividade = null,
+}) {
   const cortina = $("cartao-dialogo");
   const mascote = acharAvatar(avatar);
 
@@ -869,18 +885,114 @@ export function mostrarCartao({ apelido, avatar, bio, atividade, atividadeIcone,
 
   $("cartao-vazio").hidden = Boolean(bio);
 
-  const linhaAtividade = $("cartao-atividade");
-  linhaAtividade.textContent = "";
-  linhaAtividade.hidden = !atividade;
+  // O quadro de atividade — ícone, rótulo pequeno e nome em destaque — em vez
+  // de uma linha de texto solta, porque é o "jogando agora" do cartão: quem
+  // olha o perfil de alguém já espera achar isto num bloco próprio, como no
+  // Discord, e não perdido entre a bio e os botões.
+  const caixaAtividade = $("cartao-atividade");
+  caixaAtividade.textContent = "";
+  caixaAtividade.hidden = !atividade;
   if (atividade) {
+    const icone = document.createElement("span");
+    icone.className = "cartao__atividade-icone";
     if (atividadeIcone) {
-      const icone = document.createElement("img");
-      icone.className = "cartao__atividade-icone";
-      icone.src = atividadeIcone;
-      icone.alt = "";
-      linhaAtividade.append(icone);
+      const imagem = document.createElement("img");
+      imagem.src = atividadeIcone;
+      imagem.alt = "";
+      icone.append(imagem);
+    } else {
+      // A maioria dos programas nunca ganhou um ícone — só quem foi
+      // cadastrado a mão tem um (`atividade.js`) —, e o quadro não pode ficar
+      // pela metade só porque falta essa parte.
+      icone.classList.add("cartao__atividade-icone--generico");
+      icone.innerHTML = GLIFO_ATIVIDADE;
     }
-    linhaAtividade.append(document.createTextNode(`Usando ${atividade}`));
+
+    const texto = document.createElement("span");
+    texto.className = "cartao__atividade-texto";
+    const rotulo = document.createElement("span");
+    rotulo.className = "cartao__atividade-rotulo";
+    rotulo.textContent = "Usando";
+    const nome = document.createElement("span");
+    nome.className = "cartao__atividade-nome";
+    nome.textContent = atividade;
+    nome.title = atividade;
+    texto.append(rotulo, nome);
+
+    // Sem uma busca para acionar, o cabeçalho é um `div` — mesma linha,
+    // mesmo espaçamento, só sem seta e sem nada para clicar.
+    const cabecalho = document.createElement(buscarAtividade ? "button" : "div");
+    cabecalho.className = "cartao__atividade-cabecalho";
+    if (buscarAtividade) cabecalho.type = "button";
+    cabecalho.append(icone, texto);
+
+    if (!buscarAtividade) {
+      caixaAtividade.append(cabecalho);
+    } else {
+      const seta = document.createElement("span");
+      seta.className = "cartao__atividade-seta";
+      seta.innerHTML = GLIFO_SETA;
+      cabecalho.append(seta);
+
+      const detalhe = document.createElement("div");
+      detalhe.className = "cartao__atividade-detalhe";
+      detalhe.hidden = true;
+
+      let carregado = false;
+      cabecalho.addEventListener("click", async () => {
+        const abrindo = detalhe.hidden;
+        detalhe.hidden = !abrindo;
+        cabecalho.classList.toggle("cartao__atividade-cabecalho--aberto", abrindo);
+        if (!abrindo || carregado) return;
+
+        carregado = true;
+        detalhe.textContent = "";
+        const carregando = document.createElement("p");
+        carregando.className = "cartao__atividade-carregando";
+        carregando.textContent = "Buscando…";
+        detalhe.append(carregando);
+
+        const resumo = await buscarAtividade();
+        // A pessoa pode ter fechado o cartão inteiro enquanto a busca ainda
+        // estava no ar — escrever num elemento que já saiu da tela não faz
+        // mal, mas não custa nada conferir antes.
+        if (!detalhe.isConnected) return;
+
+        detalhe.textContent = "";
+        if (!resumo) {
+          const vazio = document.createElement("p");
+          vazio.className = "cartao__atividade-carregando";
+          vazio.textContent = "Não encontramos nada sobre isso.";
+          detalhe.append(vazio);
+          return;
+        }
+
+        if (resumo.foto) {
+          const capa = document.createElement("img");
+          capa.className = "cartao__atividade-capa";
+          capa.src = resumo.foto;
+          capa.alt = "";
+          detalhe.append(capa);
+        }
+
+        const corpo = document.createElement("div");
+        corpo.className = "cartao__atividade-corpo";
+
+        const paragrafo = document.createElement("p");
+        paragrafo.className = "cartao__atividade-resumo";
+        paragrafo.textContent = resumo.texto;
+        corpo.append(paragrafo);
+
+        const fonte = document.createElement("span");
+        fonte.className = "cartao__atividade-fonte";
+        fonte.textContent = "Wikipédia";
+        corpo.append(fonte);
+
+        detalhe.append(corpo);
+      });
+
+      caixaAtividade.append(cabecalho, detalhe);
+    }
   }
 
   const area = $("cartao-acoes");

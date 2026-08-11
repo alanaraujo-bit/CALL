@@ -1,6 +1,6 @@
 [package]
 name = "call"
-version = "0.10.3"
+version = "0.11.0"
 description = "Comunicacao em grupo com voz e transmissao de tela"
 authors = ["CALL"]
 edition = "2021"
@@ -34,6 +34,15 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # pacote de atualizacao e o instalador .exe, nao um arquivo compactado. As duas
 # opcoes padrao custariam centenas de KB no instalador sem servir a nada aqui.
 tauri-plugin-updater = { version = "2", default-features = false, features = [
+  "native-tls",
+] }
+# Resumo e foto de uma atividade, buscados na Wikipedia quando a pessoa clica
+# no cartao de alguem — a unica chamada deste app a um servidor que nao e o
+# seu proprio nem o LiveKit. Roda do lado do Tauri, e nao do `fetch` da
+# pagina: e o que permite escopar exatamente os hosts da Wikipedia nas
+# capabilities, sem abrir a CSP da janela para a internet inteira. Mesma
+# escolha de TLS que o `tauri-plugin-updater` ja faz, pelo mesmo motivo.
+tauri-plugin-http = { version = "2", default-features = false, features = [
   "native-tls",
 ] }
 serde = { version = "1", features = ["derive"] }

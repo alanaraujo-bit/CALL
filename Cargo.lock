@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "call"
-version = "0.10.3"
+version = "0.11.0"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.2.17",
@@ -429,6 +429,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-deep-link",
  "tauri-plugin-global-shortcut",
+ "tauri-plugin-http",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
@@ -806,6 +807,12 @@ name = "data-encoding"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
+
+[[package]]
+name = "data-url"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "dbus"
@@ -3712,9 +3719,11 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-rustls",
+ "hyper-tls",
  "hyper-util",
  "js-sys",
  "log",
+ "native-tls",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -3725,6 +3734,7 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls",
  "tower",
  "tower-http",
@@ -4926,6 +4936,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-fs"
+version = "2.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7ecc274121aca0c036a2b42d1cbe83d368d348f54e0bb8a735c2b1548e8f371"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "glob",
+ "log",
+ "objc2-foundation",
+ "percent-encoding",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "tauri",
+ "tauri-plugin",
+ "tauri-utils",
+ "thiserror 2.0.19",
+ "toml 1.1.4+spec-1.1.0",
+ "url",
+]
+
+[[package]]
 name = "tauri-plugin-global-shortcut"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4938,6 +4972,28 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "tauri-plugin-http"
+version = "2.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5bd512048e1985b7ec78f96d99083e2ddaf7e0d906b2b63c44ce5bb8b894067"
+dependencies = [
+ "data-url",
+ "http",
+ "regex",
+ "reqwest 0.12.28",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "tauri-plugin-fs",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
+ "urlpattern",
 ]
 
 [[package]]

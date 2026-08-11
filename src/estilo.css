@@ -5033,24 +5033,155 @@ textarea.campo__area {
   margin-top: 7px;
 }
 
+/* O quadro "usando agora" — mesma ideia do "jogando" do Discord: uma
+   superfície própria, discreta, colada nos botões de ação no fim do cartão.
+   Coluna, e não linha: quando há busca, uma capa de banner e um parágrafo
+   crescem abaixo do cabeçalho, e `overflow: hidden` é o que deixa a capa
+   preencher a largura toda sem estourar os cantos arredondados. */
 .cartao__atividade {
-  margin-top: 8px;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+  overflow: hidden;
+}
+
+.cartao__atividade-cabecalho {
+  width: 100%;
+  padding: 9px 10px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.cartao__atividade-cabecalho {
+  cursor: var(--cursor-clicavel);
+  transition: background var(--transicao);
+}
+
+button.cartao__atividade-cabecalho:hover {
+  background: var(--superficie-3);
+}
+
+.cartao__atividade-seta {
+  flex: none;
+  margin-left: auto;
+  transition: transform 160ms ease;
+}
+
+.cartao__atividade-seta svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--texto-3);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cartao__atividade-cabecalho--aberto .cartao__atividade-seta {
+  transform: rotate(180deg);
+}
+
+/* O painel que a seta abre: capa em largura cheia, texto com respiro embaixo. */
+.cartao__atividade-detalhe {
+  border-top: 1px solid var(--borda);
+  animation: surgir 130ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.cartao__atividade-capa {
+  display: block;
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+}
+
+.cartao__atividade-corpo {
+  padding: 10px 12px 11px;
+}
+
+.cartao__atividade-resumo {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--texto-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  user-select: text;
+  cursor: text;
+}
+
+.cartao__atividade-fonte {
+  display: block;
+  margin-top: 7px;
+  font-size: 10.5px;
+  color: var(--texto-3);
+}
+
+.cartao__atividade-carregando {
+  padding: 10px 12px 11px;
   font-size: 12px;
   color: var(--texto-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-style: italic;
 }
 
 .cartao__atividade-icone {
   flex: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--superficie-3);
+  display: grid;
+  place-items: center;
+}
+
+.cartao__atividade-icone img {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
+}
+
+.cartao__atividade-icone--generico svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--texto-3);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cartao__atividade-texto {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cartao__atividade-rotulo {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--texto-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cartao__atividade-nome {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--texto);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cartao__bio {

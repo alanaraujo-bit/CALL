@@ -9,6 +9,14 @@
       "identifier": "shell:allow-spawn",
       "allow": [{ "name": "binaries/sinalizacao", "sidecar": true, "args": true }]
     },
-    "shell:allow-kill"
+    "shell:allow-kill",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://pt.wikipedia.org/*" },
+        { "url": "https://en.wikipedia.org/*" },
+        { "url": "https://upload.wikimedia.org/*" }
+      ]
+    }
   ]
 }

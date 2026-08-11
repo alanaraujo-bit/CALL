@@ -10,6 +10,7 @@ use tauri_plugin_shell::ShellExt;
 
 mod atividade;
 mod google;
+mod resumo;
 mod tela;
 use tela::AudioAtivo;
 
@@ -331,6 +332,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_http::init())
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -423,7 +425,9 @@ pub fn run() {
             google::google_autenticar,
             tela::iniciar_audio_da_tela,
             tela::parar_audio_da_tela,
-            atividade::atividade_em_foco
+            atividade::atividade_em_foco,
+            atividade::atividade_ainda_aberta,
+            resumo::resumo_de_atividade
         ])
         .build(tauri::generate_context!())
         .expect("Falha ao iniciar a aplicação.");

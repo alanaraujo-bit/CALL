@@ -10,6 +10,7 @@ import {
 import { MotorDeAudio, AUDIO_PADRAO, BITRATES_AUDIO, listarDispositivos } from "./audio.js";
 import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
 import { Vigia } from "./atividade.js";
+import { buscarResumoDeAtividade } from "./resumo.js";
 import { avatarSugerido, pintarAvatar, pintarMarcaDeGrupo } from "./avatares.js";
 import { CATEGORIAS_EMOJI, TODOS_EMOJIS, TOKEN_EMOJI, acharEmoji, elementoDeEmoji } from "./emojis.js";
 import {
@@ -192,6 +193,9 @@ const historicoDaCall = new HistoricoDaCall();
  */
 const vigia = new Vigia({
   ler: () => invocar("atividade_em_foco"),
+  // O programa continua anunciado enquanto está aberto, mesmo sem estar em
+  // primeiro plano — perder o foco para o próprio CALL não é ter fechado.
+  processoAtivo: (exe) => invocar("atividade_ainda_aberta", { exe }),
   personalizados: () => estado.programasPersonalizados,
   aoMudar: (nome) => {
     estado.minhaAtividade = nome;
@@ -572,6 +576,13 @@ function abrirMenu(ancora, itens) {
 
   // Posiciona só depois de visível: um elemento oculto não tem medidas, e sem
   // elas o menu escaparia da janela nas bordas de baixo e da direita.
+  //
+  // `getBoundingClientRect` e `innerWidth/innerHeight` vêm em pixel visual —
+  // já multiplicado pela escala da interface (`zoom` no `<html>`) —, mas
+  // `style.left/top` é lido em pixel local, antes dessa mesma multiplicação.
+  // Sem dividir de volta aqui, o menu marca a posição certa e o navegador a
+  // estica de novo, e ele sai da tela conforme a escala aumenta.
+  const escala = estado.escalaInterface || 1;
   const caixa = ancora.getBoundingClientRect();
   const minha = menu.getBoundingClientRect();
   const x = Math.min(caixa.left, window.innerWidth - minha.width - 8);
@@ -579,8 +590,8 @@ function abrirMenu(ancora, itens) {
     caixa.bottom + minha.height + 8 > window.innerHeight
       ? caixa.top - minha.height - 4
       : caixa.bottom + 4;
-  menu.style.left = `${Math.max(8, x)}px`;
-  menu.style.top = `${Math.max(8, y)}px`;
+  menu.style.left = `${Math.max(8, x) / escala}px`;
+  menu.style.top = `${Math.max(8, y) / escala}px`;
 
   setTimeout(() => {
     document.addEventListener("click", fecharMenu, { once: true });
@@ -643,12 +654,18 @@ function abrirSeletorDeEmoji(ancora, aoEscolher) {
 
   // Acima da âncora por padrão — é onde a mão já está, no campo de escrever
   // ou no botão de reagir de uma mensagem — e só desce se não couber ali.
+  //
+  // Mesma conversão de `abrirMenu`: as medidas saem em pixel visual (já
+  // multiplicado pela escala da interface), e `style.left/top` espera pixel
+  // local — sem dividir pela escala aqui, o cartão de emoji nasce cada vez
+  // mais deslocado da âncora conforme a interface aumenta.
+  const escala = estado.escalaInterface || 1;
   const caixa = ancora.getBoundingClientRect();
   const minha = seletor.getBoundingClientRect();
   const x = Math.min(caixa.left, window.innerWidth - minha.width - 8);
   const y = caixa.top - minha.height - 8 < 0 ? caixa.bottom + 6 : caixa.top - minha.height - 6;
-  seletor.style.left = `${Math.max(8, x)}px`;
-  seletor.style.top = `${Math.max(8, y)}px`;
+  seletor.style.left = `${Math.max(8, x) / escala}px`;
+  seletor.style.top = `${Math.max(8, y) / escala}px`;
 
   setTimeout(() => {
     document.addEventListener("click", fecharSeletorDeEmoji, { once: true });
@@ -1511,6 +1528,9 @@ function abrirCartaoDe(membro) {
     atividadeIcone: membro.atividadeIcone,
     etiquetas,
     acoes,
+    buscarAtividade: membro.atividade
+      ? () => buscarResumoDeAtividade(membro.atividade, invocar)
+      : null,
   });
 }
 

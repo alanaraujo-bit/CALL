@@ -11,6 +11,10 @@ const tipos = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  // Sem isto, `livekit-client.esm.mjs` chega como `application/octet-stream`
+  // — e o navegador recusa `import()` de módulo com tipo errado, mesmo o
+  // arquivo sendo JavaScript válido.
+  ".mjs": "text/javascript; charset=utf-8",
 };
 const clientes = new Set();
 let avisoPendente = null;

@@ -96,6 +96,28 @@ mod janelas {
         ) -> i32;
         fn CloseHandle(alca: Alca) -> i32;
         fn GetCurrentProcessId() -> u32;
+        fn CreateToolhelp32Snapshot(sinalizadores: u32, processo: u32) -> Alca;
+        fn Process32FirstW(instantaneo: Alca, entrada: *mut EntradaProcesso) -> i32;
+        fn Process32NextW(instantaneo: Alca, entrada: *mut EntradaProcesso) -> i32;
+    }
+
+    const TH32CS_SNAPPROCESS: u32 = 0x00000002;
+
+    /// Layout do `PROCESSENTRY32W` do Windows — só os nomes mudam, os campos e
+    /// a ordem são os da struct do SDK, porque o `Process32*W` lê e escreve
+    /// direto nesta memória pelo tamanho declarado em `dwSize`.
+    #[repr(C)]
+    struct EntradaProcesso {
+        tamanho: u32,
+        uso: u32,
+        pid: u32,
+        heap_padrao: usize,
+        id_modulo: u32,
+        threads: u32,
+        pid_pai: u32,
+        prioridade_base: i32,
+        sinalizadores: u32,
+        nome_exe: [u16; 260],
     }
 
     #[link(name = "version")]
@@ -242,6 +264,51 @@ mod janelas {
             nome: descricao(&caminho).unwrap_or_else(|| arrumar_nome(base)),
         })
     }
+
+    /// Se algum processo em execucao agora tem este nome de executavel (sem
+    /// `.exe`, minusculo) — para dizer se um programa que perdeu o foco
+    /// continua aberto, em vez de ter fechado de verdade.
+    ///
+    /// Percorre todo processo do sistema por instantaneo, e nao so os da
+    /// sessao do usuario: a mesma leitura que `PROCESS_QUERY_LIMITED_INFORMATION`
+    /// já fazia contra um so processo em `caminho_em_foco`, so que aqui listada
+    /// inteira, sem abrir alca nenhuma contra cada uma.
+    pub fn processo_com_exe_existe(alvo: &str) -> bool {
+        unsafe {
+            let instantaneo = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            // Ao contrario do resto deste arquivo, que sinaliza falha com
+            // ponteiro nulo, esta funcao devolve INVALID_HANDLE_VALUE (-1).
+            if instantaneo as isize == -1 {
+                return false;
+            }
+
+            let mut entrada: EntradaProcesso = std::mem::zeroed();
+            entrada.tamanho = std::mem::size_of::<EntradaProcesso>() as u32;
+
+            let mut achou = false;
+            if Process32FirstW(instantaneo, &mut entrada) != 0 {
+                loop {
+                    let fim = entrada
+                        .nome_exe
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entrada.nome_exe.len());
+                    let nome = String::from_utf16_lossy(&entrada.nome_exe[..fim]);
+                    let base = nome.strip_suffix(".exe").or_else(|| nome.strip_suffix(".EXE")).unwrap_or(&nome);
+                    if base.eq_ignore_ascii_case(alvo) {
+                        achou = true;
+                        break;
+                    }
+                    if Process32NextW(instantaneo, &mut entrada) == 0 {
+                        break;
+                    }
+                }
+            }
+
+            CloseHandle(instantaneo);
+            achou
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -249,6 +316,9 @@ mod janelas {
     use super::Atividade;
     pub fn atual() -> Option<Atividade> {
         None
+    }
+    pub fn processo_com_exe_existe(_alvo: &str) -> bool {
+        false
     }
 }
 
@@ -259,9 +329,23 @@ pub fn atividade_em_foco() -> Option<Atividade> {
     janelas::atual()
 }
 
+/// Se o programa anunciado por ultimo ainda esta aberto, mesmo sem estar em
+/// primeiro plano — e o que deixa a atividade no ar durante um alt-tab para
+/// o proprio CALL ou para a area de trabalho, em vez de apagar so porque o
+/// foco saiu de perto.
+#[tauri::command]
+pub fn atividade_ainda_aberta(exe: String) -> bool {
+    janelas::processo_com_exe_existe(&exe.to_lowercase())
+}
+
 #[cfg(test)]
 mod testes {
-    use super::arrumar_nome;
+    use super::{arrumar_nome, atividade_ainda_aberta};
+
+    #[test]
+    fn um_executavel_que_nunca_existiu_nao_e_encontrado() {
+        assert!(!atividade_ainda_aberta("um-executavel-que-nunca-existiu-de-verdade".into()));
+    }
 
     #[test]
     fn separa_as_palavras_grudadas_do_nome_do_arquivo() {
