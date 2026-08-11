@@ -1,7 +1,8 @@
 {
   "name": "call",
-  "version": "0.9.7",
+  "version": "0.10.0",
   "private": true,
+  "type": "module",
   "description": "Aplicativo de comunicacao: grupos, chat de voz e transmissao de tela",
   "scripts": {
     "preparar:audio": "node scripts/preparar-audio.mjs",
@@ -12,6 +13,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "livekit-client": "2.21.0",
     "simple-rnnoise-wasm": "1.1.0"
   },
   "devDependencies": {

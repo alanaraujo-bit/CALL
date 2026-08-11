@@ -15,12 +15,16 @@
 /src/rnnoise.worklet.js
 /src/rnnoise.wasm
 /src/RNNOISE-LICENSE.txt
+/src/livekit-client.esm.mjs
+/src/LIVEKIT-LICENSE.txt
 
 # Saída dos testes: capturas de tela da máquina real e relatórios
 /testes/capturas/
 /testes/resultado.json
 /testes/diagnostico.json
 /testes/dev-*.log
+/testes/render-grupo*.html
+/testes/render-grupo*.png
 
 .vercel
 .env*

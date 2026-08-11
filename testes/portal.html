@@ -127,9 +127,10 @@
           "e o retrato é o mascote sorteado, não um círculo vazio"
         );
 
-        $("entrada-mascotes").children[4].click();
-        await esperar(120);
-        conferir(prefs().avatar === "polvo", `escolher um mascote grava na hora (${prefs().avatar})`);
+        conferir(
+          $("entrada-mascotes") === null,
+          "o cadastro deixa mascote e bio para o onboarding"
+        );
 
         /* ── O medidor de força da senha ─────────────────────────────── */
 
@@ -171,8 +172,28 @@
 
         $("form-criar").requestSubmit();
         conferir(
+          await aguardar(() => !$("onboarding-dialogo").classList.contains("oculto"), 12000),
+          "o cadastro abre o onboarding antes da aplicação"
+        );
+        const polvo = [...$("onboarding-mascotes").children].find((item) =>
+          item.textContent.includes("Polvo")
+        );
+        polvo.click();
+        conferir(
+          polvo.getAttribute("aria-pressed") === "true",
+          "o mascote escolhido fica marcado no onboarding"
+        );
+        $("onboarding-continuar").click();
+        teclar($("onboarding-bio"), "Conversas sem limite de pares");
+        $("onboarding-continuar").click();
+        conferir(
           await aguardar(() => !$("tela-aplicacao").classList.contains("oculto"), 12000),
           "o cadastro abre a aplicação"
+        );
+        conferir(prefs().avatar === "polvo", `o onboarding guarda o mascote (${prefs().avatar})`);
+        conferir(
+          prefs().bio === "Conversas sem limite de pares",
+          "o onboarding guarda a bio"
         );
         conferir(!!sessao()?.token, "e guarda o token da sessão neste computador");
         conferir(

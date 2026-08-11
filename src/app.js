@@ -1,4 +1,5 @@
 import { Sinal } from "./sinal.js";
+import { SalaLiveKit } from "./livekit.js";
 import {
   Malha,
   PERFIS_TELA,
@@ -32,7 +33,7 @@ const invocar = (comando, args) =>
     : Promise.reject(new Error("Recurso disponível apenas no aplicativo."));
 
 const CHAVE = "call.preferencias";
-const VERSAO_ATUAL = "0.9.7";
+const VERSAO_ATUAL = "0.10.0";
 /** Servidor oficial do CALL, hospedado. É o padrão para que ninguém precise
  *  subir nada na própria máquina para conversar com os amigos. */
 const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
@@ -136,6 +137,9 @@ const estado = {
   brilhoCursor: true,
   tamanhoBrilhoCursor: 460,
   intensidadeBrilhoCursor: 100,
+  /** Primeiro cosmético do app; a chave já nasce plural para o dia em que
+   *  boné/banner entrarem ao lado dele. */
+  cursorPersonalizado: true,
   /** A busca periódica pode ser desligada; a verificação manual continua
    * sempre disponível no painel de Atualizações. */
   buscarAtualizacoesAutomaticamente: true,
@@ -228,6 +232,20 @@ const malha = new Malha({
   aoEstado: aoEstadoDaConexao,
 });
 
+const livekit = new SalaLiveKit({
+  aoTrilha: receberTrilha,
+  aoFimDeTrilha: (id, trilha, origem) => {
+    if (trilha.kind === "video") removerTela(id);
+    else if (origem === "screen_share_audio") motor.desligarSaida(`tela:${id}`);
+  },
+  aoEstado: aoEstadoDaConexao,
+});
+
+/** O servidor escolhe o transporte por call. Servidores antigos não enviam
+ * `midia` e continuam usando a malha sem precisar de atualização coordenada. */
+let provedorDeMidia = "malha";
+const midiaAtual = () => (provedorDeMidia === "livekit" ? livekit : malha);
+
 /* ═══ Preferências ══════════════════════════════════════════════ */
 
 function carregarPreferencias() {
@@ -272,6 +290,9 @@ function carregarPreferencias() {
     if (Number.isFinite(bruto.intensidadeBrilhoCursor)) {
       estado.intensidadeBrilhoCursor = Math.min(160, Math.max(20, bruto.intensidadeBrilhoCursor));
     }
+    if (typeof bruto.cursorPersonalizado === "boolean") {
+      estado.cursorPersonalizado = bruto.cursorPersonalizado;
+    }
     if (typeof bruto.buscarAtualizacoesAutomaticamente === "boolean") {
       estado.buscarAtualizacoesAutomaticamente = bruto.buscarAtualizacoesAutomaticamente;
     }
@@ -315,6 +336,7 @@ function carregarPreferencias() {
   if (!estado.avatar) estado.avatar = avatarSugerido(estado.usuario);
   aplicarEscalaDaInterface();
   aplicarPreferenciasDoBrilho();
+  aplicarCursorPersonalizado();
 }
 
 function salvarPreferencias() {
@@ -338,6 +360,7 @@ function salvarPreferencias() {
         brilhoCursor: estado.brilhoCursor,
         tamanhoBrilhoCursor: estado.tamanhoBrilhoCursor,
         intensidadeBrilhoCursor: estado.intensidadeBrilhoCursor,
+        cursorPersonalizado: estado.cursorPersonalizado,
         buscarAtualizacoesAutomaticamente: estado.buscarAtualizacoesAutomaticamente,
         lembreteAtualizacao: estado.lembreteAtualizacao,
         atualizacaoPendente: estado.atualizacaoPendente,
@@ -700,6 +723,12 @@ function aplicarPreferenciasDoBrilho() {
   brilho.style.setProperty("--brilho-tamanho", `${estado.tamanhoBrilhoCursor}px`);
   brilho.style.setProperty("--brilho-intensidade", String(estado.intensidadeBrilhoCursor / 100));
   if (!estado.brilhoCursor) brilho.classList.remove("brilho-cursor--ativo");
+}
+
+/* ═══ Cosméticos ════════════════════════════════════════════════ */
+
+function aplicarCursorPersonalizado() {
+  document.body.classList.toggle("sem-cursor-personalizado", !estado.cursorPersonalizado);
 }
 
 /* ═══ Portal: entrar, criar conta, ou nenhum dos dois ═══════════ */
@@ -1142,7 +1171,10 @@ function prepararAplicacao() {
     e.target.value = "";
   });
 
-  $("ajuste-som-entrada").addEventListener("change", (e) => aoEscolherSomDeEntrada(e.target.value));
+  $("ajuste-som-entrada").addEventListener("change", (e) => {
+    ouvirPreviaDoSomDeEntrada(e.target.value);
+    aoEscolherSomDeEntrada(e.target.value);
+  });
   $("sons-pessoais-adicionar").addEventListener("click", () => $("sons-pessoais-arquivo").click());
   $("sons-pessoais-arquivo").addEventListener("change", (e) => {
     adicionarSomPessoalArquivo(e.target.files[0]);
@@ -1150,6 +1182,15 @@ function prepararAplicacao() {
   });
 
   prepararAjustes();
+
+  // O menu nativo da webview ("Atualizar", "Imprimir", "Salvar como") não tem
+  // nada a ver com o app. Só os nossos menus respondem ao botão direito; em
+  // campos de texto o nativo continua, senão o usuário perde colar.
+  document.addEventListener("contextmenu", (evento) => {
+    if (evento.target.closest?.("input, textarea, [contenteditable=''], [contenteditable='true']")) return;
+    evento.preventDefault();
+  });
+
   document.addEventListener("keydown", (evento) => {
     if (evento.key !== "Escape") return;
     // O perfil e o cartão fecham a si mesmos. Sem esta saída, o Escape deles
@@ -1174,10 +1215,17 @@ function prepararAplicacao() {
   sinal.addEventListener("entrou", (e) => aoEntrar(e.detail.membro));
   sinal.addEventListener("saiu", (e) => aoSair(e.detail.id));
   sinal.addEventListener("grupo", (e) => aoEstrutura(e.detail.grupo));
-  sinal.addEventListener("voz", (e) => aoEntrarNaVoz(e.detail));
+  sinal.addEventListener("voz", (e) => {
+    aoEntrarNaVoz(e.detail).catch((erro) => {
+      console.error("[midia] entrada falhou", erro);
+      avisar("Não foi possível conectar a mídia da call.", "erro");
+    });
+  });
   sinal.addEventListener("entrou-voz", (e) => aoParPorVoz(e.detail));
   sinal.addEventListener("saiu-voz", (e) => aoParDeixarVoz(e.detail));
-  sinal.addEventListener("sinal", (e) => malha.receberSinal(e.detail.de, e.detail.dados));
+  sinal.addEventListener("sinal", (e) => {
+    if (provedorDeMidia === "malha") malha.receberSinal(e.detail.de, e.detail.dados);
+  });
   sinal.addEventListener("estado", (e) => aoEstadoDeMidia(e.detail));
   sinal.addEventListener("perfil", (e) => aoPerfilDeOutro(e.detail));
   sinal.addEventListener("mensagem", (e) => aoMensagem(e.detail.mensagem));
@@ -3186,7 +3234,7 @@ async function entrarNaVoz(canal) {
     // O microfone é pedido ao entrar na voz, e não ao entrar no grupo: ler o
     // histórico de um canal de texto não é motivo para abrir o microfone.
     await pedirMicrofone();
-    sinal.enviar({ tipo: "entrar-voz", canal });
+    sinal.enviar({ tipo: "entrar-voz", canal, transportes: ["livekit", "malha"] });
   } catch (erro) {
     avisar(erro.message ?? String(erro), "erro");
   } finally {
@@ -3195,7 +3243,7 @@ async function entrarNaVoz(canal) {
 }
 
 /** Resposta do servidor a `entrar-voz`: quem já está na sala. */
-function aoEntrarNaVoz({ canal, pares }) {
+async function aoEntrarNaVoz({ canal, pares, midia }) {
   // O microfone é pedido antes de anunciar a entrada, mas entre uma coisa e
   // outra a pessoa pode ter desistido. Entrar sem trilha deixaria todo mundo
   // conectado a alguém permanentemente mudo.
@@ -3207,14 +3255,39 @@ function aoEntrarNaVoz({ canal, pares }) {
   // Trocar de canal desfaz os elos, mas não devolve o microfone: pedi-lo de
   // novo reabriria o dispositivo — e, em alguns sistemas, o diálogo de
   // permissão — no meio de uma troca que deveria ser instantânea.
-  if (estado.canalVoz && estado.canalVoz !== canal) desmontarMalha(false);
+  if (estado.canalVoz && estado.canalVoz !== canal) await desmontarMalha(false);
   estado.canalVoz = canal;
 
   const eu = estado.membros.get(estado.meuId);
   if (eu) eu.canalVoz = canal;
 
   const [trilha] = estado.fluxoMicrofone.getAudioTracks();
-  malha.definirAudioLocal(trilha, estado.fluxoMicrofone);
+  provedorDeMidia = midia?.provedor === "livekit" ? "livekit" : "malha";
+  midiaAtual().definirAudioLocal(trilha, estado.fluxoMicrofone);
+
+  // Os participantes precisam existir antes do connect: as trilhas de quem já
+  // está na sala podem chegar enquanto a promessa de conexão ainda resolve.
+  for (const par of pares) {
+    estado.membros.set(par.id, { ...estado.membros.get(par.id), ...par });
+  }
+
+  if (provedorDeMidia === "livekit") {
+    try {
+      await livekit.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga });
+      await livekit.definirPerfilTela(acharPerfilDeTela(estado.perfilTela));
+      await livekit.entrar(midia);
+    } catch (erro) {
+      console.error("[livekit] conexão falhou", erro);
+      sinal.enviar({ tipo: "sair-voz" });
+      await desmontarMalha();
+      estado.canalVoz = null;
+      if (eu) eu.canalVoz = null;
+      atualizarRodapeDeVoz();
+      redesenhar();
+      avisar("Não foi possível entrar na infraestrutura de mídia.", "erro");
+      return;
+    }
+  }
   observarVoz(estado.meuId, motor.noLocal);
 
   // Trocar de canal é entrar em outra call: o tempo e o histórico recomeçam.
@@ -3223,8 +3296,7 @@ function aoEntrarNaVoz({ canal, pares }) {
   // Quem já estava na sala: eu ofereço a conexão. Quem chegar depois oferece
   // para mim — assim nunca há dois lados ofertando ao mesmo tempo.
   for (const par of pares) {
-    estado.membros.set(par.id, { ...estado.membros.get(par.id), ...par });
-    malha.abrir(par.id, true);
+    if (provedorDeMidia === "malha") malha.abrir(par.id, true);
     // `false`: estas pessoas já estavam aqui, e o servidor não diz desde
     // quando. O tempo delas só pode ser contado a partir de agora.
     historicoDaCall.entrou(par.id, false);
@@ -3243,7 +3315,7 @@ function aoEntrarNaVoz({ canal, pares }) {
 function aoParPorVoz({ membro, canal }) {
   estado.membros.set(membro.id, { ...estado.membros.get(membro.id), ...membro });
   if (canal === estado.canalVoz && membro.id !== estado.meuId) {
-    malha.abrir(membro.id, false);
+    if (provedorDeMidia === "malha") malha.abrir(membro.id, false);
     motor.tocarAviso("entrou");
     // Esta chegada eu vi acontecer, então o tempo dela é exato.
     historicoDaCall.entrou(membro.id, true);
@@ -3439,8 +3511,11 @@ function alternarSoundboard() {
  * daquele grupo, e não existe em nenhum outro — entrar num grupo diferente
  * cai de volta para o sino, em silêncio, sem erro nenhum.
  */
-async function tocarSomDeEntradaPersonalizado() {
-  const pref = estado.conta?.somEntrada;
+async function tocarSomDeEntradaPersonalizado(preferencia) {
+  // Sem argumento vale o som gravado na conta — é o caso de entrar num canal.
+  // Com argumento vale o que foi passado, que é como a prévia do seletor ouve
+  // um som antes de ele ser a escolha de ninguém.
+  const pref = preferencia !== undefined ? preferencia : estado.conta?.somEntrada;
   if (!pref) return;
 
   try {
@@ -3498,6 +3573,28 @@ function preencherSeletorSomEntrada() {
   // som de outro grupo) fica sem seleção visível — o valor real continua "o
   // sino", e é isso que `select.value` cai para quando nada casa.
   select.disabled = !estado.conta;
+}
+
+/**
+ * Toca na hora o som que acabou de ser escolhido no seletor. É a mesma regra
+ * que ligar os sons de aviso já seguia — a descrição escrita não substitui
+ * ouvir —, agora aplicada onde a lista pode ter dezenas de nomes que não
+ * dizem nada sozinhos.
+ *
+ * O sino padrão é a exceção: não existe clipe para ele, é sintetizado, e quem
+ * sabe tocá-lo é o motor.
+ */
+function ouvirPreviaDoSomDeEntrada(valor) {
+  if (!valor) {
+    motor.ouvirAviso("entrei");
+    return;
+  }
+  try {
+    tocarSomDeEntradaPersonalizado(JSON.parse(valor));
+  } catch {
+    // Valor ilegível não vira erro na cara de ninguém: a gravação que vem
+    // logo em seguida já devolve o seletor ao estado real.
+  }
 }
 
 async function aoEscolherSomDeEntrada(valor) {
@@ -3663,12 +3760,14 @@ function sairDaVoz(anunciar) {
 function desmontarMalha(soltarMicrofone = true) {
   pararTransmissao();
   malha.fecharTudo();
+  const fechamentoLiveKit = livekit.fecharTudo();
+  provedorDeMidia = "malha";
 
   for (const id of [...audiosRemotos.keys()]) derrubarPar(id);
   for (const id of [...medidores.keys()]) esquecerVoz(id);
   for (const id of [...telas.keys()]) removerTela(id);
 
-  if (!soltarMicrofone) return;
+  if (!soltarMicrofone) return fechamentoLiveKit;
 
   motor.soltarMicrofone();
   estado.fluxoMicrofone = null;
@@ -3676,8 +3775,9 @@ function desmontarMalha(soltarMicrofone = true) {
 
   // O contexto só é fechado se o painel de ajustes não estiver medindo: fechá-lo
   // no meio de um teste de microfone mataria o medidor que a pessoa está olhando.
-  if (!$("ajustes")?.classList.contains("oculto")) return;
+  if (!$("ajustes")?.classList.contains("oculto")) return fechamentoLiveKit;
   motor.encerrar().catch(() => {});
+  return fechamentoLiveKit;
 }
 
 async function pedirMicrofone() {
@@ -3687,7 +3787,10 @@ async function pedirMicrofone() {
     // O que segue para os pares é a saída tratada, não a do dispositivo: a
     // passa-alta e a porta de ruído já agiram quando o WebRTC recebe a trilha.
     estado.fluxoMicrofone = await motor.abrirMicrofone();
-    await malha.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga });
+    await Promise.all([
+      malha.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga }),
+      livekit.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga }),
+    ]);
     return estado.fluxoMicrofone;
   } catch (erro) {
     console.error("[audio] captura falhou", erro);
@@ -4041,9 +4144,9 @@ function montarPerfisLive() {
       estado.perfilTela = perfil.id;
       salvarPreferencias();
       refletirTransmitirDialogo();
-      refletirAjustes();
-      // Já transmitindo: o teto e a política valem na hora, sem reabrir a
-      // captura — ver a explicação em `montarPerfis`.
+      // Já transmitindo: a trilha nativa aceita novas constraints em voo —
+      // resolução, FPS, bitrate e política de degradação mudam sem pedir a
+      // fonte de novo, então o teto e a política valem na hora.
       if (estado.transmitindo) await aplicarPerfilDeTela(perfil);
     });
     area.append(botao);
@@ -4075,7 +4178,7 @@ async function aplicarPerfilDeTela(perfil) {
     }
     trilhaDeCaptura.contentHint = perfil.dica;
   }
-  await malha.definirPerfilTela(perfil);
+  await midiaAtual().definirPerfilTela(perfil);
 }
 
 /**
@@ -4127,8 +4230,18 @@ async function iniciarCapturaOtimizada(perfil) {
     }
 
     estado.fluxoTela = fluxo;
+    try {
+      await midiaAtual().publicarTela(trilha, fluxo, trilhaDeAudio);
+    } catch (erro) {
+      console.error("[tela] publicação falhou", erro);
+      pararAudioDaTela();
+      fluxo.getTracks().forEach((item) => item.stop());
+      estado.fluxoTela = null;
+      trilhaDeCaptura = null;
+      avisar("Não foi possível publicar a transmissão.", "erro");
+      return;
+    }
     estado.transmitindo = true;
-    malha.publicarTela(trilha, fluxo, trilhaDeAudio);
     mostrarTela(estado.meuId, fluxo, `${estado.apelido} (você)`);
 
     const eu = estado.membros.get(estado.meuId);
@@ -4145,7 +4258,7 @@ async function iniciarCapturaOtimizada(perfil) {
 function pararTransmissao() {
   if (!estado.transmitindo) return;
   estado.transmitindo = false;
-  malha.retirarTela();
+  midiaAtual().retirarTela();
   trilhaDeCaptura = null;
   pararAudioDaTela();
   estado.fluxoTela?.getTracks().forEach((t) => t.stop());
@@ -4290,7 +4403,7 @@ const GLIFO_EXPANDIR =
 const GLIFO_RECOLHER =
   '<path d="M4 9h5V4M15 4v5h5M20 15h-5v5M9 20v-5H4"/>';
 
-function mostrarTela(id, fluxo, rotulo) {
+function mostrarTela(id, fluxo, rotulo, trilhaLiveKit = null) {
   removerTela(id);
 
   const quadro = document.createElement("div");
@@ -4300,7 +4413,8 @@ function mostrarTela(id, fluxo, rotulo) {
   video.autoplay = true;
   video.playsInline = true;
   video.muted = true;
-  video.srcObject = fluxo;
+  if (trilhaLiveKit) trilhaLiveKit.attach(video);
+  else video.srcObject = fluxo;
 
   const etiqueta = document.createElement("span");
   etiqueta.className = "transmissao__etiqueta";
@@ -4324,13 +4438,16 @@ function mostrarTela(id, fluxo, rotulo) {
   quadro.append(video, etiqueta, qualidade, expandir);
   $("palco-grade").append(quadro);
   telas.set(id, quadro);
+  quadro.trilhaLiveKit = trilhaLiveKit;
   atualizarPalco();
 }
 
 function removerTela(id) {
   const quadro = telas.get(id);
   if (!quadro) return;
-  quadro.querySelector("video").srcObject = null;
+  const video = quadro.querySelector("video");
+  if (quadro.trilhaLiveKit) quadro.trilhaLiveKit.detach(video);
+  else video.srcObject = null;
   quadro.remove();
   telas.delete(id);
   if (telaMaximizada === id) telaMaximizada = null;
@@ -4369,6 +4486,7 @@ function atualizarPalco() {
  *  menos do que o perfil promete, e o selo deve mostrar a entrega, não a
  *  promessa. */
 async function statsDeQualidade(id) {
+  if (provedorDeMidia === "livekit") return livekit.statsDeVideo(id, estado.meuId);
   if (id === estado.meuId) {
     if (!trilhaDeCaptura) return null;
     for (const pc of malha.conexoes.values()) {
@@ -4425,11 +4543,12 @@ setInterval(() => {
  */
 const fluxosDeVoz = new Map(); // id do par -> id do MediaStream da voz
 
-function receberTrilha(id, trilha, fluxo) {
+function receberTrilha(id, trilha, fluxo, origem = null, trilhaLiveKit = null) {
   if (trilha.kind === "audio") {
-    if (!fluxosDeVoz.has(id)) fluxosDeVoz.set(id, fluxo.id);
+    const audioDeTela = origem === "screen_share_audio";
+    if (!audioDeTela && !fluxosDeVoz.has(id)) fluxosDeVoz.set(id, fluxo.id);
 
-    if (fluxosDeVoz.get(id) !== fluxo.id) {
+    if (audioDeTela || fluxosDeVoz.get(id) !== fluxo.id) {
       // Som da transmissão: entra no grafo sem medidor de fala e sem os
       // filtros de voz, no volume que a pessoa tem para quem transmite.
       const membro = estado.membros.get(id);
@@ -4463,7 +4582,7 @@ function receberTrilha(id, trilha, fluxo) {
   }
 
   const membro = estado.membros.get(id);
-  mostrarTela(id, fluxo, membro?.apelido ?? "Participante");
+  mostrarTela(id, fluxo, membro?.apelido ?? "Participante", trilhaLiveKit);
   if (membro) {
     membro.transmitindo = true;
     redesenhar();
@@ -4687,10 +4806,9 @@ function prepararAjustes() {
     });
   }
 
-  $("ajuste-som-da-tela").addEventListener("change", (e) => {
-    estado.audioDaTela = e.target.checked;
-    salvarPreferencias();
-  });
+  // O microfone se prova sozinho no medidor logo acima; a saída não tem como
+  // se provar sem alguém mandar um som por ela.
+  $("testar-saida").addEventListener("click", () => motor.ouvirAviso("entrei"));
 
   const escala = $("ajuste-escala-interface");
   escala.addEventListener("input", () => {
@@ -4710,6 +4828,12 @@ function prepararAjustes() {
     estado.brilhoCursor = e.target.checked;
     aplicarPreferenciasDoBrilho();
     $("bloco-controles-brilho").hidden = !estado.brilhoCursor;
+    salvarPreferencias();
+  });
+
+  $("ajuste-cursor-personalizado").addEventListener("change", (e) => {
+    estado.cursorPersonalizado = e.target.checked;
+    aplicarCursorPersonalizado();
     salvarPreferencias();
   });
   const tamanhoDoBrilho = $("ajuste-tamanho-brilho");
@@ -4785,7 +4909,6 @@ function prepararAjustes() {
   prepararCadastroDeAtividade();
 
   montarBitrates();
-  montarPerfis();
   prepararAtalhoMudo();
 
   // Trocar de fone no meio da conversa não deve exigir reabrir o painel.
@@ -4942,42 +5065,6 @@ function montarBitrates() {
   }
 }
 
-function montarPerfis() {
-  const area = $("ajuste-perfil");
-  area.textContent = "";
-  for (const perfil of PERFIS_TELA) {
-    const botao = document.createElement("button");
-    botao.type = "button";
-    botao.className = "perfil-tela";
-    botao.dataset.perfil = perfil.id;
-
-    const texto = document.createElement("span");
-    texto.className = "perfil-tela__texto";
-    const nome = document.createElement("span");
-    nome.className = "perfil-tela__nome";
-    nome.textContent = perfil.nome;
-    const resumo = document.createElement("span");
-    resumo.className = "perfil-tela__resumo";
-    resumo.textContent = perfil.resumo;
-    texto.append(nome, resumo);
-
-    const detalhe = document.createElement("span");
-    detalhe.className = "perfil-tela__detalhe";
-    detalhe.textContent = perfil.detalhe;
-
-    botao.append(texto, detalhe);
-    botao.addEventListener("click", async () => {
-      estado.perfilTela = perfil.id;
-      salvarPreferencias();
-      refletirAjustes();
-      // A trilha nativa aceita novas constraints em voo: resolução, FPS,
-      // bitrate e política de degradação mudam sem pedir a fonte novamente.
-      if (estado.transmitindo) await aplicarPerfilDeTela(perfil);
-    });
-    area.append(botao);
-  }
-}
-
 /**
  * Aplica preferências ao motor e, quando pedido, grava.
  *
@@ -4996,13 +5083,14 @@ async function aplicarAudio(mudancas, gravar = false) {
       const [trilha] = estado.fluxoMicrofone.getAudioTracks();
       trilha.enabled = !estado.mudo;
       malha.definirAudioLocal(trilha, estado.fluxoMicrofone);
+      livekit.definirAudioLocal(trilha, estado.fluxoMicrofone);
       await observarVoz(estado.meuId, motor.noLocal);
     }
     if ("bitrate" in mudancas || "bandaLarga" in mudancas) {
-      await malha.definirAudio({
-        bitrate: estado.audio.bitrate,
-        dtx: !estado.audio.bandaLarga,
-      });
+      await Promise.all([
+        malha.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga }),
+        livekit.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga }),
+      ]);
     }
   } catch (erro) {
     console.error("[audio] ajuste recusado", erro);
@@ -5080,6 +5168,7 @@ function atualizarAjustesDaInterface() {
   $("valor-intensidade-brilho").textContent = `${estado.intensidadeBrilhoCursor}%`;
   $("ajuste-busca-automatica").checked = estado.buscarAtualizacoesAutomaticamente;
   $("versao-atual").textContent = `CALL ${VERSAO_ATUAL}`;
+  $("ajuste-cursor-personalizado").checked = estado.cursorPersonalizado;
 }
 
 /** Põe na tela o que está no estado. Um só caminho: qualquer mudança passa a
@@ -5107,7 +5196,6 @@ function refletirAjustes() {
   $("bloco-sons").hidden = !a.sons;
   $("ajuste-volume-sons").value = String(Math.round(a.volumeSons * 100));
   $("valor-volume-sons").textContent = `${Math.round(a.volumeSons * 100)}%`;
-  $("ajuste-som-da-tela").checked = estado.audioDaTela;
   $("ajuste-atividade").checked = estado.mostrarAtividade;
   $("bloco-atividade").hidden = !estado.mostrarAtividade;
   mostrarAtividadeAtual();
@@ -5115,12 +5203,6 @@ function refletirAjustes() {
 
   for (const [i, botao] of [...$("ajuste-bitrate").children].entries()) {
     botao.setAttribute("aria-pressed", BITRATES_AUDIO[i].valor === a.bitrate ? "true" : "false");
-  }
-  for (const botao of $("ajuste-perfil").children) {
-    botao.setAttribute(
-      "aria-pressed",
-      botao.dataset.perfil === estado.perfilTela ? "true" : "false"
-    );
   }
 
   $("medidor-limiar").style.left = `${posicaoNoMedidor(a.limiar)}%`;

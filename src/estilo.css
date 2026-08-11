@@ -34,6 +34,11 @@
 
   --fonte: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI",
     system-ui, -apple-system, "Inter", "Helvetica Neue", Arial, sans-serif;
+
+  /* Cursores temáticos: seta com o mesmo roxo do brilho-cursor, e um anel
+     para tudo clicável — a mesma linguagem de traço fino usada nos ícones. */
+  --cursor-padrao: url("cursores/cursor-padrao.svg") 2 2, auto;
+  --cursor-clicavel: url("cursores/cursor-clicavel.svg") 12 12, pointer;
 }
 
 * {
@@ -57,7 +62,7 @@ body {
   text-rendering: optimizeLegibility;
   overflow: hidden;
   user-select: none;
-  cursor: default;
+  cursor: var(--cursor-padrao);
 }
 
 button,
@@ -613,7 +618,7 @@ svg {
   font-size: 12.5px;
   font-weight: 500;
   color: var(--texto-3);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: color var(--transicao);
 }
 
@@ -760,7 +765,7 @@ svg {
   border-radius: var(--raio-p);
   background: none;
   color: var(--texto-3);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: color var(--transicao), background var(--transicao);
 }
 
@@ -917,7 +922,7 @@ svg {
   color: #1f1f1f;
   font-size: 13px;
   font-weight: 500;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), transform var(--transicao),
     box-shadow var(--transicao);
 }
@@ -965,7 +970,7 @@ svg {
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-color: var(--texto-3);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: color var(--transicao);
 }
 
@@ -1095,7 +1100,7 @@ svg {
   border: 1px solid var(--borda);
   border-radius: var(--raio-p);
   padding: 8px 11px;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: border-color var(--transicao), background-color var(--transicao);
 }
 
@@ -1173,7 +1178,7 @@ svg {
   padding: 2px 0;
   font-size: 12px;
   color: var(--texto-3);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   list-style: none;
   transition: color var(--transicao);
   width: fit-content;
@@ -1208,7 +1213,7 @@ svg {
   padding: 9px 15px;
   font-size: 13px;
   font-weight: 500;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   white-space: nowrap;
   transition: background var(--transicao), border-color var(--transicao),
     color var(--transicao), transform var(--transicao);
@@ -1270,7 +1275,7 @@ svg {
   border: none;
   border-radius: var(--raio-p);
   color: var(--texto-3);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), color var(--transicao);
 }
 .icone svg {
@@ -1378,7 +1383,7 @@ svg {
   border: none;
   background: transparent;
   border-radius: var(--raio-m);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao);
 }
 
@@ -1672,7 +1677,7 @@ svg {
   color: var(--texto-2);
   font-size: 13px;
   text-align: left;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: color var(--transicao);
 }
 
@@ -1804,7 +1809,7 @@ svg {
   color: var(--texto-2);
   font-size: 13px;
   text-align: left;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), color var(--transicao);
 }
 
@@ -2014,7 +2019,7 @@ svg {
   color: #fff;
   font-size: 15px;
   line-height: 1;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
 }
 
 .soundboard__lista {
@@ -2057,7 +2062,7 @@ svg {
   border-radius: 50%;
   background: var(--superficie-3);
   color: var(--texto-2);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
 }
 
 .soundboard__tocar:hover {
@@ -2264,7 +2269,7 @@ svg {
   background: rgba(14, 15, 17, 0.78);
   backdrop-filter: blur(8px);
   color: var(--texto-2);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   opacity: 0;
   transition: opacity var(--transicao), color var(--transicao), background-color var(--transicao);
 }
@@ -2500,7 +2505,7 @@ svg {
   background: none;
   border-radius: var(--raio-p);
   color: var(--texto-3);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), color var(--transicao);
 }
 
@@ -2581,7 +2586,7 @@ svg {
   border-radius: 999px;
   color: var(--texto-2);
   font-size: 11px;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: border-color var(--transicao), background var(--transicao), color var(--transicao);
 }
 
@@ -2630,7 +2635,7 @@ svg {
   color: var(--texto-3);
   font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif;
   font-size: 15px;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
 }
 
 .seletor-emoji__aba:hover,
@@ -2664,7 +2669,7 @@ svg {
   border: none;
   background: none;
   border-radius: var(--raio-p);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), transform var(--transicao);
 }
 
@@ -2813,7 +2818,7 @@ svg {
   border-radius: var(--raio-p);
   color: var(--texto-2);
   font-size: 13px;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), color var(--transicao),
     border-color var(--transicao);
 }
@@ -3199,7 +3204,7 @@ svg {
   color: var(--texto-2);
   font-size: 11.5px;
   font-weight: 600;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), color var(--transicao),
     border-color var(--transicao);
 }
@@ -3291,7 +3296,7 @@ svg {
   color: var(--acento);
   font-size: 11px;
   font-weight: 600;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: color var(--transicao);
 }
 
@@ -3466,7 +3471,7 @@ svg {
   color: var(--texto-2);
   font-size: 12.5px;
   text-align: left;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), color var(--transicao);
 }
 
@@ -3502,7 +3507,7 @@ svg {
   border-radius: var(--raio-p);
   color: var(--texto-2);
   font-size: 13px;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao), color var(--transicao),
     border-color var(--transicao);
 }
@@ -3613,7 +3618,7 @@ svg {
   padding: 7px 10px 9px;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: color var(--transicao), border-color var(--transicao);
 }
 
@@ -3684,7 +3689,7 @@ svg {
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   border-radius: var(--raio-m);
 }
 
@@ -3820,7 +3825,7 @@ svg {
   color: var(--texto-3);
   display: grid;
   place-items: center;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   overflow: hidden;
   transition: border-color var(--transicao), color var(--transicao);
 }
@@ -3919,6 +3924,18 @@ svg {
   margin-bottom: 6px;
 }
 
+/* O medidor vem logo abaixo do seletor de microfone, dentro do mesmo `.ajuste`
+   — precisa do respiro que a separação entre dois `.ajuste` daria de graça. */
+.ajuste__cabecalho--medidor {
+  margin-top: 14px;
+}
+
+/* Mesmo caso do lado da saída: o botão de teste pertence ao seletor acima
+   dele, não é um controle solto. */
+.ajuste__testar {
+  margin-top: 10px;
+}
+
 .ajuste__rotulo {
   display: block;
   font-size: 12px;
@@ -3979,6 +3996,78 @@ svg {
   margin-top: 16px;
 }
 
+/* ─── Cosméticos ───────────────────────────────────────────────── */
+
+.chave + .cosmetico-previa {
+  margin-top: 14px;
+}
+
+.cosmetico-previa {
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--raio-m);
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+}
+
+.cosmetico-previa img {
+  width: 32px;
+  height: 32px;
+}
+
+.cosmetico-em-breve {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cosmetico-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 10px;
+  border-radius: var(--raio-m);
+  border: 1px dashed var(--borda-forte);
+  color: var(--texto-3);
+  opacity: 0.7;
+}
+
+.cosmetico-item__glifo {
+  display: flex;
+}
+
+.cosmetico-item__glifo svg {
+  width: 22px;
+  height: 22px;
+}
+
+.cosmetico-item__nome {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--texto-2);
+}
+
+.cosmetico-item__selo {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--superficie-3);
+}
+
+/* Desliga o cursor temático redefinindo as próprias variáveis que as 37
+   regras de `cursor` do resto da folha já leem — evita repetir a mudança em
+   cada uma delas quando a pessoa desativa o cosmético. */
+body.sem-cursor-personalizado {
+  --cursor-padrao: default;
+  --cursor-clicavel: pointer;
+}
+
 /* O `color` do `.campo__entrada` chega até o texto do seletor fechado por
    herança, mas a lista aberta é desenhada pelo sistema operacional, fora do
    alcance normal do CSS — sem cor e fundo declarados aqui, direto no
@@ -3999,7 +4088,7 @@ select.campo__entrada {
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
   padding-right: 30px;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
 }
 
 /* ── Medidor de entrada ── */
@@ -4053,7 +4142,7 @@ select.campo__entrada {
   width: 100%;
   height: 18px;
   background: none;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
 }
 
 .deslizante::-webkit-slider-runnable-track {
@@ -4087,7 +4176,7 @@ select.campo__entrada {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
 }
 
 .chave input {
@@ -4167,7 +4256,7 @@ select.campo__entrada {
   border-radius: var(--raio-p);
   padding: 7px 4px;
   text-align: center;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: border-color var(--transicao), background-color var(--transicao);
 }
 
@@ -4192,57 +4281,9 @@ select.campo__entrada {
   background: var(--acento-suave);
 }
 
-.perfis {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.perfil-tela {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  border: 1px solid var(--borda);
-  background: var(--superficie-2);
-  border-radius: var(--raio-m);
-  padding: 10px 12px;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color var(--transicao), background-color var(--transicao);
-}
-
-.perfil-tela:hover {
-  border-color: var(--borda-forte);
-}
-
-.perfil-tela[aria-pressed="true"] {
-  border-color: var(--acento);
-  background: var(--acento-suave);
-}
-
-.perfil-tela__texto {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.perfil-tela__nome {
-  font-size: 12.5px;
-}
-
-.perfil-tela__resumo {
-  font-size: 11.5px;
-  color: var(--texto-3);
-}
-
-.perfil-tela__detalhe {
-  flex: none;
-  font-size: 11px;
-  color: var(--texto-2);
-  font-variant-numeric: tabular-nums;
-}
+/* `.perfis`/`.perfil-tela` saíram junto com a aba Transmissão: eram o estilo da
+   cópia que morava nos ajustes. O diálogo de ir ao vivo tem os seus próprios
+   (`.perfis-live`/`.perfil-live`), logo abaixo. */
 
 /* ── Transmitir tela (diálogo de "ir ao vivo") ── */
 
@@ -4334,7 +4375,7 @@ select.campo__entrada {
   background: var(--superficie-2);
   border-radius: var(--raio-m);
   text-align: left;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: border-color var(--transicao), background-color var(--transicao);
 }
 
@@ -4504,7 +4545,7 @@ select.campo__entrada {
   border: 1px solid var(--borda);
   background: var(--superficie-2);
   border-radius: var(--raio-m);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   text-align: left;
   transition: border-color var(--transicao), background-color var(--transicao);
 }
@@ -4565,7 +4606,7 @@ select.campo__entrada {
   background: none;
   color: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: background var(--transicao);
 }
 
@@ -4672,7 +4713,7 @@ select.campo__entrada {
   border: 1px solid var(--borda);
   border-radius: var(--raio-m);
   background: var(--superficie-2);
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   transition: border-color var(--transicao), background var(--transicao),
     transform var(--transicao);
 }
@@ -4860,7 +4901,7 @@ select.campo__entrada {
   padding: 0;
   border: none;
   background: none;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
   border-radius: 999px;
 }
 
@@ -5045,7 +5086,7 @@ textarea.campo__area {
   background: none;
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: var(--cursor-clicavel);
 }
 
 /* No fim da folha de propósito: estas regras precisam vencer o `display` que

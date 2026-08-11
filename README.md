@@ -5,8 +5,8 @@ texto**, **chat de voz** e **transmissão de tela**. Interface inteiramente em
 português do Brasil.
 
 Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
-empacotador e sem Electron. O instalador tem 2,01 MB e o executável ocupa
-32 MB de memória residente em repouso — 7,9 MB deles em memória privada.
+Electron. RNNoise e o cliente de mídia são materializados no `frontendDist`
+durante o build, sem depender de CDN em tempo de execução.
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
 instala com um clique, sem sair da tela. Quem responder "Depois" continua
@@ -56,9 +56,10 @@ conferida em silêncio na partida; sem conta, basta ter um apelido guardado.
 Apelido, bio, mascote e a própria conta passam a ser tratados em **Meu
 perfil**, no canto inferior esquerdo.
 
-O servidor apenas apresenta os participantes uns aos outros e guarda a
-estrutura dos grupos e o histórico dos canais de texto. **Áudio e vídeo nunca
-passam por ele** — trafegam diretamente entre as máquinas.
+O servidor guarda a estrutura dos grupos e o histórico dos canais de texto.
+No serviço oficial ele também emite uma credencial curta e restrita para a
+sala de mídia no **LiveKit**; áudio e vídeo passam pelo SFU, nunca pelo servidor
+Rust nem pelo banco. Em um servidor próprio sem LiveKit, o CALL usa a malha P2P.
 
 Para apontar para outro endereço, use a aba **Servidor** nos ajustes.
 **Hospedar** sobe um servidor nesta máquina, na porta 8787, útil em rede local
@@ -102,9 +103,8 @@ linhas levam um `+` de "pelo menos" — o número é um piso, e não um total.
 As mensagens aceitam **emojis Unicode**, reações, edição e exclusão pelo
 próprio autor, e todo mundo no canal vê as mudanças na hora. O aplicativo também
 tem **soundboard de grupo**: uma biblioteca de sons que qualquer um na call
-adiciona e toca para todos. Os clipes ficam no servidor, mas o áudio em si vai
-direto pela sua conexão — quem toca mistura o som no próprio áudio de saída, e
-o servidor nem vê um byte no caminho de quem ouve.
+adiciona e toca para todos. Os clipes ficam no servidor, mas quem toca mistura
+o som no próprio áudio de saída e o envia pelo mesmo transporte de mídia da voz.
 
 Quem cria o grupo é o dono, e só ele cria, renomeia e remove categorias e
 canais. O convite dá acesso à conversa, não à estrutura.
@@ -205,13 +205,31 @@ coisa.
 call.exe                 janela Tauri + interface
   └─ WebView2            renderização e pilha WebRTC
 sinalizacao.exe          servidor de sinalização (sidecar, só ao hospedar)
+LiveKit Cloud            SFU/TURN da mídia no serviço oficial
 ```
 
-O servidor guarda a estrutura dos grupos e o histórico dos canais de texto, e
-encaminha ofertas, respostas e candidatos ICE entre quem está no **mesmo canal
-de voz**. A mídia não passa por ele: cada participante abre uma conexão direta
-com cada um dos outros (topologia em malha), e a malha se forma por canal —
-estar no mesmo grupo não é estar na mesma conversa.
+O servidor guarda a estrutura dos grupos e o histórico dos canais de texto. No
+serviço oficial, ele assina um JWT LiveKit de dez minutos, limitado a uma sala e
+às fontes de microfone, tela e som da tela. O segredo fica somente no servidor;
+expirar o token afeta novas entradas, não derruba uma call já estabelecida.
+
+Sem as três variáveis LiveKit, o mesmo binário encaminha ofertas, respostas e
+candidatos ICE entre quem está no **mesmo canal de voz**, formando a malha P2P
+usada pelo sidecar. O cliente anuncia os transportes que entende e o servidor
+fixa um deles por sala: durante a atualização, uma call nunca fica metade SFU e
+metade P2P.
+
+Na imagem hospedada, configure diretamente no Railway — nunca no repositório:
+
+```text
+LIVEKIT_URL=wss://seu-projeto.livekit.cloud
+LIVEKIT_API_KEY=...
+LIVEKIT_API_SECRET=...
+```
+
+Se uma variável faltar ou a URL for inválida, o servidor registra o motivo sem
+imprimir nenhum segredo e continua disponível em P2P. A imagem da nuvem compila
+com `--features google,banco,livekit`; o sidecar não inclui essas dependências.
 
 Grupos e histórico continuam em dois arquivos, sem banco de dados nenhum:
 `grupos.json`, reescrito inteiro a cada mudança de estrutura, e
@@ -244,10 +262,9 @@ sozinha, uma vez, o que estiver em `contas.json`/`sessoes.json` no volume:
 O **"Entrar com o Google" fica atrás da opção de compilação `google`**, pelo
 mesmo motivo do Postgres: ele arrasta um cliente HTTPS inteiro para trocar o
 código de autorização pelo perfil, e esse cliente não serve a nada no
-servidor caseiro — que não tem `client_secret` nem endereço público. Sozinho,
-o `google` leva o servidor de 599 KB a 1,93 MB; com `banco` junto (a
-combinação que a imagem da nuvem de fato compila), a 2,34 MB. Nenhum desses
-KB viaja no instalador do CALL: o sidecar continua nos 599 KB de sempre.
+servidor caseiro — que não tem `client_secret` nem endereço público. `banco`,
+`google` e `livekit` são opcionais e só entram na imagem da nuvem; essas
+dependências do servidor não viajam no sidecar do aplicativo.
 
 | Arquivo | Responsabilidade |
 | --- | --- |
@@ -257,6 +274,7 @@ KB viaja no instalador do CALL: o sidecar continua nos 599 KB de sempre.
 | `src/sinal.js` | Cliente do canal de sinalização |
 | `src/conta.js` | Cadastro, login, sessão e força de senha |
 | `src/rtc.js` | Malha WebRTC com negociação perfeita |
+| `src/livekit.js` | Transporte SFU, publicação e assinatura de trilhas LiveKit |
 | `src/avatares.js` | Os seis mascotes, desenhados em SVG |
 | `src/perfil.js` | Painel do próprio perfil e cartão de outra pessoa |
 | `src/sons.js` | O sino de entrada e saída, sintetizado |

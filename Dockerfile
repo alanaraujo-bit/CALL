@@ -35,17 +35,18 @@ panic = "abort"\n\
 strip = true\n\
 incremental = false\n' > Cargo.toml
 
-# `--features google,banco` e o que separa esta imagem do binario que viaja
+# `--features google,banco,livekit` e o que separa esta imagem do binario que viaja
 # dentro do instalador do CALL:
 #
-# * `google` liga "Entrar com o Google", que arrasta um cliente HTTPS inteiro
-#   -- 599 KB viram 1,93 MB. Ver `servidor/src/google.rs`.
+# * `google` liga "Entrar com o Google" e o cliente HTTPS usado na troca do
+#   código. Ver `servidor/src/google.rs`.
 # * `banco` liga o Postgres como backend das contas -- ver `servidor/src/contas.rs`.
+# * `livekit` emite os tokens curtos usados pelo transporte SFU hospedado.
 #
-# As duas pagariam por recursos que o sidecar da rede local nem teria como
+# Essas opções pagariam por recursos que o sidecar da rede local nem teria como
 # usar: ele nao tem `client_secret` nem `DATABASE_URL`. Sem estas opcoes o
 # servidor compila e roda igual, so que guarda contas num par de arquivos.
-RUN cargo build --release -p sinalizacao --features google,banco
+RUN cargo build --release -p sinalizacao --features google,banco,livekit
 
 # ─── Imagem final ──────────────────────────────────────────────────────
 FROM scratch
@@ -66,6 +67,13 @@ ENV DADOS=/dados
 #
 #   GOOGLE_CLIENT_ID=....apps.googleusercontent.com
 #   GOOGLE_CLIENT_SECRET=...
+
+# O transporte SFU hospedado também recebe três variáveis diretamente no
+# Railway. A API secret nunca entra no repositório nem no aplicativo:
+#
+#   LIVEKIT_URL=wss://seu-projeto.livekit.cloud
+#   LIVEKIT_API_KEY=...
+#   LIVEKIT_API_SECRET=...
 
 # O Railway injeta PORT; o 8787 vale para quem rodar a imagem na mao.
 ENV PORT=8787

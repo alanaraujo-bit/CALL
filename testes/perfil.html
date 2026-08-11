@@ -76,30 +76,18 @@
       };
 
       try {
-        // ── Tela de entrada: a fita de mascotes ──────────────────────
-        const fita = $("entrada-mascotes");
-        conferir(fita.children.length === 6, `a fita traz os seis mascotes (${fita.children.length})`);
+        // ── Tela de entrada: retrato sorteado, sem alongar o cadastro ──
         conferir(
-          [...fita.children].every((b) => b.querySelector("svg.mascote")),
-          "cada opção é o desenho, e não um retângulo vazio"
+          $("portal-avatar").querySelector("svg.mascote"),
+          "a prévia do cadastro mostra o mascote sorteado"
         );
-        conferir(
-          [...fita.children].filter((b) => b.getAttribute("aria-pressed") === "true").length === 1,
-          "quem nunca escolheu já chega com um mascote sorteado"
-        );
-
-        fita.children[4].click();
-        await esperar(80);
-        conferir(
-          fita.children[4].getAttribute("aria-pressed") === "true",
-          "clicar em um mascote o marca"
-        );
-        conferir(prefs().avatar === "polvo", `e a escolha é gravada na hora (${prefs().avatar})`);
 
         // ── Entrar, pela saída sem conta ─────────────────────────────
         $("criar-apelido").value = "Alan";
         $("botao-sem-conta").click();
         await esperar(400);
+        const avatarInicial = prefs().avatar;
+        conferir(Boolean(avatarInicial), `quem nunca escolheu já chega com mascote (${avatarInicial})`);
         conferir(!$("tela-aplicacao").classList.contains("oculto"), "a aplicação abre");
         conferir(
           $("avatar-usuario").querySelector("svg.mascote"),
@@ -114,10 +102,14 @@
           $("perfil-previa-nome").textContent === "Alan",
           "a prévia começa com o apelido de quem entrou"
         );
+        $("perfil-avatar-botao").click();
+        const fita = $("seletor-avatar-mascotes");
+        conferir(fita.children.length === 6, "o seletor do avatar oferece os seis mascotes");
         conferir(
-          $("perfil-mascotes").children.length === 6,
-          "o painel oferece os seis mascotes"
+          [...fita.children].every((b) => b.querySelector("svg.mascote")),
+          "cada opção é o desenho, e não um retângulo vazio"
         );
+        fita.children[0].click();
 
         teclar($("perfil-bio"), "Testando a bio.");
         conferir($("perfil-previa-bio").textContent === "Testando a bio.", "a prévia acompanha a bio");
@@ -133,8 +125,6 @@
         teclar($("perfil-apelido"), "Alan A.");
         conferir(!$("perfil-salvar").disabled, "com apelido, dá");
 
-        $("perfil-mascotes").children[0].click();
-        await esperar(80);
         conferir(
           $("perfil-previa-avatar").querySelector("svg.mascote"),
           "a prévia redesenha com o mascote escolhido"
@@ -148,7 +138,7 @@
         $("perfil-cancelar").click();
         await esperar(120);
         conferir($("perfil-dialogo").classList.contains("oculto"), "cancelar fecha o painel");
-        conferir(prefs().avatar === "polvo", "e não grava o mascote clicado na prévia");
+        conferir(prefs().avatar === avatarInicial, "e não grava o mascote clicado na prévia");
         conferir($("rotulo-usuario").textContent === "Alan", "nem o apelido");
 
         // ── Salvar muda ──────────────────────────────────────────────
@@ -156,7 +146,8 @@
         await esperar(150);
         teclar($("perfil-apelido"), "Alan A.");
         teclar($("perfil-bio"), "Fuso de Brasília.");
-        $("perfil-mascotes").children[0].click();
+        $("perfil-avatar-botao").click();
+        $("seletor-avatar-mascotes").children[0].click();
         $("perfil-salvar").click();
         await esperar(200);
         conferir($("perfil-dialogo").classList.contains("oculto"), "salvar fecha o painel");
@@ -168,21 +159,24 @@
         $("botao-perfil").click();
         await esperar(150);
         conferir($("perfil-bio").value === "Fuso de Brasília.", "reabrir traz a bio salva");
+        $("perfil-avatar-botao").click();
         conferir(
-          $("perfil-mascotes").children[0].getAttribute("aria-pressed") === "true",
+          $("seletor-avatar-mascotes").children[0].getAttribute("aria-pressed") === "true",
           "e o mascote salvo aparece marcado"
         );
         $("perfil-fechar").click();
         await esperar(120);
 
         // ── Um grupo, e uma segunda pessoa de verdade ────────────────
-        $("botao-novo-grupo").click();
+        doc.querySelector(".grupo--novo").click();
         await esperar(150);
-        doc.querySelector("#dialogo-campos input").value = "Estúdio";
-        $("dialogo-formulario").dispatchEvent(new jan.Event("submit", { cancelable: true }));
-        const entrou = await aguardar(() => $("codigo-convite").textContent.length === 10);
+        [...$("menu").children].find((item) => item.textContent === "Criar grupo").click();
+        await esperar(120);
+        teclar($("grupo-nome"), "Estúdio");
+        $("grupo-confirmar").click();
+        const entrou = await aguardar(() => prefs().atalhos?.[0]?.codigo?.length === 10);
         conferir(entrou, "o grupo é criado no servidor local");
-        const codigo = $("codigo-convite").textContent;
+        const codigo = prefs().atalhos[0].codigo;
 
         const par = new WebSocket("ws://127.0.0.1:8898");
         await new Promise((ok, falhou) => {

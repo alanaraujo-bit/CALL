@@ -15,6 +15,9 @@ google = ["dep:reqwest"]
 # se conectar. A imagem da nuvem compila com `--features banco`; sem ela, o
 # servidor continua usando o par de arquivos. Ver `src/contas.rs`.
 banco = ["dep:sqlx"]
+# Emissão de tokens para o SFU hospedado. Opcional para o sidecar local não
+# carregar protocolo/criptografia que ele não usa; a imagem da nuvem habilita.
+livekit = ["dep:livekit-api"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "io-util"] }
@@ -37,6 +40,7 @@ blake2 = "0.10"
 # codificar/decodificar, puro Rust, sem custo de instalador (isto e o
 # servidor, nao o sidecar do aplicativo).
 base64 = "0.22"
+livekit-api = { version = "0.6.3", default-features = false, features = ["access-token"], optional = true }
 # So com a opcao `google`.
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",

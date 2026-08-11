@@ -226,6 +226,19 @@ class Elo {
     this.fazendoOferta = false;
     this.ignorandoOferta = false;
     this.aplicandoDescricao = false;
+    /** WebSocket preserva a ordem de entrega, mas cada chamada assíncrona de
+     *  `receber` antes corria solta. Uma oferta e os candidatos dela podiam
+     *  ser aplicados ao mesmo tempo. Esta fila mantém a ordem também durante
+     *  os `await` do WebRTC. */
+    this.filaDeSinais = Promise.resolve();
+    /** Candidatos podem chegar antes da descrição remota. Guardá-los é
+     *  obrigatório: `addIceCandidate` sem `remoteDescription` os rejeita. */
+    this.candidatosRemotosPendentes = [];
+    /** `setLocalDescription` pode disparar `icecandidate` antes de resolver.
+     *  Enquanto a oferta/resposta não foi anunciada, os candidatos locais
+     *  ficam aqui para que o outro lado sempre receba a descrição primeiro. */
+    this.anunciandoDescricaoLocal = false;
+    this.candidatosLocaisPendentes = [];
     /** Este lado combinou de só responder: a primeira oferta vem do outro. */
     this.esperandoOferta = esperandoOferta;
     this.remetenteAudio = null;
@@ -257,7 +270,12 @@ class Elo {
     };
 
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate) malha.enviarSinal(id, { candidato: candidate });
+      if (!candidate) return;
+      if (this.anunciandoDescricaoLocal) {
+        this.candidatosLocaisPendentes.push(candidate);
+      } else {
+        malha.enviarSinal(id, { candidato: candidate });
+      }
     };
 
     pc.ontrack = ({ track, streams }) => {
@@ -280,6 +298,7 @@ class Elo {
    */
   async descreverLocal() {
     const pc = this.pc;
+    this.anunciandoDescricaoLocal = true;
     const respondendo =
       pc.signalingState === "have-remote-offer" || pc.signalingState === "have-local-pranswer";
     const descricao = respondendo ? await pc.createAnswer() : await pc.createOffer();
@@ -287,19 +306,47 @@ class Elo {
     await pc.setLocalDescription(descricao);
   }
 
+  /** Envia a descrição e só depois libera os candidatos produzidos enquanto
+   *  ela era criada. `WebSocket.send` é síncrono e conserva esta ordem. */
+  anunciarDescricaoLocal() {
+    this.malha.enviarSinal(this.id, { descricao: this.pc.localDescription });
+    this.anunciandoDescricaoLocal = false;
+    for (const candidato of this.candidatosLocaisPendentes.splice(0)) {
+      this.malha.enviarSinal(this.id, { candidato });
+    }
+  }
+
   async ofertar() {
     try {
       this.fazendoOferta = true;
       await this.descreverLocal();
-      this.malha.enviarSinal(this.id, { descricao: this.pc.localDescription });
+      this.anunciarDescricaoLocal();
     } catch (erro) {
+      this.anunciandoDescricaoLocal = false;
+      this.candidatosLocaisPendentes.length = 0;
       console.error("[rtc] falha ao ofertar", erro);
     } finally {
       this.fazendoOferta = false;
     }
   }
 
-  async receber({ descricao, candidato }) {
+  receber(dados) {
+    const tarefa = this.filaDeSinais.then(() => this.#receberAgora(dados));
+    // A fila precisa continuar utilizável até quando um sinal ruim falha. O
+    // erro já é relatado dentro de `#receberAgora`.
+    this.filaDeSinais = tarefa.catch(() => {});
+    return tarefa;
+  }
+
+  async #adicionarCandidato(candidato) {
+    try {
+      await this.pc.addIceCandidate(candidato);
+    } catch (erro) {
+      if (!this.ignorandoOferta) throw erro;
+    }
+  }
+
+  async #receberAgora({ descricao, candidato }) {
     const pc = this.pc;
     try {
       if (descricao) {
@@ -308,15 +355,23 @@ class Elo {
           (this.fazendoOferta || pc.signalingState !== "stable");
 
         this.ignorandoOferta = !this.polido && colisao;
-        if (this.ignorandoOferta) return;
+        if (this.ignorandoOferta) {
+          // O que chegou antes desta oferta pertence à mesma geração ICE que
+          // acabamos de recusar e não pode vazar para a próxima descrição.
+          this.candidatosRemotosPendentes.length = 0;
+          return;
+        }
 
         this.aplicandoDescricao = true;
         try {
           if (colisao) await pc.setLocalDescription({ type: "rollback" });
           await pc.setRemoteDescription(descricao);
+          for (const pendente of this.candidatosRemotosPendentes.splice(0)) {
+            await this.#adicionarCandidato(pendente);
+          }
           if (descricao.type === "offer") {
             await this.descreverLocal();
-            this.malha.enviarSinal(this.id, { descricao: pc.localDescription });
+            this.anunciarDescricaoLocal();
           }
           // Alguns Chromium/WebView2 só materializam os parâmetros do encoder
           // depois que a seção de vídeo foi negociada. Reaplicar aqui impede
@@ -331,18 +386,19 @@ class Elo {
         // valia só para a primeira negociação.
         this.esperandoOferta = false;
       } else if (candidato) {
-        try {
-          await pc.addIceCandidate(candidato);
-        } catch (erro) {
-          if (!this.ignorandoOferta) throw erro;
-        }
+        if (!pc.remoteDescription) this.candidatosRemotosPendentes.push(candidato);
+        else await this.#adicionarCandidato(candidato);
       }
     } catch (erro) {
+      this.anunciandoDescricaoLocal = false;
+      this.candidatosLocaisPendentes.length = 0;
       console.error("[rtc] sinal descartado", erro);
     }
   }
 
   fechar() {
+    this.candidatosRemotosPendentes.length = 0;
+    this.candidatosLocaisPendentes.length = 0;
     this.pc.onnegotiationneeded = null;
     this.pc.onicecandidate = null;
     this.pc.ontrack = null;

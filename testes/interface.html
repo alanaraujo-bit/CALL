@@ -85,11 +85,9 @@
           ).length === 1,
           "exatamente uma qualidade de voz fica marcada"
         );
-        conferir($("ajuste-perfil").children.length === 4, "os quatro perfis de tela são oferecidos");
         conferir(
-          [...$("ajuste-perfil").children].find((b) => b.getAttribute("aria-pressed") === "true")
-            ?.dataset.perfil === "equilibrado",
-          "o perfil padrão da tela é o equilibrado"
+          !doc.querySelector('.aba[data-aba="tela"]') && $("ajuste-perfil") === null,
+          "a qualidade da tela fica somente no diálogo de transmitir"
         );
 
         // ── Microfone e medidor ──────────────────────────────────────
@@ -122,24 +120,25 @@
         $("ajuste-porta").dispatchEvent(new jan.Event("change"));
 
         // ── Trocar de aba ────────────────────────────────────────────
-        doc.querySelector('.aba[data-aba="tela"]').click();
+        doc.querySelector('.aba[data-aba="cosmeticos"]').click();
         conferir(
-          doc.querySelector('.ajustes__painel[data-painel="tela"]').hidden === false &&
+          doc.querySelector('.ajustes__painel[data-painel="cosmeticos"]').hidden === false &&
             doc.querySelector('.ajustes__painel[data-painel="voz"]').hidden === true,
           "as abas trocam de painel"
         );
 
-        // ── Escolher outro perfil persiste ───────────────────────────
-        [...$("ajuste-perfil").children].find((b) => b.dataset.perfil === "nitido").click();
+        // ── Cosmético do cursor persiste e vale na hora ──────────────
+        conferir($("ajuste-cursor-personalizado").checked, "o cursor do CALL vem ligado");
+        $("ajuste-cursor-personalizado").checked = false;
+        $("ajuste-cursor-personalizado").dispatchEvent(new jan.Event("change"));
         await esperar(120);
         conferir(
-          [...$("ajuste-perfil").children].find((b) => b.getAttribute("aria-pressed") === "true")
-            ?.dataset.perfil === "nitido",
-          "escolher um perfil marca o escolhido"
+          doc.body.classList.contains("sem-cursor-personalizado"),
+          "desligar o cursor personalizado vale na hora"
         );
         conferir(
-          JSON.parse(jan.localStorage.getItem("call.preferencias")).perfilTela === "nitido",
-          "o perfil escolhido é gravado nas preferências"
+          JSON.parse(jan.localStorage.getItem("call.preferencias")).cursorPersonalizado === false,
+          "a escolha do cursor é gravada nas preferências"
         );
 
         // ── Qualidade da voz persiste ────────────────────────────────

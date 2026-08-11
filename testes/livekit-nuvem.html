@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Teste LiveKit Cloud</title>
+    <style>
+      body { font: 14px monospace; background: #111; color: #ddd; padding: 24px; }
+      .ok { color: #4fc98c; }
+      .falha { color: #e2645d; }
+    </style>
+  </head>
+  <body>
+    <h1 id="cabecalho">LiveKit Cloud: executando…</h1>
+    <div id="saida"></div>
+    <img src="/segurar?ms=30000" hidden alt="" />
+
+    <script type="module">
+      import { Sinal } from "../src/sinal.js";
+      import { SalaLiveKit } from "../src/livekit.js";
+
+      const relatorio = [];
+      let falhas = 0;
+      const saida = document.getElementById("saida");
+      const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const entregar = (dados, rota = "/resultado") =>
+        fetch(`http://127.0.0.1:8123${rota}`, {
+          method: "POST",
+          body: JSON.stringify(dados, null, 2),
+        }).catch(() => {});
+
+      const conferir = (condicao, descricao) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: Boolean(condicao), descricao });
+        const linha = document.createElement("div");
+        linha.className = condicao ? "ok" : "falha";
+        linha.textContent = `${condicao ? "ok   " : "FALHA"} ${descricao}`;
+        saida.append(linha);
+      };
+
+      async function aguardar(condicao, limite = 25_000) {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          if (await condicao()) return true;
+          await esperar(150);
+        }
+        return false;
+      }
+
+      async function audioSintetico(frequencia) {
+        if ("MediaStreamTrackGenerator" in window && "AudioData" in window) {
+          const taxa = 48_000;
+          const quadros = 480;
+          const gerador = new MediaStreamTrackGenerator({ kind: "audio" });
+          const escritor = gerador.writable.getWriter();
+          let ativo = true;
+          let fase = 0;
+          let instante = 0;
+
+          const bomba = (async () => {
+            while (ativo) {
+              const amostras = new Float32Array(quadros);
+              for (let i = 0; i < quadros; i++) {
+                amostras[i] = Math.sin(fase) * 0.2;
+                fase += (2 * Math.PI * frequencia) / taxa;
+              }
+              const dados = new AudioData({
+                format: "f32",
+                sampleRate: taxa,
+                numberOfFrames: quadros,
+                numberOfChannels: 1,
+                timestamp: instante,
+                data: amostras,
+              });
+              instante += 10_000;
+              try {
+                await escritor.write(dados);
+                await esperar(10);
+              } catch {
+                ativo = false;
+              } finally {
+                dados.close();
+              }
+            }
+          })();
+
+          return {
+            contexto: {
+              async close() {
+                ativo = false;
+                await escritor.close().catch(() => {});
+                await bomba.catch(() => {});
+              },
+            },
+            oscilador: {
+              stop() {
+                ativo = false;
+                gerador.stop();
+              },
+            },
+            fluxo: new MediaStream([gerador]),
+          };
+        }
+
+        const contexto = new AudioContext();
+        await contexto.resume();
+        const oscilador = contexto.createOscillator();
+        const destino = contexto.createMediaStreamDestination();
+        oscilador.frequency.value = frequencia;
+        oscilador.connect(destino);
+        oscilador.start();
+        return { contexto, oscilador, fluxo: destino.stream };
+      }
+
+      async function medirAudio(trilhaLiveKit) {
+        const relatorio = await trilhaLiveKit?.getRTCStatsReport?.();
+        for (const item of relatorio?.values?.() ?? []) {
+          if (
+            item.type === "inbound-rtp" &&
+            (item.kind === "audio" || item.mediaType === "audio")
+          ) {
+            return {
+              bytes: item.bytesReceived ?? 0,
+              pacotes: item.packetsReceived ?? 0,
+              energia: item.totalAudioEnergy,
+            };
+          }
+        }
+        return null;
+      }
+
+      async function temAudio(recebida) {
+        const contexto = new AudioContext();
+        await contexto.resume();
+        const fonte = contexto.createMediaStreamSource(recebida.fluxo);
+        const analisador = contexto.createAnalyser();
+        const ganhoMudo = contexto.createGain();
+        ganhoMudo.gain.value = 0;
+        analisador.fftSize = 512;
+        const amostras = new Uint8Array(analisador.fftSize);
+        fonte.connect(analisador).connect(ganhoMudo).connect(contexto.destination);
+
+        const antes = await medirAudio(recebida.trilhaLiveKit);
+        let pico = 0;
+        for (let i = 0; i < 20; i++) {
+          await esperar(60);
+          analisador.getByteTimeDomainData(amostras);
+          for (const amostra of amostras) pico = Math.max(pico, Math.abs(amostra - 128));
+        }
+        const depois = await medirAudio(recebida.trilhaLiveKit);
+        fonte.disconnect();
+        await contexto.close();
+        if (!antes || !depois) return { ok: false, antes, depois, pico };
+        const trafegou = depois.bytes - antes.bytes > 200 && depois.pacotes - antes.pacotes >= 3;
+        return {
+          ok: trafegou && pico > 2 && recebida.trilha.readyState === "live",
+          antes,
+          depois,
+          pico,
+          estado: recebida.trilha.readyState,
+        };
+      }
+
+      function participante(apelido) {
+        const sinal = new Sinal();
+        const recebidas = [];
+        const sala = new SalaLiveKit({
+          aoTrilha: (id, trilha, fluxo, origem, trilhaLiveKit) => {
+            if (origem === "microphone") {
+              const consumidor = document.createElement("audio");
+              consumidor.autoplay = true;
+              consumidor.muted = true;
+              consumidor.srcObject = fluxo;
+              document.body.append(consumidor);
+              consumidor.play().catch(() => {});
+              recebidas.push({ id, trilha, fluxo, trilhaLiveKit, consumidor });
+            }
+          },
+          aoFimDeTrilha: () => {},
+          aoEstado: () => {},
+        });
+        return { apelido, sinal, sala, recebidas };
+      }
+
+      async function entrarNaVoz(participante, canal, audio) {
+        const resposta = new Promise((resolve) =>
+          participante.sinal.addEventListener("voz", (evento) => resolve(evento.detail), {
+            once: true,
+          })
+        );
+        participante.sinal.enviar({
+          tipo: "entrar-voz",
+          canal,
+          transportes: ["livekit", "malha"],
+        });
+        const voz = await resposta;
+        participante.sala.definirAudioLocal(audio.fluxo.getAudioTracks()[0], audio.fluxo);
+        await participante.sala.entrar(voz.midia);
+        return voz;
+      }
+
+      const ENDERECO = "ws://127.0.0.1:8898";
+      const ana = participante("Ana");
+      const bruno = participante("Bruno");
+      let audioAna;
+      let audioBruno;
+
+      try {
+        audioAna = await audioSintetico(440);
+        audioBruno = await audioSintetico(660);
+
+        const boasVindasAna = await ana.sinal.conectar(ENDERECO, {
+          tipo: "criar-grupo",
+          nome: "LiveKit efêmero",
+          apelido: "Ana",
+          usuario: "livekit-ana",
+        });
+        const canal = boasVindasAna.grupo.categorias
+          .flatMap((categoria) => categoria.canais)
+          .find((item) => item.tipo === "voz");
+        conferir(Boolean(canal), "servidor efêmero criou o canal de voz");
+
+        await bruno.sinal.conectar(ENDERECO, {
+          tipo: "entrar",
+          codigo: boasVindasAna.grupo.codigo,
+          apelido: "Bruno",
+          usuario: "livekit-bruno",
+        });
+
+        const vozAna = await entrarNaVoz(ana, canal.id, audioAna);
+        conferir(vozAna.midia?.provedor === "livekit", "Ana recebeu token LiveKit restrito");
+        const vozBruno = await entrarNaVoz(bruno, canal.id, audioBruno);
+        conferir(vozBruno.midia?.provedor === "livekit", "Bruno recebeu token LiveKit restrito");
+
+        const duasTrilhas = await aguardar(
+          () => ana.recebidas.length >= 1 && bruno.recebidas.length >= 1
+        );
+        conferir(duasTrilhas, "o SFU entregou a trilha remota nos dois sentidos");
+
+        if (duasTrilhas) {
+          const [audioChegouAna, audioChegouBruno] = await Promise.all([
+            temAudio(ana.recebidas[0]),
+            temAudio(bruno.recebidas[0]),
+          ]);
+          conferir(
+            audioChegouAna.ok,
+            `Ana recebeu amostras de áudio pela nuvem (${JSON.stringify(audioChegouAna)})`
+          );
+          conferir(
+            audioChegouBruno.ok,
+            `Bruno recebeu amostras de áudio pela nuvem (${JSON.stringify(audioChegouBruno)})`
+          );
+        }
+      } catch (erro) {
+        conferir(false, `execução sem exceções: ${erro?.message ?? erro}`);
+        await entregar({ erro: String(erro?.stack ?? erro) }, "/diagnostico");
+      } finally {
+        await Promise.all([ana.sala.fecharTudo(), bruno.sala.fecharTudo()]);
+        ana.sinal.desconectar();
+        bruno.sinal.desconectar();
+        audioAna?.oscilador.stop();
+        audioBruno?.oscilador.stop();
+        await Promise.all([
+          audioAna?.contexto.close().catch(() => {}),
+          audioBruno?.contexto.close().catch(() => {}),
+        ]);
+      }
+
+      document.getElementById("cabecalho").textContent = falhas
+        ? `LiveKit Cloud: ${falhas} falha(s)`
+        : "LiveKit Cloud: aprovado";
+      await entregar({ falhas, relatorio });
+    </script>
+  </body>
+</html>

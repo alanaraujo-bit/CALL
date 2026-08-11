@@ -7,8 +7,8 @@
 //!
 //! 1. Guarda a estrutura dos grupos (categorias, canais) e o historico dos
 //!    canais de texto.
-//! 2. Encaminha ofertas/respostas/ICE entre quem esta no mesmo canal de voz.
-//!    O audio e o video trafegam ponto a ponto entre os participantes.
+//! 2. Autoriza a mídia da sala. Na nuvem emite tokens curtos para o LiveKit;
+//!    no sidecar e em servidores antigos, encaminha a sinalização da malha P2P.
 //! 3. Guarda contas — e-mail, senha, perfil e a lista de grupos —, para que
 //!    trocar de computador nao signifique virar outra pessoa. Ver `contas.rs`.
 //!
@@ -18,6 +18,7 @@
 
 mod contas;
 mod google;
+mod midia;
 mod modelo;
 
 use std::collections::HashMap;
@@ -33,6 +34,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio_tungstenite::tungstenite::Message;
 
 use contas::Cofre;
+use midia::Midia;
 use modelo::{agora_ms, novo_codigo, novo_id, Acervo, Canal, Categoria, Grupo, TipoCanal};
 
 type Fila = UnboundedSender<Message>;
@@ -139,6 +141,9 @@ struct Conexao {
     conta: Option<String>,
     grupo: Option<String>,
     canal_voz: Option<String>,
+    /// Fica fixo durante a entrada para nunca formar uma call mista em que
+    /// metade usa SFU e metade usa a malha antiga.
+    provedor_midia: Option<String>,
     fila: Fila,
     mudo: bool,
     transmitindo: bool,
@@ -175,6 +180,9 @@ impl Conexao {
 struct Estado {
     conexoes: HashMap<u64, Conexao>,
     acervo: Acervo,
+    /// Plano de mídia. Sem configuração (ou no sidecar), responde com a malha
+    /// P2P antiga; na nuvem, emite credenciais curtas para o LiveKit.
+    midia: Midia,
     /// conta_id -> (id de conexao -> fila), so para quem esta logado. Mais de
     /// uma conexao por conta e o caso normal, e nao a excecao: o socket de
     /// grupo (voz e canais) e o socket social (amigos e PV) da mesma pessoa
@@ -273,6 +281,7 @@ async fn main() {
     let estado = Arc::new(Mutex::new(Estado {
         conexoes: HashMap::new(),
         acervo: Acervo::carregar(pasta),
+        midia: Midia::do_ambiente(),
         online: HashMap::new(),
     }));
 
@@ -909,6 +918,7 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, c
         conta: cartao.conta,
         grupo: Some(codigo.to_string()),
         canal_voz: None,
+        provedor_midia: None,
         fila: fila.clone(),
         mudo: false,
         transmitindo: false,
@@ -977,6 +987,22 @@ fn despedir(id: u64, estado: &Arc<Mutex<Estado>>) {
 
 // -------------------------------------------------------------------- voz
 
+/// `None` significa que a versão do cliente não consegue entrar com segurança
+/// no transporte já fixado para a sala.
+fn escolher_provedor_midia(
+    provedor_existente: Option<&str>,
+    aceita_livekit: bool,
+    livekit_disponivel: bool,
+) -> Option<&'static str> {
+    match provedor_existente {
+        Some("livekit") if aceita_livekit => Some("livekit"),
+        Some("livekit") => None,
+        Some(_) => Some("malha"),
+        None if aceita_livekit && livekit_disponivel => Some("livekit"),
+        None => Some("malha"),
+    }
+}
+
 fn entrar_voz(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     let canal = texto_de(v, "canal");
     let mut e = estado.lock().unwrap();
@@ -996,6 +1022,26 @@ fn entrar_voz(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         return;
     }
 
+    let aceita_livekit = v
+        .get("transportes")
+        .and_then(Value::as_array)
+        .map(|lista| lista.iter().any(|item| item.as_str() == Some("livekit")))
+        .unwrap_or(false);
+    let provedor_existente = e
+        .na_voz(&canal)
+        .iter()
+        .find_map(|conexao| conexao.provedor_midia.clone());
+    let Some(provedor) = escolher_provedor_midia(
+        provedor_existente.as_deref(),
+        aceita_livekit,
+        e.midia.disponivel(),
+    ) else {
+        let _ = fila.send(erro(
+            "Esta call usa a nova mídia. Atualize o CALL para entrar.",
+        ));
+        return;
+    };
+
     // Sair da voz anterior antes de entrar na nova: ninguem fala em duas
     // salas ao mesmo tempo, e o elo antigo precisa ser desfeito dos dois lados.
     largar_voz(&mut e, id);
@@ -1003,17 +1049,28 @@ fn entrar_voz(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     let pares: Vec<Value> = e.na_voz(&canal).iter().map(Conexao::resumo).collect();
     if let Some(c) = e.conexoes.get_mut(&id) {
         c.canal_voz = Some(canal.clone());
+        c.provedor_midia = Some(provedor.to_string());
     }
 
     let Some(eu) = e.conexoes.get(&id).cloned() else {
         return;
     };
 
-    let _ = fila.send(texto_json(&json!({
+    let midia = if provedor == "livekit" {
+        e.midia
+            .credencial(&codigo, &canal, &id.to_string(), &eu.apelido)
+    } else {
+        None
+    };
+    let mut resposta = json!({
         "tipo": "voz",
         "canal": canal,
         "pares": pares
-    })));
+    });
+    if let Some(midia) = midia {
+        resposta["midia"] = midia;
+    }
+    let _ = fila.send(texto_json(&resposta));
 
     let aviso = json!({ "tipo": "entrou-voz", "membro": eu.resumo(), "canal": canal });
     e.difundir(&codigo, &aviso, Some(id));
@@ -1030,6 +1087,7 @@ fn largar_voz(e: &mut Estado, id: u64) {
     };
     if let Some(c) = e.conexoes.get_mut(&id) {
         c.canal_voz = None;
+        c.provedor_midia = None;
         c.transmitindo = false;
     }
 
@@ -1961,6 +2019,21 @@ fn texto_json(v: &Value) -> Message {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn transporte_fica_fixo_por_sala_durante_a_migracao() {
+        assert_eq!(escolher_provedor_midia(None, true, true), Some("livekit"));
+        assert_eq!(escolher_provedor_midia(None, false, true), Some("malha"));
+        assert_eq!(
+            escolher_provedor_midia(Some("malha"), true, true),
+            Some("malha")
+        );
+        assert_eq!(
+            escolher_provedor_midia(Some("livekit"), true, true),
+            Some("livekit")
+        );
+        assert_eq!(escolher_provedor_midia(Some("livekit"), false, true), None);
+    }
 
     /// A recusa de um `usuario` alegando ser conta e a linha `identidade()`
     /// verifica sozinha, sem servidor nenhum de pe — direto na funcao pura.

@@ -252,6 +252,53 @@
         };
         conferir(await aguardar(fluindo), "áudio realmente trafega (bytes recebidos nos dois lados)");
 
+        titulo("Terceiro participante");
+
+        // Duas pessoas exercitam só um elo. O defeito mais perigoso de uma
+        // malha aparece quando alguém chega depois: a pessoa nova precisa
+        // ofertar dois elos, enquanto cada pessoa antiga responde apenas ao
+        // elo que lhe pertence. São três conexões e seis pontas independentes.
+        const carla = participante("Carla", registro);
+        const audioCarla = await audioSintetico();
+        const bvCarla = await carla.sinal.conectar(ENDERECO, {
+          tipo: "entrar",
+          codigo: bvAna.grupo.codigo,
+          apelido: "Carla",
+          usuario: "malha-carla",
+        });
+        carla.malha.definirIdentidade(bvCarla.eu.id);
+        carla.malha.definirAudioLocal(audioCarla.getAudioTracks()[0], audioCarla);
+
+        const vozCarla = await entrarNaVoz(carla, canalVoz.id);
+        conferir(vozCarla.pares.length === 2, "a terceira pessoa encontra as duas que já estavam na voz");
+        for (const par of vozCarla.pares) carla.malha.abrir(par.id, true);
+
+        const participantes = [ana, bruno, carla];
+        const seisPontasLigadas = () =>
+          participantes.flatMap((p) => [...p.malha.conexoes.values()]).filter(
+            (pc) => pc.connectionState === "connected"
+          ).length;
+        const terceiraLigou = await aguardar(() => seisPontasLigadas() === 6);
+        conferir(terceiraLigou, `os três pares ficam conectados (${seisPontasLigadas()}/6 pontas)`);
+        if (!terceiraLigou) {
+          for (const p of participantes) conferir(false, `diagnóstico — ${diagnostico([p])}`);
+        }
+
+        const todosRecebemAudio = async () => {
+          for (const p of participantes) {
+            if (p.malha.conexoes.size !== 2) return false;
+            for (const pc of p.malha.conexoes.values()) {
+              if ((await bytesRecebidos(pc)) === 0) return false;
+            }
+          }
+          return true;
+        };
+        const audioDosTresFlui = await aguardar(todosRecebemAudio);
+        conferir(
+          audioDosTresFlui,
+          "cada pessoa recebe áudio das outras duas (seis fluxos com bytes)"
+        );
+
         titulo("Qualidade do áudio");
 
         // O que sai na descrição local é o que o outro lado lê para decidir o
@@ -414,17 +461,24 @@
           registro.filter(
             (r) => r.apelido === "Bruno" && r.evento === "trilha" && r.tipo === "audio"
           );
-        const chegaramAsDuas = await aguardar(async () => vozesEsons().length >= 2);
+        const fluxoDoVideoDoBruno = () =>
+          registro.find((r) => r.apelido === "Bruno" && r.tipo === "video")?.fluxo;
+        const chegaramAsDuas = await aguardar(async () => {
+          const fluxos = new Set(vozesEsons().map((r) => r.fluxo));
+          return fluxos.size >= 2 && fluxos.has(fluxoDoVideoDoBruno());
+        });
         const audiosDoBruno = vozesEsons();
         conferir(chegaramAsDuas, "Bruno recebe a voz e o som da tela como trilhas separadas");
         if (chegaramAsDuas) {
+          const audioDaTelaDoBruno = audiosDoBruno.find(
+            (r) => r.fluxo === fluxoDoVideoDoBruno()
+          );
           conferir(
-            audiosDoBruno[0].fluxo !== audiosDoBruno[1].fluxo,
+            audiosDoBruno.some((r) => r.fluxo !== audioDaTelaDoBruno.fluxo),
             "o som da tela chega num fluxo diferente do da voz"
           );
           conferir(
-            audiosDoBruno[1].fluxo ===
-              registro.find((r) => r.apelido === "Bruno" && r.tipo === "video")?.fluxo,
+            audioDaTelaDoBruno.fluxo === fluxoDoVideoDoBruno(),
             "o som da tela chega no mesmo fluxo do vídeo da tela"
           );
         }
@@ -457,8 +511,13 @@
         bruno.sinal.desconectar();
         bruno.malha.fecharTudo();
         await esperar(1200);
-        conferir(ana.malha.pares.length === 0, "Ana descarta o elo de quem saiu");
+        conferir(
+          ana.malha.pares.length === 1 && carla.malha.pares.length === 1,
+          "quem fica descarta somente o elo de quem saiu"
+        );
 
+        carla.sinal.desconectar();
+        carla.malha.fecharTudo();
         ana.sinal.desconectar();
         ana.malha.fecharTudo();
 

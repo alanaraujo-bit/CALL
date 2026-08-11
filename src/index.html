@@ -812,11 +812,11 @@
 
         <nav class="ajustes__abas" role="tablist">
           <button class="aba" type="button" role="tab" data-aba="voz" aria-selected="true">Voz</button>
-          <button class="aba" type="button" role="tab" data-aba="tela" aria-selected="false">Transmissão</button>
           <button class="aba" type="button" role="tab" data-aba="interface" aria-selected="false">Interface</button>
           <button class="aba" type="button" role="tab" data-aba="atalhos" aria-selected="false">Atalhos</button>
           <button class="aba" type="button" role="tab" data-aba="atividade" aria-selected="false">Atividade</button>
           <button class="aba" type="button" role="tab" data-aba="sons" aria-selected="false">Sons</button>
+          <button class="aba" type="button" role="tab" data-aba="cosmeticos" aria-selected="false">Cosméticos</button>
         </nav>
 
         <div class="ajustes__corpo">
@@ -832,39 +832,19 @@
               </button>
 
               <div class="ajustes__secao-corpo">
+                <!-- Cada dispositivo vem com a sua própria forma de conferir,
+                     logo abaixo dele. Escolher um microfone por nome numa lista,
+                     com o medidor a uma seção de distância, é escolher às cegas
+                     — e trocar de fone é a primeira coisa que se faz aqui. -->
                 <div class="ajuste">
                   <div class="ajuste__cabecalho">
                     <label class="ajuste__rotulo" for="ajuste-entrada">Microfone</label>
                     <span class="ajuste__selo" id="selo-entrada">padrão do sistema</span>
                   </div>
                   <select class="campo__entrada" id="ajuste-entrada"></select>
-                </div>
 
-                <div class="ajuste">
-                  <div class="ajuste__cabecalho">
-                    <label class="ajuste__rotulo" for="ajuste-saida">Saída de som</label>
-                    <span class="ajuste__selo" id="selo-saida">padrão do sistema</span>
-                  </div>
-                  <select class="campo__entrada" id="ajuste-saida"></select>
-                </div>
-              </div>
-            </div>
-
-            <div class="ajustes__secao" data-aberto="nao">
-              <button type="button" class="ajustes__secao-topo" aria-expanded="false">
-                <span class="ajustes__secao-glifo" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 9a4 4 0 0 1 0 6"/><path d="M19 7a7 7 0 0 1 0 10"/></svg>
-                </span>
-                <span class="ajustes__secao-titulo">Teste e volume</span>
-                <svg class="ajustes__secao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>
-              </button>
-
-              <div class="ajustes__secao-corpo">
-                <!-- O medidor é o que transforma "ajustar o ruído" em algo que se
-                     vê. A barra é o nível; o traço é onde a porta abre. -->
-                <div class="ajuste">
-                  <div class="ajuste__cabecalho">
-                    <span class="ajuste__rotulo">Teste do microfone</span>
+                  <div class="ajuste__cabecalho ajuste__cabecalho--medidor">
+                    <span class="ajuste__rotulo">Nível</span>
                     <span class="ajuste__valor" id="medidor-estado">parado</span>
                   </div>
                   <div class="medidor" id="medidor">
@@ -873,7 +853,7 @@
                     <div class="medidor__limiar" id="medidor-limiar"></div>
                   </div>
                   <p class="ajuste__dica">
-                    O traço marca o limiar de ativação.
+                    Fale para ver o nível. O traço marca o limiar de ativação.
                   </p>
                 </div>
 
@@ -886,6 +866,29 @@
                   </span>
                 </label>
 
+                <div class="ajuste">
+                  <div class="ajuste__cabecalho">
+                    <label class="ajuste__rotulo" for="ajuste-saida">Saída de som</label>
+                    <span class="ajuste__selo" id="selo-saida">padrão do sistema</span>
+                  </div>
+                  <select class="campo__entrada" id="ajuste-saida"></select>
+                  <button class="botao botao--sutil ajuste__testar" type="button" id="testar-saida">
+                    Tocar um som de teste
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="ajustes__secao" data-aberto="nao">
+              <button type="button" class="ajustes__secao-topo" aria-expanded="false">
+                <span class="ajustes__secao-glifo" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 9a4 4 0 0 1 0 6"/><path d="M19 7a7 7 0 0 1 0 10"/></svg>
+                </span>
+                <span class="ajustes__secao-titulo">Volumes</span>
+                <svg class="ajustes__secao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>
+              </button>
+
+              <div class="ajustes__secao-corpo">
                 <div class="ajuste">
                   <div class="ajuste__cabecalho">
                     <label class="ajuste__rotulo" for="ajuste-ganho">Volume do microfone</label>
@@ -1036,32 +1039,6 @@
                   </div>
                   <p class="ajuste__dica">Amplia textos, campos, ícones e espaçamentos em todo o CALL.</p>
                 </div>
-                <label class="chave">
-                  <input type="checkbox" id="ajuste-brilho-cursor" />
-                  <span class="chave__marca" aria-hidden="true"></span>
-                  <span class="chave__texto">
-                    <strong>Brilho que acompanha o cursor</strong>
-                    <span>Uma luz suave que segue o ponteiro pela janela.</span>
-                  </span>
-                </label>
-                <div class="bloco-controles-brilho" id="bloco-controles-brilho">
-                  <div class="ajuste ajuste--recuado">
-                    <div class="ajuste__cabecalho">
-                      <label class="ajuste__rotulo" for="ajuste-tamanho-brilho">Tamanho do brilho</label>
-                      <span class="ajuste__valor" id="valor-tamanho-brilho">460px</span>
-                    </div>
-                    <input class="deslizante" type="range" id="ajuste-tamanho-brilho" min="280" max="700" step="20" value="460" />
-                    <div class="ajuste__escala-rodape" aria-hidden="true"><span>Menor</span><span>Maior</span></div>
-                  </div>
-                  <div class="ajuste ajuste--recuado">
-                    <div class="ajuste__cabecalho">
-                      <label class="ajuste__rotulo" for="ajuste-intensidade-brilho">Intensidade do brilho</label>
-                      <span class="ajuste__valor" id="valor-intensidade-brilho">100%</span>
-                    </div>
-                    <input class="deslizante" type="range" id="ajuste-intensidade-brilho" min="20" max="160" step="5" value="100" />
-                    <div class="ajuste__escala-rodape" aria-hidden="true"><span>Suave</span><span>Intensa</span></div>
-                  </div>
-                </div>
               </div>
             </div>
             <div class="ajustes__secao" data-aberto="nao">
@@ -1075,7 +1052,7 @@
               <div class="ajustes__secao-corpo">
                 <div class="atualizacoes__linha">
                   <div>
-                    <span class="ajuste__rotulo" id="versao-atual">CALL 0.9.7</span>
+                    <span class="ajuste__rotulo" id="versao-atual">CALL 0.10.0</span>
                     <p class="ajuste__dica" id="estado-atualizacao">Verifique se há uma versão nova.</p>
                   </div>
                   <button class="botao botao--sutil" type="button" id="botao-buscar-atualizacao">Buscar agora</button>
@@ -1092,33 +1069,10 @@
             </div>
           </section>
 
-          <!-- ── Transmissão ─────────────────────────────────────── -->
-          <section class="ajustes__painel" data-painel="tela" hidden>
-            <div class="ajustes__secao" data-aberto="sim">
-              <button type="button" class="ajustes__secao-topo" aria-expanded="true">
-                <span class="ajustes__secao-glifo" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M9 21h6"/></svg>
-                </span>
-                <span class="ajustes__secao-titulo">Transmissão de tela</span>
-                <svg class="ajustes__secao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>
-              </button>
-
-              <div class="ajustes__secao-corpo">
-                <div class="ajuste">
-                  <span class="ajuste__rotulo">Qualidade</span>
-                  <div class="perfis" id="ajuste-perfil"></div>
-                </div>
-
-                <label class="chave">
-                  <input type="checkbox" id="ajuste-som-da-tela" />
-                  <span class="chave__marca" aria-hidden="true"></span>
-                  <span class="chave__texto">
-                    <strong>Compartilhar o som</strong>
-                  </span>
-                </label>
-              </div>
-            </div>
-          </section>
+          <!-- A aba "Transmissão" morava aqui e era uma segunda cópia, inteira,
+               de `#transmitir-dialogo`: os mesmos dois controles, ligados ao
+               mesmo `estado.perfilTela`/`estado.audioDaTela`. Ficou a cópia que
+               aparece na hora de compartilhar, que é quando a decisão importa. -->
 
           <!-- ── Atalhos ─────────────────────────────────────────── -->
           <section class="ajustes__painel" data-painel="atalhos" hidden>
@@ -1273,6 +1227,86 @@
                     Adicionar som pessoal
                   </button>
                   <input type="file" id="sons-pessoais-arquivo" accept="audio/*" hidden>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Cosméticos ──────────────────────────────────────── -->
+          <!-- O primeiro item de um armário que só vai crescer: hoje é só o
+               cursor, mas o mesmo cartão "bloqueado + Em breve" é o molde
+               para boné, banner e o que mais vier a virar cosmético
+               monetizável, sem inventar essa estrutura de novo depois. -->
+          <section class="ajustes__painel" data-painel="cosmeticos" hidden>
+            <div class="ajustes__secao" data-aberto="sim">
+              <button type="button" class="ajustes__secao-topo" aria-expanded="true">
+                <span class="ajustes__secao-glifo" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M5 3l6 16 2-7 7-2z"/></svg>
+                </span>
+                <span class="ajustes__secao-titulo">Cursor</span>
+                <svg class="ajustes__secao-seta" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5"/></svg>
+              </button>
+
+              <div class="ajustes__secao-corpo">
+                <label class="chave">
+                  <input type="checkbox" id="ajuste-cursor-personalizado" />
+                  <span class="chave__marca" aria-hidden="true"></span>
+                  <span class="chave__texto">
+                    <strong>Cursor personalizado do CALL</strong>
+                    <span>Troca a seta do sistema por um cursor temático, no mesmo roxo do resto do app.</span>
+                  </span>
+                </label>
+                <div class="cosmetico-previa" aria-hidden="true">
+                  <img src="cursores/cursor-padrao.svg" alt="">
+                  <img src="cursores/cursor-clicavel.svg" alt="">
+                </div>
+
+                <!-- O brilho morava em "Interface" enquanto o cursor morava
+                     aqui: duas telas para a mesma pergunta, "como é o meu
+                     ponteiro". Agora é uma. -->
+                <label class="chave">
+                  <input type="checkbox" id="ajuste-brilho-cursor" />
+                  <span class="chave__marca" aria-hidden="true"></span>
+                  <span class="chave__texto">
+                    <strong>Brilho que acompanha o cursor</strong>
+                    <span>Uma luz suave que segue o ponteiro pela janela.</span>
+                  </span>
+                </label>
+                <div class="bloco-controles-brilho" id="bloco-controles-brilho">
+                  <div class="ajuste ajuste--recuado">
+                    <div class="ajuste__cabecalho">
+                      <label class="ajuste__rotulo" for="ajuste-tamanho-brilho">Tamanho do brilho</label>
+                      <span class="ajuste__valor" id="valor-tamanho-brilho">460px</span>
+                    </div>
+                    <input class="deslizante" type="range" id="ajuste-tamanho-brilho" min="280" max="700" step="20" value="460" />
+                    <div class="ajuste__escala-rodape" aria-hidden="true"><span>Menor</span><span>Maior</span></div>
+                  </div>
+                  <div class="ajuste ajuste--recuado">
+                    <div class="ajuste__cabecalho">
+                      <label class="ajuste__rotulo" for="ajuste-intensidade-brilho">Intensidade do brilho</label>
+                      <span class="ajuste__valor" id="valor-intensidade-brilho">100%</span>
+                    </div>
+                    <input class="deslizante" type="range" id="ajuste-intensidade-brilho" min="20" max="160" step="5" value="100" />
+                    <div class="ajuste__escala-rodape" aria-hidden="true"><span>Suave</span><span>Intensa</span></div>
+                  </div>
+                </div>
+
+                <p class="ajuste__dica ajuste__dica--solta">Mais cosméticos, em breve</p>
+                <div class="cosmetico-em-breve">
+                  <div class="cosmetico-item">
+                    <span class="cosmetico-item__glifo" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M3 15a9 9 0 0 1 18 0"/><path d="M2 15h20"/><path d="M12 6v3"/></svg>
+                    </span>
+                    <span class="cosmetico-item__nome">Boné</span>
+                    <span class="cosmetico-item__selo">Em breve</span>
+                  </div>
+                  <div class="cosmetico-item">
+                    <span class="cosmetico-item__glifo" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M4 4h16v14l-8-4-8 4z"/></svg>
+                    </span>
+                    <span class="cosmetico-item__nome">Banner de perfil</span>
+                    <span class="cosmetico-item__selo">Em breve</span>
+                  </div>
                 </div>
               </div>
             </div>
