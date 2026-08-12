@@ -13,6 +13,10 @@
 /src/livekit-client.esm.mjs
 /src/LIVEKIT-LICENSE.txt
 
+# Filtro neural de ruído, copiado do pacote npm no mesmo passo. São ~6 MB de
+# modelo embutido: versionar isso incharia o repositório a cada atualização.
+/src/krisp-noise-filter.esm.mjs
+
 # Saída dos testes: capturas de tela da máquina real e relatórios
 /testes/capturas/
 /testes/resultado.json

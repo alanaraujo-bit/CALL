@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head><meta charset="UTF-8" /><title>Supressão neural: reabrir a captura</title></head>
+  <body>
+    <!-- Cobre o ramo que nenhum outro ensaio alcança: o filtro neural
+         continuando vivo enquanto a trilha que ele tratava é trocada por
+         outra. É o que acontece a cada reabertura do microfone no meio da
+         call — trocar de microfone nos ajustes, ligar ou desligar o
+         cancelamento de eco, ou a recaptura automática quando o filtro perde a
+         licença. Todas passam por `abrirMicrofone()` com o processador vivo, o
+         que leva `tratar` ao ramo do `restart`. Se ele falhar, o sintoma é voz
+         muda depois de mexer nos ajustes — o pior jeito de isto quebrar,
+         porque quem mexeu vai culpar o ajuste errado.
+
+         Aqui a trilha anterior é parada **antes** do `restart`, que é mais
+         duro do que o aplicativo faz: `abrirMicrofone` captura a nova primeiro
+         e só depois para a antiga. Passar no caso duro cobre o fácil.
+
+         Ao contrário de `motor-audio.html`, esta página **não** substitui o
+         `getUserMedia`: ela usa o dispositivo falso do Chromium
+         (`--use-fake-device-for-media-stream`), que é uma trilha de
+         dispositivo de verdade. O filtro neural aplica constraints de
+         dispositivo e recusa uma trilha vinda do Web Audio, então é essa a
+         única forma de exercitá-lo sem depender de um microfone físico — que,
+         sendo sem fio, some no meio do ensaio. -->
+    <script type="module" nonce="krisp-reabrir">
+      import { Supressao } from "../src/supressao.js";
+
+      const relatorio = [];
+      let falhas = 0;
+      const conferir = (condicao, descricao) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: Boolean(condicao), descricao });
+      };
+      const entregar = () =>
+        fetch("http://127.0.0.1:8123/resultado", {
+          method: "POST",
+          body: JSON.stringify({ falhas, relatorio }, null, 2),
+        }).catch(() => {});
+
+      // Um `await` que nunca volta não produz relatório nenhum, e "sem
+      // relatório" não diz onde parou. A trava entrega o que já se sabe.
+      let ultimoPasso = "antes de começar";
+      const passo = (texto) => (ultimoPasso = texto);
+      const guarda = setTimeout(() => {
+        conferir(false, `travou em: ${ultimoPasso}`);
+        entregar().then(() => window.close());
+      }, 25_000);
+
+      const pedir = () =>
+        navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: false,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 48000,
+          },
+          video: false,
+        });
+
+      const contexto = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
+      let degradou = 0;
+      const supressao = new Supressao({ aoDegradar: () => degradou++ });
+
+      try {
+        passo("primeira captura");
+        const primeiro = await pedir();
+        passo("primeira escolha de motor");
+        const pedida = await supressao.prepararCaptura(true);
+        conferir(
+          supressao.motor === "neural" && pedida.noiseSuppression === false,
+          `o motor neural é escolhido e desliga o supressor nativo (motor: ${supressao.motor})`
+        );
+
+        passo("primeiro tratar");
+        const tratadaA = await supressao.tratar(primeiro.getAudioTracks()[0], contexto);
+        conferir(
+          tratadaA !== primeiro.getAudioTracks()[0] && tratadaA?.readyState === "live",
+          `o filtro neural devolve uma trilha própria e viva${
+            supressao.causa ? ` (recusou: ${supressao.causa})` : ""
+          }`
+        );
+
+        // O caso duro: o processador reencontra o mundo com o antecessor já
+        // parado. `abrirMicrofone` é mais gentil que isto.
+        passo("parar a trilha anterior");
+        primeiro.getTracks().forEach((t) => t.stop());
+
+        passo("segunda captura");
+        const segundo = await pedir();
+        passo("segundo tratar (ramo do restart)");
+        const tratadaB = await supressao.tratar(segundo.getAudioTracks()[0], contexto);
+
+        conferir(
+          supressao.motor === "neural",
+          `o motor continua neural depois de reabrir o microfone (${supressao.motor})`
+        );
+        conferir(tratadaB?.readyState === "live", "a trilha tratada continua viva depois de reabrir");
+        conferir(degradou === 0, "reabrir o microfone não é confundido com uma queda do filtro");
+
+        passo("soltar");
+        await supressao.soltar();
+        conferir(true, "soltar devolve o filtro sem travar");
+
+        segundo.getTracks().forEach((t) => t.stop());
+      } catch (erro) {
+        conferir(false, `execução sem exceções: ${erro?.message ?? erro}`);
+      } finally {
+        await contexto.close().catch(() => {});
+      }
+
+      clearTimeout(guarda);
+      await entregar();
+      document.title = falhas ? "FALHOU" : "PASSOU";
+      window.close();
+    </script>
+  </body>
+</html>

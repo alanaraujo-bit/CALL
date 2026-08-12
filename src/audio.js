@@ -9,10 +9,17 @@
  * O grafo é deliberadamente raso. Cada nó a mais é trabalho por bloco de 128
  * amostras, 375 vezes por segundo:
  *
- *   microfone  → filtros nativos → passa-alta → porta → limitador → WebRTC
+ *   microfone  → supressão → passa-alta → porta → limitador → WebRTC
  *   recebido   → ganho da pessoa → folga → ganho geral → limitador → alto-falante
  *   avisos     → ganho dos avisos → alto-falante
  *   soundboard → ganho do soundboard → destino (WebRTC) e alto-falante
+ *
+ * A primeira etapa da captura é a única que sabe separar voz de não-voz, e
+ * quem a escolhe é `supressao.js`: rede neural quando ela carrega, isolamento
+ * do sistema operacional quando não, supressor nativo do Chromium como chão.
+ * As três são exclusivas — empilhar duas produz ruído musical — e a escolha
+ * também decide se a porta de ruído fica de pé, porque uma porta depois de uma
+ * rede neural come sílaba em troca de quase nada.
  *
  * Os avisos — os sons de entrar e sair da voz, sintetizados em `sons.js` —
  * penduram-se no mesmo contexto, e não em um `<audio>` solto, por dois
@@ -34,6 +41,7 @@
  */
 
 import { tocar as tocarSom } from "./sons.js";
+import { Supressao } from "./supressao.js";
 
 /** Preferências de áudio e seus padrões. Tudo o que a interface pode mudar. */
 export const AUDIO_PADRAO = {
@@ -41,8 +49,12 @@ export const AUDIO_PADRAO = {
   saida: "", // deviceId do alto-falante; vazio = o do sistema
   ganhoEntrada: 1, // 0 a GANHO_ENTRADA_MAX
   volumeGeral: 1, // 0 a 2
-  /** Eco, ruído e ganho usam o APM nativo do Chromium/WebView2. */
+  /** Eco e ganho usam o APM nativo do Chromium/WebView2. */
   cancelarEco: true,
+  /** Liga a redução de ruído. *Qual* motor atende — neural, do sistema ou o
+   *  nativo — é decisão de `supressao.js`, não de quem marca a caixa: depende
+   *  do que carregou nesta máquina, e é informação que ninguém tem antes de
+   *  tentar. A interface mostra qual ganhou. */
   suprimirRuido: true,
   ganhoAutomatico: true,
   /** Nossa porta de ruído, que age sobre o que sobra dos filtros acima. */
@@ -177,12 +189,25 @@ export function criarLimitador(contexto, { teto = TETO_LIMITADOR } = {}) {
   return { entrada: compressor, saida: compensacao };
 }
 
-/** Constraints efetivamente pedidas ao dispositivo. Exportada para que os
- * testes garantam que os filtros escolhidos chegam à captura real. */
-export function restricoesDoMicrofone(config) {
+/**
+ * Constraints efetivamente pedidas ao dispositivo. Exportada para que os
+ * testes garantam que os filtros escolhidos chegam à captura real.
+ *
+ * `supressao` é a decisão já tomada por `Supressao.prepararCaptura` — qual
+ * supressor o sistema deve ligar. Ela chega separada de `config` porque
+ * depende do que carregou nesta máquina, e não do que a pessoa marcou: com o
+ * motor neural valendo, **os dois pedidos ao sistema saem desligados**, senão
+ * haveria supressor em cima de supressor.
+ */
+export function restricoesDoMicrofone(config, supressao = null) {
+  const nativa = supressao ?? { noiseSuppression: config.suprimirRuido, voiceIsolation: false };
   return {
     echoCancellation: config.cancelarEco,
-    noiseSuppression: config.suprimirRuido,
+    noiseSuppression: nativa.noiseSuppression,
+    // Só entra no pedido quando é para ligar: `voiceIsolation: false` em um
+    // navegador que não conhece a constraint é ruído no log, e em alguns
+    // WebViews antigos é `OverconstrainedError`.
+    ...(nativa.voiceIsolation ? { voiceIsolation: true } : {}),
     autoGainControl: config.ganhoAutomatico,
     channelCount: 1,
     sampleRate: 48000,
@@ -242,6 +267,21 @@ export class MotorDeAudio {
   #ouvinteDoMedidor = null;
   #moduloCarregado = false;
   #encerrando = null; // promessa do `encerrar()` em andamento, se houver
+  #supressao;
+  #recapturando = false; // trava contra o laço recaptura → degrada → recaptura
+
+  constructor({ supressao } = {}) {
+    // Quando o filtro neural cai depois de já estar valendo — a licença negada
+    // na hora de publicar é o caso real —, o supressor nativo precisa voltar,
+    // e só o `getUserMedia` pode ligá-lo. Daí a recaptura a partir daqui.
+    this.#supressao =
+      supressao ?? new Supressao({ aoDegradar: () => this.#recapturarPorSupressao() });
+  }
+
+  /** O motor de supressão escolhido, para a interface poder dizer qual é. */
+  get supressao() {
+    return this.#supressao;
+  }
 
   get config() {
     return { ...this.#config };
@@ -319,7 +359,10 @@ export class MotorDeAudio {
    */
   async abrirMicrofone() {
     const contexto = await this.contexto();
-    const fluxo = await this.#capturar();
+    // A escolha do supressor vem antes da captura porque é ela que decide as
+    // constraints: com o motor neural valendo, o supressor do sistema tem que
+    // sair do caminho no próprio `getUserMedia`.
+    const { fluxo, trilhaBruta, trilhaTratada } = await this.#capturarComSupressao(contexto);
 
     // Só troca depois de ter o novo em mãos: se o dispositivo escolhido sumiu,
     // é melhor continuar com o antigo do que ficar mudo.
@@ -350,23 +393,69 @@ export class MotorDeAudio {
     }
     await this.#montarPorta(contexto);
 
-    this.#fonteEntrada = contexto.createMediaStreamSource(fluxo);
-    this.#fonteEntrada.connect(this.#passaAlta);
+    const fluxoParaOGrafo =
+      trilhaTratada === trilhaBruta ? fluxo : new MediaStream([trilhaTratada]);
 
-    const trilhaBruta = fluxo.getAudioTracks()[0];
+    this.#fonteEntrada = contexto.createMediaStreamSource(fluxoParaOGrafo);
+    this.#fonteEntrada.connect(this.#passaAlta);
+    // A porta só vale quando o motor é o nativo; ver `portaFazSentido`.
+    this.#ajustarPorta();
+
     if (trilhaBruta) trilhaBruta.contentHint = "speech";
-    const trilhaTratada = this.#destino.stream.getAudioTracks()[0];
-    if (trilhaTratada) trilhaTratada.contentHint = "speech";
+    const trilhaDeEnvio = this.#destino.stream.getAudioTracks()[0];
+    if (trilhaDeEnvio) trilhaDeEnvio.contentHint = "speech";
 
     return this.#destino.stream;
   }
 
-  async #capturar() {
+  /**
+   * Captura já com o supressor certo ligado — e, se preciso, captura de novo.
+   *
+   * A ordem é forçada pelo problema: as constraints têm de sair antes da
+   * captura, mas o filtro neural só pode ser posto no caminho depois, quando
+   * existe uma trilha para ele tratar. Se ele falhar nesse segundo momento, a
+   * captura que acabou de acontecer pediu o supressor do sistema **desligado**
+   * para dar lugar a ele — e a pessoa fica sem supressão nenhuma, que é pior
+   * do que nunca ter tentado.
+   *
+   * Por isso a segunda consulta e a recaptura. Ela custa uma reabertura de
+   * dispositivo, acontece no máximo uma vez, e só quando o motor mudou entre a
+   * primeira consulta e agora. No caminho normal — filtro neural que carrega e
+   * funciona, ou máquina que nunca teve — as duas consultas dão o mesmo
+   * resultado e nada é refeito.
+   *
+   * A supressão neural entra **antes** de tudo o que o grafo faz: ela é a
+   * única etapa que sabe distinguir voz de não-voz, e as outras (passa-alta,
+   * porta, ganho) só ficam mais fáceis com um sinal já limpo. Nos outros
+   * motores `tratar` devolve a mesma trilha e o grafo nem percebe.
+   */
+  async #capturarComSupressao(contexto) {
+    const ligada = this.#config.suprimirRuido;
+    const pedida = await this.#supressao.prepararCaptura(ligada);
+    let fluxo = await this.#capturar(pedida);
+    let trilhaBruta = fluxo.getAudioTracks()[0];
+    let trilhaTratada = await this.#supressao.tratar(trilhaBruta, contexto);
+
+    const revista = await this.#supressao.prepararCaptura(ligada);
+    if (
+      revista.noiseSuppression !== pedida.noiseSuppression ||
+      revista.voiceIsolation !== pedida.voiceIsolation
+    ) {
+      fluxo.getTracks().forEach((t) => t.stop());
+      fluxo = await this.#capturar(revista);
+      trilhaBruta = fluxo.getAudioTracks()[0];
+      trilhaTratada = await this.#supressao.tratar(trilhaBruta, contexto);
+    }
+
+    return { fluxo, trilhaBruta, trilhaTratada };
+  }
+
+  async #capturar(nativa) {
     const c = this.#config;
     const pedido = {
       // Voz é mono: dois canais dobrariam codificação e rede para transportar
       // duas cópias do mesmo microfone.
-      audio: restricoesDoMicrofone(c),
+      audio: restricoesDoMicrofone(c, nativa),
       video: false,
     };
 
@@ -382,6 +471,44 @@ export class MotorDeAudio {
       }
       throw erro;
     }
+  }
+
+  /**
+   * Reabre o microfone porque o motor de supressão mudou por baixo — o caso
+   * real é o filtro neural cair depois de já estar valendo, deixando a captura
+   * com supressor nenhum.
+   *
+   * A trava existe porque a recaptura chama `prepararCaptura`, que pode
+   * anunciar outra degradação: sem ela, um filtro que insista em falhar vira
+   * um laço de reaberturas de dispositivo.
+   */
+  async #recapturarPorSupressao() {
+    if (!this.ativo || this.#recapturando) return;
+    this.#recapturando = true;
+    try {
+      await this.abrirMicrofone();
+    } catch (erro) {
+      console.warn("[audio] não foi possível recapturar sem o filtro neural", erro);
+    } finally {
+      this.#recapturando = false;
+    }
+  }
+
+  /**
+   * Liga ou desliga a porta de ruído no worklet.
+   *
+   * A porta é do usuário, mas ela sai de cena sob o filtro neural: com uma
+   * rede neural na frente, o piso que ela mede desaba para perto do silêncio
+   * digital e `piso + margem` passa a morder sílaba. Nos demais motores ela
+   * fica — ver `portaFazSentido`, que explica o porquê de cada caso.
+   *
+   * Em repouso o worklet continua rodando o detector de fala, então o
+   * indicador de quem está falando e o medidor do painel não mudam em nada.
+   */
+  #ajustarPorta() {
+    if (!this.#worklet) return;
+    const ligada = this.#config.porta && this.#supressao.portaFazSentido;
+    this.#worklet.parameters.get("ativa").value = ligada ? 1 : 0;
   }
 
   async #montarPorta(contexto) {
@@ -411,7 +538,7 @@ export class MotorDeAudio {
         }
       }
     };
-    this.#worklet.parameters.get("ativa").value = this.#config.porta ? 1 : 0;
+    this.#ajustarPorta();
     this.#worklet.parameters.get("limiar").value = this.#config.limiar;
     this.#worklet.parameters.get("ganho").value = this.#config.ganhoEntrada;
     // Uma assinatura pode ser criada antes da primeira captura. Nesse caso o
@@ -592,7 +719,7 @@ export class MotorDeAudio {
     if (this.#avisos) this.#avisos.gain.value = depois.volumeSons;
     if (this.#soundboard) this.#soundboard.gain.value = depois.volumeSoundboard;
     if (this.#worklet) {
-      this.#worklet.parameters.get("ativa").value = depois.porta ? 1 : 0;
+      this.#ajustarPorta();
       this.#worklet.parameters.get("limiar").value = depois.limiar;
       this.#worklet.parameters.get("ganho").value = depois.ganhoEntrada;
     }
@@ -673,6 +800,10 @@ export class MotorDeAudio {
 
   async #encerrarAgora() {
     this.soltarMicrofone();
+    // Antes de fechar o contexto: o filtro neural tem um worklet e um módulo
+    // WASM pendurados nele, e sem o `destroy` entrar e sair da voz algumas
+    // vezes acumula instâncias que ninguém mais alcança.
+    await this.#supressao.soltar();
     for (const id of [...this.#saidas.keys()]) this.desligarSaida(id);
     this.medir(null);
     this.#ouvintesDeNivel.clear();

@@ -51,13 +51,23 @@ createServer(async (req, res) => {
     // Este teste precisa rodar sob a mesma política da WebView2. Foi justamente
     // uma diferença entre o Edge solto e o aplicativo empacotado que deixou a
     // consulta HTTPS de regiões do LiveKit passar no teste e falhar em produção.
-    if (req.url.split("?")[0] === "/testes/livekit-nuvem.html") {
+    // O motor de áudio entrou na lista pelo mesmo motivo: o filtro neural de
+    // ruído carrega WASM e monta um AudioWorklet, e é `script-src` que decide
+    // se isso pode. Testá-lo no Edge solto responderia "carrega" para um
+    // pacote onde ele não carrega.
+    const nonces = {
+      "/testes/livekit-nuvem.html": "livekit-nuvem",
+      "/testes/motor-audio.html": "motor-audio",
+      "/testes/krisp-reabrir.html": "krisp-reabrir",
+    };
+    const nonce = nonces[req.url.split("?")[0]];
+    if (nonce) {
       // O aplicativo recebe nonces gerados pelo Tauri. O roteiro inline ganha
-      // um nonce fixo só para poder executar; `connect-src`, que é o alvo desta
-      // regressão, continua idêntico ao pacote real.
+      // um nonce fixo só para poder executar; o resto da política — que é o
+      // alvo destas regressões — continua idêntico ao pacote real.
       cabecalhos["Content-Security-Policy"] = CSP_TAURI.replace(
         "script-src 'self'",
-        "script-src 'self' 'nonce-livekit-nuvem'"
+        `script-src 'self' 'nonce-${nonce}'`
       );
     }
     res.writeHead(200, cabecalhos);

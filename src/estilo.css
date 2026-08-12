@@ -25,6 +25,10 @@
   --vivo: #4fc98c;
   --perigo: #e2645d;
   --perigo-suave: rgba(226, 100, 93, 0.12);
+  /* Nem tudo que precisa ser notado deu errado. Uma escolha legítima que traz
+     uma consequência ruim — a saída de som que desliga o cancelamento de eco,
+     por exemplo — pede aviso, não alarme de erro. */
+  --atencao: #d9a441;
 
   --raio-p: 7px;
   --raio-m: 10px;
@@ -2183,6 +2187,14 @@ svg {
   overflow: hidden;
 }
 
+/* Alguém transmitindo tela: o palco vira a coluna inteira, e não uma faixa
+   de 40vh dividindo espaço com um chat escondido embaixo. */
+.palco--cheio {
+  flex: 1;
+  height: auto;
+  padding-bottom: 14px;
+}
+
 .palco__grade {
   height: 100%;
   display: grid;
@@ -2339,11 +2351,13 @@ svg {
   background: var(--superficie-3);
 }
 
+/* Largura e altura explícitas, e não `aspect-ratio`: a base `.avatar` já
+   fixa `height: 28px`, e uma altura explícita sempre vence `aspect-ratio` —
+   sem repetir a altura aqui, só a largura mudava, e a foto esticava num
+   retângulo achatado em vez de continuar redonda. */
 .avatar--palco {
-  width: 30%;
-  aspect-ratio: 1;
-  min-width: 44px;
-  max-width: 96px;
+  width: 84px;
+  height: 84px;
   font-size: 28px;
   border: 2px solid transparent;
   transition: border-color var(--transicao), box-shadow var(--transicao);
@@ -4049,6 +4063,27 @@ svg {
 
 .ajuste__dica--erro {
   color: var(--perigo);
+}
+
+/* Um aviso que só aparece porque a escolha de quem usa criou o problema. Não é
+   erro — nada quebrou —, mas precisa ser mais alto que uma dica comum, senão
+   ninguém liga o eco que a sala escuta à saída de som que escolheu aqui. */
+.ajuste__dica--alerta {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--atencao) 35%, transparent);
+  background: color-mix(in srgb, var(--atencao) 10%, transparent);
+  color: var(--texto-2);
+}
+
+/* Alinha a linha com o texto da chave acima dela, e não com a borda do painel:
+   ela fala sobre aquela chave, e a indentação é o que diz isso sem precisar
+   repetir o nome do ajuste. A folga embaixo é o resto do mesmo recado — sem
+   ela a linha fica à mesma distância das duas chaves e passa a parecer legenda
+   da de baixo. */
+.ajuste__dica--recuada {
+  margin-left: 34px;
+  margin-bottom: 10px;
 }
 
 .ajuste__escala-rodape {

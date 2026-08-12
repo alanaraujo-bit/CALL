@@ -26,11 +26,23 @@ export class SalaLiveKit {
   #fluxosRemotos = new Map();
   #falantes = new Set();
 
-  constructor({ aoTrilha, aoFimDeTrilha, aoEstado, aoFala, carregarSdk = carregarSdkPadrao }) {
+  constructor({
+    aoTrilha,
+    aoFimDeTrilha,
+    aoEstado,
+    aoFala,
+    aoEntrar,
+    carregarSdk = carregarSdkPadrao,
+  }) {
     this.aoTrilha = aoTrilha;
     this.aoFimDeTrilha = aoFimDeTrilha;
     this.aoEstado = aoEstado ?? (() => {});
     this.aoFala = aoFala ?? (() => {});
+    /** Recebe a sala assim que ela está conectada e com o microfone
+     *  publicado. Existe porque o filtro neural de ruído confere a licença na
+     *  sala: o SDK faz essa entrega sozinho para as trilhas que ele mesmo
+     *  processa, mas a nossa é montada à mão no grafo de áudio. */
+    this.aoEntrar = aoEntrar ?? (() => {});
     this.#carregarSdk = carregarSdk;
   }
 
@@ -97,6 +109,14 @@ export class SalaLiveKit {
       }
       if (!this.#trilhaAudio) throw new Error("O microfone não está pronto.");
       this.#publicacaoAudio = await this.#publicarMicrofone();
+      // Depois da publicação, e sem derrubar a entrada se falhar: um filtro de
+      // ruído que não pôde conferir a licença é uma call com mais ruído, não
+      // uma call que não acontece.
+      try {
+        await this.aoEntrar(sala);
+      } catch (erro) {
+        console.warn("[livekit] o aviso de entrada na sala falhou", erro);
+      }
     } catch (erro) {
       if (this.#sala === sala) this.#sala = null;
       await sala.disconnect(false).catch(() => {});

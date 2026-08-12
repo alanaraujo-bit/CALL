@@ -2,7 +2,10 @@
 <html lang="pt-BR">
   <head><meta charset="UTF-8" /><title>Teste do motor de áudio</title></head>
   <body>
-    <script type="module">
+    <!-- O nonce casa com o que `servir.mjs` põe no cabeçalho: esta página roda
+         sob a CSP real do aplicativo, porque é ela que decide se o WASM e o
+         worklet do filtro neural podem carregar. -->
+    <script type="module" nonce="motor-audio">
       import { AUDIO_PADRAO, MotorDeAudio } from "../src/audio.js";
 
       const relatorio = [];
@@ -113,6 +116,64 @@
           niveis.some((item) => item.nivel > -70),
           `o detector recebe sinal (${Math.max(...niveis.map((item) => item.nivel)).toFixed(1)} dB)`
         );
+
+        // Qual supressor atendeu. Não é uma asserção de qualidade — nenhum
+        // teste automático ouve ruído —, mas responde a pergunta que separa
+        // "o filtro neural não limpa" de "o filtro neural nem entrou no
+        // caminho", que é onde a investigação sempre começa.
+        //
+        // A exigência muda com a fonte, e não por conveniência: o filtro
+        // neural aplica constraints de **dispositivo** na trilha que recebe, e
+        // um `MediaStreamAudioDestinationNode` não tem o que satisfazer — ele
+        // recusa com "Cannot satisfy constraints". Com microfone sintético,
+        // então, o que se pode exigir é o contrário: que a recusa caia num
+        // motor que funciona em vez de deixar a captura sem supressão nenhuma,
+        // que é o modo de falhar que esta cadeia tem de nunca ter.
+        const supressao = motor.supressao;
+        const ondeParou = `motor: ${supressao.motor}${
+          supressao.causa ? ` — ${supressao.causa}` : supressao.detalhe ? ` — ${supressao.detalhe}` : ""
+        }`;
+        if (microfoneReal) {
+          conferir(
+            supressao.motor === "neural",
+            `o filtro neural entra no caminho do microfone (${ondeParou})`
+          );
+        } else {
+          conferir(
+            supressao.motor === "sistema" || supressao.motor === "nativa",
+            `a recusa do filtro neural cai num supressor que funciona (${ondeParou})`
+          );
+        }
+        // A porta em cima da rede neural come sílaba: o piso que ela mede
+        // desaba para perto do silêncio digital. Ver `portaFazSentido`.
+        conferir(
+          supressao.motor !== "neural" || !supressao.portaFazSentido,
+          "a porta de ruído fica em repouso quando o filtro neural está valendo"
+        );
+        // E o contrário, que é onde já houve engano: só o Krisp aposenta a
+        // porta. Com o isolamento do sistema — que pode ser promessa vazia numa
+        // máquina sem o recurso — ou com a redução desligada, tirar a porta
+        // deixaria a pessoa sem defesa nenhuma e sem sinal disso.
+        conferir(
+          supressao.motor === "neural" || supressao.portaFazSentido,
+          `fora do filtro neural a porta continua de pé (motor: ${supressao.motor})`
+        );
+        // Só se pode exigir onde existe fala garantida. No modo de microfone
+        // real a sala pode estar em silêncio, e "ninguém falou" não é defeito
+        // do detector.
+        if (!microfoneReal) {
+          conferir(
+            niveis.some((item) => item.falando),
+            "o detector de fala continua reportando com a porta em repouso"
+          );
+        }
+
+        // A troca de canal de voz — `soltarMicrofone()` + `abrirMicrofone()`
+        // com o filtro neural vivo entre os dois — tem ensaio próprio em
+        // `krisp-reabrir.html`. Não cabe aqui: este ensaio troca o
+        // `getUserMedia` por trilhas do Web Audio, que o filtro neural recusa,
+        // e no modo de microfone real dependeria de um aparelho sem fio não
+        // desligar no meio.
 
         fonte.disconnect();
         analisador.disconnect();

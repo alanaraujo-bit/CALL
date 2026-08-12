@@ -254,6 +254,8 @@ const livekit = new SalaLiveKit({
   aoFala: (id, falando) => {
     if (id !== estado.meuId) marcarFala(id, falando);
   },
+  // O filtro neural de ruído só confere a licença com a sala em mãos.
+  aoEntrar: (sala) => motor.supressao.aoPublicar(sala),
 });
 
 /** O servidor escolhe o transporte por call. Servidores antigos não enviam
@@ -2639,7 +2641,7 @@ function desenharConversa() {
   const alvo = alvoDaConversa();
 
   $("titulo-canal").textContent = alvo ? alvo.nome : "Nenhum canal";
-  $("redator").classList.toggle("oculto", !alvo);
+  $("redator").classList.toggle("oculto", !alvo || telaCheiaAtiva());
 
   if (!alvo) {
     linhaDoTempo.textContent = "";
@@ -4339,7 +4341,15 @@ function pararTransmissao() {
  * tocar áudio contínuo por partes sem estalos entre elas. Se o atraso
  * acumulado passar de meio segundo (rede lenta, pedaço perdido), o cursor
  * pula direto para "agora": preferir som ao vivo, mesmo com uma perda
- * inaudível de continuidade, a ir ficando cada vez mais atrasado. */
+ * inaudível de continuidade, a ir ficando cada vez mais atrasado.
+ *
+ * Isto roda no **mesmo `AudioContext` do motor de voz**, e não em um próprio.
+ * Um segundo contexto é um segundo caminho de renderização aberto no
+ * Chromium, e abrir um caminho novo no meio da chamada é uma causa conhecida
+ * de o AEC perder o alinhamento com o sinal de referência — ou seja, de o
+ * microfone de quem transmite passar a devolver para a sala tudo o que sai
+ * dos alto-falantes dele. Era exatamente o sintoma relatado: começou a
+ * transmissão, todo mundo passou a se ouvir. */
 
 let contextoDeAudioDaTela = null;
 let destinoDeAudioDaTela = null;
@@ -4371,7 +4381,10 @@ function codificarBase64(bytes) {
 }
 
 function tocarPedacoDeAudioDaTela(pedaco) {
-  if (!contextoDeAudioDaTela) return;
+  // O contexto agora é emprestado do motor de voz, então ele pode fechar por
+  // baixo — sair da voz com a transmissão no ar é o caminho. Um `createBuffer`
+  // em contexto fechado lança, e lançaria a cada 20 ms.
+  if (!contextoDeAudioDaTela || contextoDeAudioDaTela.state === "closed") return;
 
   const bytes = decodificarBase64(pedaco.dados);
   const amostras = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
@@ -4402,7 +4415,8 @@ function tocarPedacoDeAudioDaTela(pedaco) {
  *  configurado, por exemplo) — a transmissão de vídeo segue de qualquer
  *  forma, só sem o som do sistema. */
 async function iniciarAudioDaTela() {
-  contextoDeAudioDaTela = new AudioContext({ sampleRate: 48000 });
+  // Emprestado do motor, nunca criado aqui — ver a nota no topo da seção.
+  contextoDeAudioDaTela = await motor.contexto();
   destinoDeAudioDaTela = contextoDeAudioDaTela.createMediaStreamDestination();
   proximoInicioDeAudio = 0;
 
@@ -4421,7 +4435,8 @@ async function iniciarAudioDaTela() {
     pararDeOuvirAudio = null;
     pararDeOuvirErroAudio?.();
     pararDeOuvirErroAudio = null;
-    contextoDeAudioDaTela?.close().catch(() => {});
+    for (const trilha of destinoDeAudioDaTela?.stream.getAudioTracks() ?? []) trilha.stop();
+    destinoDeAudioDaTela?.disconnect();
     contextoDeAudioDaTela = null;
     destinoDeAudioDaTela = null;
     avisar("Não foi possível capturar o som do sistema.", "neutro");
@@ -4438,7 +4453,17 @@ function pararAudioDaTela() {
   pararDeOuvirAudio = null;
   pararDeOuvirErroAudio?.();
   pararDeOuvirErroAudio = null;
-  contextoDeAudioDaTela.close().catch(() => {});
+  // O contexto é do motor de voz e continua vivo depois da transmissão: aqui
+  // só se solta o que era nosso. Fechá-lo derrubaria a chamada inteira.
+  //
+  // Parar a trilha é obrigatório justamente porque o contexto sobrevive.
+  // Antes, o `close()` levava tudo junto por tabela; agora ninguém mais faria
+  // isso — `retirarTela` desiste da publicação com `stopLocalTrackOnUnpublish:
+  // false`, de propósito, para não parar trilha que não é dela. Sem esta linha
+  // cada transmissão deixa um nó e uma trilha vivos até a pessoa sair da voz,
+  // e transmitir várias vezes na mesma call vai empilhando.
+  for (const trilha of destinoDeAudioDaTela.stream.getAudioTracks()) trilha.stop();
+  destinoDeAudioDaTela.disconnect();
   contextoDeAudioDaTela = null;
   destinoDeAudioDaTela = null;
 }
@@ -4524,6 +4549,18 @@ function alternarMaximizarTela(id) {
   atualizarPalco();
 }
 
+/**
+ * Quando alguém liga a transmissão de tela, o palco toma o lugar do chat em
+ * vez de dividir a coluna com ele, do mesmo jeito que o Discord: uma
+ * transmissão espremida numa faixa de 40vh, com o chat embaixo, não dá para
+ * acompanhar direito. A sala de voz sozinha — só avatares, ninguém
+ * transmitindo — continua como sempre, ao lado do chat: aí o palco é
+ * pequeno de propósito, e não sobra o que ver.
+ */
+function telaCheiaAtiva() {
+  return telas.size > 0;
+}
+
 function atualizarPalco() {
   const total = telas.size + presencasDeVoz.size;
   const grade = $("palco-grade");
@@ -4534,6 +4571,11 @@ function atualizarPalco() {
   // coluna só.
   grade.dataset.colunas = String(total <= 1 ? 1 : total <= 4 ? 2 : total <= 9 ? 3 : 4);
   $("palco").classList.toggle("oculto", total === 0);
+
+  const cheio = telaCheiaAtiva();
+  $("palco").classList.toggle("palco--cheio", cheio);
+  $("conversa").classList.toggle("oculto", cheio);
+  $("redator").classList.toggle("oculto", cheio || !alvoDaConversa());
 
   for (const [id, quadro] of telas) {
     const maximizada = id === telaMaximizada;
@@ -4952,6 +4994,9 @@ function prepararAjustes() {
   chave("ajuste-eco", "cancelarEco");
   chave("ajuste-supressao", "suprimirRuido");
   chave("ajuste-agc", "ganhoAutomatico");
+
+  $("ajuste-eco").addEventListener("change", mostrarAvisoDeEcoDaSaida);
+  $("ajuste-supressao").addEventListener("change", () => mostrarMotorDeSupressao());
   chave("ajuste-continuo", "bandaLarga");
   chave("ajuste-sons", "sons");
 
@@ -4985,8 +5030,13 @@ function prepararAjustes() {
     $(id).addEventListener("change", (e) => {
       $(selo).hidden = e.target.value !== "";
       aplicarAudio({ [campo]: e.target.value }, true);
+      if (campo === "saida") mostrarAvisoDeEcoDaSaida();
     });
   }
+
+  // O motor de supressão se decide sozinho, e pode mudar no meio da sessão —
+  // o filtro neural só descobre que não está liberado ao entrar na sala.
+  motor.supressao.assinar(mostrarMotorDeSupressao);
 
   // O microfone se prova sozinho no medidor logo acima; a saída não tem como
   // se provar sem alguém mandar um som por ela.
@@ -5360,6 +5410,51 @@ function atualizarAjustesDaInterface() {
   $("ajuste-cursor-personalizado").checked = estado.cursorPersonalizado;
 }
 
+/**
+ * Diz qual motor de redução de ruído está valendo de fato.
+ *
+ * Sem isto, os três casos são indistinguíveis para quem usa — a caixa marcada
+ * some com o teclado do colega, ou não some, e não há como saber se o motivo é
+ * a máquina, a licença da sala ou o colega estar numa versão antiga. A frase
+ * também é o que separa "a redução não funciona" de "a redução funciona e o
+ * problema é outro" quando alguém vem reclamar.
+ */
+let motorDeSupressao = { motor: "nativa", detalhe: "" };
+
+function mostrarMotorDeSupressao(escolha = motorDeSupressao) {
+  motorDeSupressao = escolha;
+  const linha = $("motor-supressao");
+  const frases = {
+    neural: "Redução neural ativa — o mesmo motor do Discord. Remove teclado, prato e cadeira até por cima da fala.",
+    sistema: "Usando o isolamento de voz do Windows.",
+    nativa: "Usando a redução do sistema: ela tira chiado e ventilador, mas não teclado nem batida durante a fala.",
+  };
+  // A caixa desmarcada manda mais do que a última escolha: enquanto o
+  // microfone não for reaberto, o motor anunciado é o da captura anterior.
+  const frase = estado.audio.suprimirRuido ? frases[escolha.motor] : "";
+  linha.hidden = !frase;
+  if (!frase) return;
+  linha.textContent =
+    escolha.detalhe && escolha.motor !== "neural" ? `${frase} ${escolha.detalhe}` : frase;
+}
+
+/**
+ * O aviso do eco na saída de som.
+ *
+ * O cancelamento de eco do Chromium usa como referência o que sai pelo
+ * dispositivo de renderização **padrão** do sistema. Escolher outra saída aqui
+ * manda o som por um caminho que a referência não conhece: o AEC continua
+ * ligado, continua marcado na interface, e para de cancelar. Quem fez a
+ * escolha vira fonte de eco para a sala inteira e é o único que não ouve.
+ *
+ * Não dá para corrigir por código — é limitação do motor — então resta dizer,
+ * e dizer só para quem se colocou nessa situação.
+ */
+function mostrarAvisoDeEcoDaSaida() {
+  const a = estado.audio;
+  $("aviso-saida-eco").hidden = !(a.saida && a.cancelarEco);
+}
+
 /** Põe na tela o que está no estado. Um só caminho: qualquer mudança passa a
  *  gravar e a chamar isto, em vez de cada controle cuidar do próprio rótulo. */
 function refletirAjustes() {
@@ -5380,6 +5475,8 @@ function refletirAjustes() {
   $("ajuste-eco").checked = a.cancelarEco;
   $("ajuste-supressao").checked = a.suprimirRuido;
   $("ajuste-agc").checked = a.ganhoAutomatico;
+  mostrarAvisoDeEcoDaSaida();
+  mostrarMotorDeSupressao();
   $("ajuste-continuo").checked = a.bandaLarga;
   $("ajuste-sons").checked = a.sons;
   $("bloco-sons").hidden = !a.sons;

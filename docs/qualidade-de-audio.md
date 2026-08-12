@@ -229,6 +229,9 @@ recebe e melhoram na hora.
 4. **CSP.** `src-tauri/tauri.conf.json:28` já tem `wasm-unsafe-eval`, então o
    WASM carrega. Mas se o plugin buscar o modelo de um CDN, o `connect-src`
    vai bloquear. Verificar se o pacote empacota o modelo.
+   *Resolvido, e o palpite estava meio certo:* o modelo vem embutido, mas o
+   plugin busca a **licença** em `integrations.livekit.io` e monta o worklet a
+   partir de um `blob:`. Ver "A CSP quase engoliu tudo isto".
 
 ---
 
@@ -298,6 +301,104 @@ limitador ganhou uma verificação de **fator de crista** — os dois testes que
 já existiam ("voz normal atravessa", "picos não clipam") passavam com o
 ceifador, porque nenhum dos dois olhava a forma da onda.
 
+## Feito na rodada seguinte — a supressão neural e o eco
+
+O item 1 (o principal) e o 4/4b foram implementados. O que mudou:
+
+### Supressão neural, com queda planejada
+
+`src/supressao.js` é novo e é quem escolhe o motor. São três, **exclusivos
+entre si** — dois supressores em série produzem ruído musical:
+
+| Motor | O que é | Quando entra |
+|---|---|---|
+| `neural` | `@livekit/krisp-noise-filter`, o mesmo Krisp do Discord | sempre que carregar |
+| `sistema` | constraint `voiceIsolation` (Windows Studio Effects) | se o Krisp não carregar |
+| `nativa` | supressor do Chromium + porta de ruído | chão, quando nada acima existe |
+
+O ponto de inserção é **antes** do grafo: o Krisp trata a trilha crua do
+`getUserMedia` e é a saída dele que alimenta `createMediaStreamSource`. Se
+fosse aplicado na trilha publicada, viria depois da porta e do limitador — que
+é o lugar errado, porque a porta precisa medir um sinal já limpo.
+
+Três armadilhas que a implementação teve de cobrir:
+
+1. **O Krisp roda no `AudioContext` do motor de voz**, não em um próprio. Um
+   contexto a mais é outro caminho de renderização aberto — o mesmo risco de
+   AEC do item 4b.
+2. **A licença só é conferida com a sala em mãos.** O SDK chama `onPublish`
+   sozinho para trilhas que ele mesmo processa; a nossa é montada à mão, então
+   a chamada saiu daqui (`livekit.js` ganhou `aoEntrar`). Se a licença for
+   negada, o pacote emite `disable-lk-krisp-noise-filter` — o motor ouve esse
+   evento e **recaptura o microfone com o supressor nativo**. Sem isso a pessoa
+   ficaria sem supressão nenhuma, porque o nativo foi desligado para dar lugar
+   ao Krisp.
+3. **A porta de ruído fica em repouso sob o motor neural** (`ativa = 0`). O
+   piso adaptativo dela aprende do sinal que recebe; com uma rede neural na
+   frente esse piso desaba para perto do silêncio digital e `piso + margem`
+   passa a cortar sílaba. O detector `falando` continua rodando, então o
+   indicador de fala e o medidor não mudam.
+
+### A CSP quase engoliu tudo isto
+
+O Krisp **não** é autossuficiente, ao contrário do que a primeira leitura do
+pacote sugeria. Ele precisa de duas coisas que a CSP do CALL negava:
+
+| Falta | Erro | Correção em `tauri.conf.json` |
+|---|---|---|
+| conferir a licença em `integrations.livekit.io` no `init` | `Failed to fetch` | `connect-src … https://integrations.livekit.io` |
+| montar o worklet a partir de uma URL `blob:` | `WORKLET_NOT_SUPPORTED` | `script-src … blob:` e `worker-src 'self' blob:` |
+
+**As duas falhavam calado.** O `init` lança, a queda para o motor de baixo
+acontece como projetada, e o aplicativo segue funcionando — com ruído. Nada na
+tela dizia que a peça principal não tinha entrado. Teria sido exatamente mais
+uma rodada de "mexemos e não resolveu".
+
+Só apareceram porque `testes/servir.mjs` passou a servir a CSP real também para
+as páginas de áudio. Num navegador sem política — que é como o ensaio rodava
+antes — o filtro carregava e o teste dizia que estava tudo certo.
+
+**Medido:** com microfone real e **sob a CSP de produção**, o motor escolhido é
+`neural`. Com o microfone sintético dos testes o
+Krisp recusa a trilha ("Cannot satisfy constraints": ele aplica constraints de
+dispositivo, e um `MediaStreamAudioDestinationNode` não tem o que satisfazer) e
+a queda para `sistema` acontece como projetada, sem deixar a captura sem
+supressão.
+
+O ramo da reabertura do microfone no meio da call — trocar de microfone, mexer
+nos filtros do sistema, ou a recaptura automática depois de o filtro perder a
+licença — tem ensaio próprio em `testes/krisp-reabrir.html`, porque
+`motor-audio.html` troca o `getUserMedia` por trilhas do Web Audio e o filtro
+neural as recusa.
+
+### Eco: as duas hipóteses do item 4b, resolvidas sem esperar o teste
+
+A hipótese (b) foi corrigida direto: `iniciarAudioDaTela()` **não abre mais um
+segundo `AudioContext`** — usa o do motor de voz. Era a mais barata das duas e
+elimina a variável.
+
+A hipótese (a) — o loopback do WebView2 — continua em aberto e continua
+dependendo do teste de transmitir com "Transmitir som" desmarcado. Se o eco
+sumiu com esta mudança, era (b) e acabou.
+
+### O item 4 (`setSinkId`) virou aviso
+
+Não há como corrigir por código: o AEC do Chromium usa como referência o
+dispositivo de renderização **padrão** do sistema, e escolher outra saída no
+CALL desalinha essa referência sem qualquer sinal de que isso aconteceu. Agora
+um aviso aparece no painel — e só para quem escolheu uma saída diferente da
+padrão com o cancelamento de eco ligado, que é exatamente quem está no
+problema.
+
+### O que isto **não** resolve
+
+A correção de ruído é do lado de **quem envia**. O Krisp na sua máquina limpa o
+que os outros ouvem de você; o teclado do João continua chegando inteiro até o
+João atualizar. Um teste com metade do grupo na versão antiga vai parecer que
+nada mudou.
+
+---
+
 ## Ordem sugerida
 
 1. **Medição de áudio no stats** — meia hora, e diz se o item 3 é real.
@@ -331,3 +432,14 @@ ceifador, porque nenhum dos dois olhava a forma da onda.
 
 Os itens 2 e 3 são correções pequenas e independentes: dá para fazer agora
 sem esperar decisão sobre o Krisp.
+
+**Estado desta lista:** 2, 3, 4 e 5 estão feitos (ver as duas seções
+"Feito"). Sobram, em ordem:
+
+1. **O grupo inteiro na versão nova.** É pré-condição para julgar o resultado,
+   não uma tarefa técnica — sem isso o teste mede a máquina antiga do colega.
+2. **O teste do "Transmitir som" desmarcado**, se o eco tiver sobrevivido ao
+   fim do segundo `AudioContext`. Só ele separa a hipótese do loopback.
+3. **Medição de áudio no stats** (`concealedSamples`, `packetsLost`,
+   `audioLevel`) — continua sendo meia hora que tira o resto da adivinhação.
+4. **A/B da recepção**, só se o item acima mostrar concealment alto.

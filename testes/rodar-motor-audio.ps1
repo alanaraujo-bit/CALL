@@ -44,7 +44,9 @@ try {
   $argumentos += $url
   $navegador = Start-Process $edge -PassThru -ArgumentList $argumentos
 
-  $limite = (Get-Date).AddSeconds(30)
+  # O ensaio com microfone real mede por 10 s e ainda refaz a captura para
+  # cobrir a troca de canal; 30 s não davam margem para uma máquina carregada.
+  $limite = (Get-Date).AddSeconds($(if ($MicrofoneReal) { 90 } else { 30 }))
   while (-not (Test-Path -LiteralPath $resultado) -and (Get-Date) -lt $limite) {
     Start-Sleep -Milliseconds 300
   }

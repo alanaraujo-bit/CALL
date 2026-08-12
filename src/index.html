@@ -879,6 +879,15 @@
                     Tocar um som de teste
                   </button>
                   <p class="ajuste__dica" id="dica-teste-saida" hidden></p>
+                  <!-- Só aparece quando a escolha cria o problema: uma saída
+                       diferente da padrão do sistema desalinha a referência do
+                       cancelamento de eco. -->
+                  <p class="ajuste__dica ajuste__dica--alerta" id="aviso-saida-eco" hidden>
+                    O cancelamento de eco usa a saída padrão do Windows como
+                    referência. Com outra saída escolhida aqui, ele pode parar
+                    de funcionar e a sala passa a ouvir eco de você — use fones
+                    ou volte para a padrão do sistema.
+                  </p>
                 </div>
               </div>
             </div>
@@ -982,6 +991,11 @@
                     <span>Remove teclado, ventilador e ruído de fundo localmente</span>
                   </span>
                 </label>
+
+                <!-- Qual motor atendeu o pedido. "Continuo ouvindo o teclado
+                     dele" tem causas diferentes conforme a resposta, e quem
+                     usa não tem como adivinhar qual está valendo. -->
+                <p class="ajuste__dica ajuste__dica--recuada" id="motor-supressao" hidden></p>
 
                 <label class="chave">
                   <input type="checkbox" id="ajuste-agc" />

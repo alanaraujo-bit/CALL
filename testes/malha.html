@@ -319,6 +319,34 @@
           "a captura ativa os filtros nativos e mantém voz mono em 48 kHz"
         );
 
+        // A regra que não pode ser quebrada: os supressores são exclusivos.
+        // Dois em série produzem ruído musical — aquele borbulhar metálico em
+        // volta das palavras — e o resultado fica pior do que com um só. É uma
+        // regressão silenciosa: ninguém vê no código que o Chromium também
+        // está suprimindo, só ouve que "ficou estranho".
+        const comNeural = restricoesDoMicrofone(AUDIO_PADRAO, {
+          noiseSuppression: false,
+          voiceIsolation: false,
+        });
+        conferir(
+          comNeural.noiseSuppression === false && !("voiceIsolation" in comNeural),
+          "com o filtro neural valendo, nenhum supressor do sistema é pedido"
+        );
+        const comIsolamento = restricoesDoMicrofone(AUDIO_PADRAO, {
+          noiseSuppression: false,
+          voiceIsolation: true,
+        });
+        conferir(
+          comIsolamento.voiceIsolation === true && comIsolamento.noiseSuppression === false,
+          "o isolamento do sistema substitui o supressor nativo, não se soma a ele"
+        );
+        // `voiceIsolation: false` explícito é pior que a ausência: em WebView
+        // antigo a constraint desconhecida derruba a captura inteira.
+        conferir(
+          !("voiceIsolation" in capturaPadrao),
+          "a constraint de isolamento só entra no pedido quando é para ligar"
+        );
+
         const remetenteDeAudio = (p) =>
           [...p.malha.conexoes.values()][0].getSenders().find((r) => r.track?.kind === "audio");
 
