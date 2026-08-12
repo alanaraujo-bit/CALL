@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Supressão neural: a licença da sala</title>
+    <style>
+      body { font: 14px monospace; background: #111; color: #ddd; padding: 24px; }
+      .ok { color: #4fc98c; }
+      .falha { color: #e2645d; }
+    </style>
+  </head>
+  <body>
+    <h1 id="cabecalho">Licença do filtro neural: executando…</h1>
+    <div id="saida"></div>
+    <img src="/segurar?ms=45000" hidden alt="" />
+
+    <!-- A pergunta que só uma sala de verdade responde: **o plano do LiveKit
+         libera o Krisp?**
+
+         O `init` do filtro acontece antes de entrar na sala e não depende de
+         plano nenhum — ele carrega, trata áudio, e por isso passa em todos os
+         ensaios locais. Quem confere a licença é o `onPublish`, com a sala em
+         mãos. Se o plano não cobrir, o pacote emite
+         `disable-lk-krisp-noise-filter` e o CALL cai para o supressor nativo
+         **sem que nada quebre** — a call continua, só que com ruído.
+
+         Ou seja: o modo de falhar aqui é invisível de qualquer outro lugar.
+         Este ensaio percorre o caminho de produção inteiro — motor de áudio
+         real, `SalaLiveKit` real, servidor de sinalização real — e olha o
+         motor que sobrou depois da entrada. -->
+    <script type="module" nonce="krisp-licenca">
+      import { AUDIO_PADRAO, MotorDeAudio } from "../src/audio.js";
+      import { SalaLiveKit } from "../src/livekit.js";
+      import { Sinal } from "../src/sinal.js";
+
+      const relatorio = [];
+      let falhas = 0;
+      const saida = document.getElementById("saida");
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+      const conferir = (condicao, descricao) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: Boolean(condicao), descricao });
+        const linha = document.createElement("div");
+        linha.className = condicao ? "ok" : "falha";
+        linha.textContent = `${condicao ? "ok   " : "FALHA"} ${descricao}`;
+        saida.append(linha);
+      };
+      const entregar = () =>
+        fetch("http://127.0.0.1:8123/resultado", {
+          method: "POST",
+          body: JSON.stringify({ falhas, relatorio }, null, 2),
+        }).catch(() => {});
+
+      let ultimoPasso = "antes de começar";
+      const passo = (t) => (ultimoPasso = t);
+      const guarda = setTimeout(() => {
+        conferir(false, `travou em: ${ultimoPasso}`);
+        entregar().then(() => window.close());
+      }, 40_000);
+
+      const ENDERECO =
+        new URLSearchParams(location.search).get("servidor") ?? "ws://127.0.0.1:8898";
+
+      const motor = new MotorDeAudio();
+      const sinal = new Sinal();
+      // O caminho de produção: é `aoEntrar` que entrega a sala ao filtro.
+      const sala = new SalaLiveKit({
+        aoTrilha: () => {},
+        aoFimDeTrilha: () => {},
+        aoEstado: () => {},
+        aoFala: () => {},
+        aoEntrar: (s) => motor.supressao.aoPublicar(s),
+      });
+
+      // O evento de queda pode chegar depois de `entrar` voltar. Registrar a
+      // mudança de motor à parte evita ler cedo demais e concluir errado.
+      const mudancas = [];
+      motor.supressao.assinar((estado) => mudancas.push(estado.motor));
+
+      try {
+        passo("abrir o microfone");
+        await motor.aplicar(AUDIO_PADRAO);
+        await motor.abrirMicrofone();
+        conferir(
+          motor.supressao.motor === "neural",
+          `o filtro carrega antes da sala (motor: ${motor.supressao.motor}${
+            motor.supressao.causa ? ` — ${motor.supressao.causa}` : ""
+          })`
+        );
+
+        passo("criar grupo efêmero no servidor");
+        const boasVindas = await sinal.conectar(ENDERECO, {
+          tipo: "criar-grupo",
+          nome: "Licença Krisp",
+          apelido: "Ana",
+          usuario: "krisp-licenca",
+        });
+        const canal = boasVindas.grupo.categorias
+          .flatMap((c) => c.canais)
+          .find((i) => i.tipo === "voz");
+        conferir(Boolean(canal), "servidor criou o canal de voz");
+
+        passo("pedir credencial de mídia");
+        const resposta = new Promise((r) =>
+          sinal.addEventListener("voz", (e) => r(e.detail), { once: true })
+        );
+        sinal.enviar({ tipo: "entrar-voz", canal: canal.id, transportes: ["livekit"] });
+        const voz = await resposta;
+        conferir(voz.midia?.provedor === "livekit", "recebeu token do LiveKit Cloud");
+
+        passo("entrar na sala e publicar");
+        sala.definirAudioLocal(motor.trilha);
+        await sala.entrar(voz.midia);
+
+        // A licença é conferida no `onPublish`; a recusa chega por evento,
+        // então esperar é parte do ensaio, não folga.
+        passo("aguardar o veredito da licença");
+        await esperar(6000);
+
+        const motorFinal = motor.supressao.motor;
+        conferir(
+          motorFinal === "neural",
+          `O PLANO LIBERA O FILTRO NEURAL — motor após entrar na sala: ${motorFinal}` +
+            (motorFinal === "neural" ? "" : ` (${motor.supressao.detalhe})`)
+        );
+        relatorio.push({
+          ok: true,
+          descricao: `trajeto dos motores: ${mudancas.join(" -> ")}`,
+        });
+      } catch (erro) {
+        conferir(false, `execução sem exceções: ${erro?.message ?? erro}`);
+      } finally {
+        await sala.fecharTudo().catch(() => {});
+        sinal.desligar?.();
+        await motor.encerrar().catch(() => {});
+      }
+
+      clearTimeout(guarda);
+      document.getElementById("cabecalho").textContent = falhas
+        ? `Licença do filtro neural: ${falhas} falha(s)`
+        : "Licença do filtro neural: liberado";
+      await entregar();
+    </script>
+  </body>
+</html>

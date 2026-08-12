@@ -59,6 +59,7 @@ createServer(async (req, res) => {
       "/testes/livekit-nuvem.html": "livekit-nuvem",
       "/testes/motor-audio.html": "motor-audio",
       "/testes/krisp-reabrir.html": "krisp-reabrir",
+      "/testes/krisp-licenca.html": "krisp-licenca",
     };
     const nonce = nonces[req.url.split("?")[0]];
     if (nonce) {

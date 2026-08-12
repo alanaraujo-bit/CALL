@@ -339,6 +339,33 @@ Três armadilhas que a implementação teve de cobrir:
    passa a cortar sílaba. O detector `falando` continua rodando, então o
    indicador de fala e o medidor não mudam.
 
+### O plano gratuito libera o Krisp — medido, não deduzido
+
+Era a última incógnita: o CALL está no plano **Build ($0/mês)** do LiveKit
+Cloud, e nenhuma página de preço lista a supressão de ruído como item de
+plano. A documentação também não separa por tier.
+
+Não dava para deduzir, porque o modo de falhar é invisível: o filtro carrega e
+trata áudio **sem plano nenhum** — quem confere a licença é o `onPublish`, já
+com a sala em mãos. Uma recusa ali faz o CALL cair para o supressor nativo sem
+quebrar nada. A call continua, só que com ruído.
+
+`testes/krisp-licenca.html` percorre o caminho de produção inteiro (motor de
+áudio real, `SalaLiveKit` real, servidor de sinalização real, sala LiveKit
+Cloud real) e olha o motor que sobrou depois da entrada:
+
+```
+ok  o filtro carrega antes da sala (motor: neural)
+ok  recebeu token do LiveKit Cloud
+ok  O PLANO LIBERA O FILTRO NEURAL — motor após entrar na sala: neural
+ok  trajeto dos motores: nativa -> neural
+```
+
+**Não há motivo para subir de plano por causa de áudio.** Se um dia a licença
+passar a ser negada — mudança de política, estouro de franquia —, este ensaio
+é o que avisa, e o painel de ajustes dirá "A redução neural não está liberada
+para esta sala" em vez de simplesmente piorar em silêncio.
+
 ### A CSP quase engoliu tudo isto
 
 O Krisp **não** é autossuficiente, ao contrário do que a primeira leitura do
