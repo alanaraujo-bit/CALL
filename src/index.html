@@ -436,6 +436,18 @@
               <span>Atualizar</span>
             </button>
 
+            <!-- Na sala de voz o palco é o conteúdo principal. O chat fica
+                 disponível sob demanda, como painel lateral, e este contador
+                 impede que fechá-lo signifique perder mensagens novas. -->
+            <button class="icone icone--chat oculto" type="button" id="botao-chat-da-sala"
+                    title="Abrir chat" aria-label="Abrir chat" aria-controls="chat-da-sala"
+                    aria-expanded="false" aria-pressed="false">
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M3 4.5h14v9H8l-4 3v-3H3z" />
+              </svg>
+              <span class="contador oculto" id="badge-chat-da-sala">0</span>
+            </button>
+
             <!-- A coluna de presentes só ocupa espaço quando há alguém na call
                  — ninguém precisa de uma lista de quem não está em lugar
                  nenhum. Este botão é a saída manual: abre e fecha na mão, a
@@ -453,43 +465,58 @@
           </div>
         </header>
 
-        <div class="palco oculto" id="palco">
-          <div class="palco__grade" id="palco-grade"></div>
-        </div>
-
-        <div class="conversa" id="conversa">
-          <div class="conversa__vazio" id="conversa-vazio">
-            <svg class="conversa__icone" viewBox="0 0 48 48" aria-hidden="true">
-              <path d="M8 12h32v22H20l-8 7v-7H8z"/>
-            </svg>
-            <p class="conversa__titulo" id="conversa-vazio-titulo">Nada por aqui ainda</p>
-            <p class="conversa__texto" id="conversa-vazio-texto" hidden></p>
+        <div class="sala__corpo">
+          <div class="palco oculto" id="palco">
+            <div class="palco__grade" id="palco-grade"></div>
           </div>
-          <div class="conversa__linha" id="linha-do-tempo"></div>
-        </div>
 
-        <form class="redator oculto" id="redator" autocomplete="off">
-          <button class="icone" type="button" id="redator-emoji" title="Emoji" aria-label="Inserir emoji">
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <circle cx="10" cy="10" r="7.4" />
-              <circle cx="7.3" cy="8.4" r=".9" fill="currentColor" stroke="none" />
-              <circle cx="12.7" cy="8.4" r=".9" fill="currentColor" stroke="none" />
-              <path d="M7 12.2c.9 1.1 1.9 1.7 3 1.7s2.1-.6 3-1.7" stroke-linecap="round" />
-            </svg>
-          </button>
-          <div
-            class="redator__campo"
-            id="campo-mensagem"
-            contenteditable="true"
-            role="textbox"
-            aria-multiline="true"
-            aria-label="Escreva uma mensagem"
-            data-placeholder="Escreva uma mensagem"
-          ></div>
-          <button class="icone icone--enviar" type="submit" title="Enviar" aria-label="Enviar">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10l14-6-6 14-2-6-6-2z"/></svg>
-          </button>
-        </form>
+          <section class="chat-da-sala" id="chat-da-sala" aria-label="Chat">
+            <header class="chat-da-sala__topo">
+              <div class="chat-da-sala__identidade">
+                <span class="chat-da-sala__sinal" aria-hidden="true">#</span>
+                <span class="chat-da-sala__titulo" id="chat-da-sala-titulo">Chat</span>
+              </div>
+              <button class="icone" type="button" id="botao-fechar-chat-da-sala"
+                      title="Fechar chat" aria-label="Fechar chat">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+              </button>
+            </header>
+
+            <div class="conversa" id="conversa">
+              <div class="conversa__vazio" id="conversa-vazio">
+                <svg class="conversa__icone" viewBox="0 0 48 48" aria-hidden="true">
+                  <path d="M8 12h32v22H20l-8 7v-7H8z"/>
+                </svg>
+                <p class="conversa__titulo" id="conversa-vazio-titulo">Nada por aqui ainda</p>
+                <p class="conversa__texto" id="conversa-vazio-texto" hidden></p>
+              </div>
+              <div class="conversa__linha" id="linha-do-tempo"></div>
+            </div>
+
+            <form class="redator oculto" id="redator" autocomplete="off">
+              <button class="icone" type="button" id="redator-emoji" title="Emoji" aria-label="Inserir emoji">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <circle cx="10" cy="10" r="7.4" />
+                  <circle cx="7.3" cy="8.4" r=".9" fill="currentColor" stroke="none" />
+                  <circle cx="12.7" cy="8.4" r=".9" fill="currentColor" stroke="none" />
+                  <path d="M7 12.2c.9 1.1 1.9 1.7 3 1.7s2.1-.6 3-1.7" stroke-linecap="round" />
+                </svg>
+              </button>
+              <div
+                class="redator__campo"
+                id="campo-mensagem"
+                contenteditable="true"
+                role="textbox"
+                aria-multiline="true"
+                aria-label="Escreva uma mensagem"
+                data-placeholder="Escreva uma mensagem"
+              ></div>
+              <button class="icone icone--enviar" type="submit" title="Enviar" aria-label="Enviar">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10l14-6-6 14-2-6-6-2z"/></svg>
+              </button>
+            </form>
+          </section>
+        </div>
       </section>
 
       <!-- Coluna 4: participantes -->

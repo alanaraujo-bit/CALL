@@ -1,6 +1,6 @@
 {
   "name": "call",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "private": true,
   "type": "module",
   "description": "Aplicativo de comunicacao: grupos, chat de voz e transmissao de tela",

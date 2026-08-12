@@ -51,9 +51,11 @@
       // Sem isto a captura pega o painel no meio do surgimento, meio
       // transparente: o `--virtual-time-budget` decide a hora do disparo, e ela
       // não coincide com o fim da animação.
-      const parado = doc.createElement("style");
-      parado.textContent = "*, *::before, *::after { animation: none !important; transition: none !important; }";
-      doc.head.append(parado);
+      if (params.get("movimento") !== "sim") {
+        const parado = doc.createElement("style");
+        parado.textContent = "*, *::before, *::after { animation: none !important; transition: none !important; }";
+        doc.head.append(parado);
+      }
       const teclar = (elemento, valor) => {
         elemento.value = valor;
         elemento.dispatchEvent(new jan.Event("input"));
@@ -124,6 +126,61 @@
             await esperar(120);
           }
           await aguardar(() => $("lista-participantes").children.length === 5);
+        }
+
+        if (cena === "voz" || cena === "voz-chat") {
+          // Cena puramente visual da sala focada. Não abre microfone nem
+          // anuncia presença no servidor: monta os mesmos elementos e classes
+          // que `sincronizarPalcoDeVoz` produziria em uma call real.
+          const sala = doc.querySelector(".sala");
+          sala.classList.add("sala--em-voz");
+          sala.classList.toggle("sala--chat-aberto", cena === "voz-chat");
+          $("titulo-canal").textContent = "Sala de voz";
+          $("subtitulo-canal").textContent = "Só você na sala por enquanto";
+          $("botao-chat-da-sala").classList.remove("oculto");
+          $("botao-chat-da-sala").setAttribute("aria-pressed", String(cena === "voz-chat"));
+          $("botao-chat-da-sala").setAttribute("aria-expanded", String(cena === "voz-chat"));
+          $("palco").classList.remove("oculto");
+          $("palco").classList.add("palco--cheio");
+          $("palco-grade").dataset.quantidade = "1";
+          $("palco-grade").dataset.colunas = "1";
+          $("palco-grade").innerHTML = `
+            <button class="presenca" type="button">
+              <span class="avatar avatar--palco">A</span>
+              <span class="presenca__etiqueta">Alan (você)</span>
+            </button>
+          `;
+
+          $("chat-da-sala-titulo").textContent = "geral";
+          $("conversa-vazio").classList.add("oculto");
+          $("linha-do-tempo").innerHTML = `
+            <div class="marco">Hoje</div>
+            <article class="mensagem">
+              <span class="avatar">R</span>
+              <div class="mensagem__conteudo">
+                <div><strong class="mensagem__autor">Rafael</strong></div>
+                <div class="mensagem__texto">Chego na sala em cinco minutos.</div>
+              </div>
+            </article>
+          `;
+          $("redator").classList.remove("oculto");
+          $("rodape-voz").classList.remove("oculto");
+          $("nome-canal-voz").textContent = "Sala de voz";
+          $("tela-aplicacao").dataset.presentes = "fechado";
+
+          // Na captura o estado fica parado; com `?movimento=sim`, estes dois
+          // botões deixam a mesma cena servir de provador da gaveta, sem abrir
+          // microfone nem depender de outra pessoa conectada.
+          const definirChat = (aberto) => {
+            sala.classList.toggle("sala--chat-aberto", aberto);
+            $("botao-chat-da-sala").setAttribute("aria-pressed", String(aberto));
+            $("botao-chat-da-sala").setAttribute("aria-expanded", String(aberto));
+          };
+          $("botao-chat-da-sala").addEventListener("click", (evento) => {
+            evento.stopImmediatePropagation();
+            definirChat(!sala.classList.contains("sala--chat-aberto"));
+          }, { capture: true });
+          $("botao-fechar-chat-da-sala").addEventListener("click", () => definirChat(false));
         }
 
         if (cena === "cartao") {

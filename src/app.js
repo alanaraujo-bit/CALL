@@ -46,10 +46,17 @@ const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
  *  das máquinas nem está de pé. */
 const SERVIDOR_ANTIGO = "ws://127.0.0.1:8787";
 
-/** No navegador de desenvolvimento, o endereço local pode ter sido escolhido
- *  de propósito. Migrá-lo de volta ao servidor hospedado a cada recarga fazia
- *  o teste local mudar de backend sem avisar. */
+/** Os testes de navegador escolhem servidores efêmeros e precisam preservar o
+ *  endereço gravado. Já o servidor "ao vivo" da porta 8124 é a bancada usada
+ *  por uma pessoa: nele, herdar o backend de um teste anterior deixa a página
+ *  presa a uma porta que já fechou. Uma query explícita continua permitindo
+ *  testar outro backend, por exemplo `?servidor=ws://127.0.0.1:8787`. */
 const PAGINA_LOCAL = ["127.0.0.1", "localhost"].includes(window.location.hostname);
+const PAGINA_AO_VIVO = PAGINA_LOCAL && window.location.port === "8124";
+const SERVIDOR_DA_PAGINA = (() => {
+  const endereco = new URLSearchParams(window.location.search).get("servidor")?.trim() ?? "";
+  return /^wss?:\/\//i.test(endereco) ? endereco : "";
+})();
 
 /** Página do projeto, que hospeda a página de convite. */
 const SITE = "https://call.aionixdev.com";
@@ -93,6 +100,8 @@ const estado = {
   /** Grupos que este computador conhece — [{ codigo, nome, foto }]. O servidor é a
    *  fonte da verdade; isto é só a lista de atalhos da coluna da esquerda. */
   atalhos: [],
+  /** codigo do grupo -> conexoes ativas conhecidas pelo servidor. */
+  presencasGrupos: new Map(),
 
   grupo: null, // { codigo, nome, foto, descricao, dono, categorias } vindo do servidor
   meuId: null,
@@ -177,6 +186,10 @@ const telas = new Map(); // id -> HTMLElement do palco
 // está transmitindo tela. Mapa à parte de `telas`: um vídeo de verdade nunca
 // pode ser desmontado e remontado só porque o palco foi redesenhado.
 const presencasDeVoz = new Map();
+// O chat da call nasce fechado. Abrir é uma escolha de contexto, não uma
+// preferência permanente: na próxima entrada a grade volta a ser protagonista.
+let chatDaSalaAberto = false;
+let naoLidasChatDaSala = 0;
 const linhas = new Map(); // id -> [HTMLElement] que recebem a marca de fala
 const medidores = new Map(); // id -> { no, analisador, dados, ateQuando, falando }
 const falas = new Map(); // id -> estado visual, preservado quando a lista é redesenhada
@@ -273,8 +286,9 @@ function carregarPreferencias() {
     estado.apelido = bruto.apelido ?? "";
     // Quem escolheu um servidor próprio continua com ele; só o padrão antigo,
     // que a pessoa nunca escolheu de fato, é levado ao servidor hospedado.
-    estado.servidor =
-      !bruto.servidor || (bruto.servidor === SERVIDOR_ANTIGO && !PAGINA_LOCAL)
+    estado.servidor = PAGINA_AO_VIVO
+      ? SERVIDOR_DA_PAGINA || SERVIDOR_PADRAO
+      : !bruto.servidor || (bruto.servidor === SERVIDOR_ANTIGO && !PAGINA_LOCAL)
         ? SERVIDOR_PADRAO
         : bruto.servidor;
     estado.usuario = bruto.usuario || "";
@@ -402,6 +416,8 @@ function lembrarGrupo(codigo, nome, foto = "") {
   if (existente) Object.assign(existente, saneado);
   else estado.atalhos.push(saneado);
   salvarPreferencias();
+  if (social.conectado) pedirPresencasDosGrupos();
+  else conectarSocial();
 }
 
 /**
@@ -1142,6 +1158,7 @@ function abrirAplicacao() {
   } else {
     prepararAplicacao();
   }
+  if (!social.conectado) conectarSocial();
 }
 
 async function hospedar() {
@@ -1200,6 +1217,13 @@ function prepararAplicacao() {
   $("botao-presentes").addEventListener("click", () => {
     presentesForcado = !presentesDeveAbrir();
     atualizarPresentes();
+  });
+
+  $("botao-chat-da-sala").addEventListener("click", () => {
+    definirChatDaSalaAberto(!chatDaSalaAberto);
+  });
+  $("botao-fechar-chat-da-sala").addEventListener("click", () => {
+    definirChatDaSalaAberto(false);
   });
 
   $("botao-microfone").addEventListener("click", alternarMicrofone);
@@ -1568,15 +1592,27 @@ function desenharAtalhos() {
     const item = document.createElement("button");
     item.className = "grupo";
     item.type = "button";
-    item.title = atalho.nome;
-    item.setAttribute("aria-label", atalho.nome);
     if (!estado.vistaAmigos && atalho.codigo === estado.grupo?.codigo) item.classList.add("grupo--ativo");
 
     const marca = document.createElement("span");
     marca.className = "grupo__marca";
     pintarMarcaDeGrupo(marca, atalho);
 
-    item.append(marca);
+    const quantidadeOnline = estado.presencasGrupos.get(atalho.codigo) ?? 0;
+    const presenca = document.createElement("span");
+    presenca.className = "grupo__presenca";
+    presenca.dataset.online = quantidadeOnline > 0 ? "sim" : "nao";
+    presenca.setAttribute("aria-hidden", "true");
+    const resumoPresenca = quantidadeOnline > 0
+      ? `${quantidadeOnline} ${quantidadeOnline === 1 ? "pessoa online" : "pessoas online"}`
+      : "ninguém online";
+    item.title = `${atalho.nome} — ${resumoPresenca}`;
+    item.setAttribute(
+      "aria-label",
+      `${atalho.nome}, ${resumoPresenca}`
+    );
+
+    item.append(marca, presenca);
     item.addEventListener("click", () => {
       // Clicar no grupo já ativo não reconecta — mas, se a vista de amigos
       // estiver aberta por cima dele, é o único jeito de voltar aos canais.
@@ -1745,6 +1781,7 @@ function assumirGrupo({ eu, grupo, presentes, conta: daConta, sons }) {
     foto: estado.foto,
   });
   for (const membro of presentes) estado.membros.set(membro.id, membro);
+  estado.presencasGrupos.set(grupo.codigo, estado.membros.size);
 
   estado.sons = sons ?? [];
   desenharSoundboard();
@@ -1780,6 +1817,8 @@ function desligar() {
   estado.minhaAtividade = null;
   sinal.desconectar();
 
+  const grupoAnterior = estado.grupo?.codigo;
+  if (grupoAnterior) estado.presencasGrupos.set(grupoAnterior, 0);
   estado.grupo = null;
   estado.meuId = null;
   estado.membros.clear();
@@ -2192,6 +2231,10 @@ function desenharMembroNaVoz(membro) {
 
 function aoEntrar(membro) {
   estado.membros.set(membro.id, membro);
+  if (estado.grupo?.codigo) {
+    estado.presencasGrupos.set(estado.grupo.codigo, estado.membros.size);
+    desenharAtalhos();
+  }
   redesenhar();
   avisar(`${membro.apelido} entrou no grupo.`);
 }
@@ -2199,6 +2242,10 @@ function aoEntrar(membro) {
 function aoSair(id) {
   const membro = estado.membros.get(id);
   estado.membros.delete(id);
+  if (estado.grupo?.codigo) {
+    estado.presencasGrupos.set(estado.grupo.codigo, estado.membros.size);
+    desenharAtalhos();
+  }
   derrubarPar(id);
   redesenhar();
   if (membro) avisar(`${membro.apelido} saiu do grupo.`);
@@ -2243,14 +2290,17 @@ function registrarLinha(id, elemento) {
 
 /**
  * A coluna de presentes começa fechada e só abre sozinha quando alguém entra
- * numa call — é o "alguma ação" que justifica o espaço. `null` quer dizer
- * "decide sozinho"; `true`/`false` é a pessoa tendo mexido na mão, e essa
- * escolha vale até a próxima troca de grupo.
+ * numa call em que a própria pessoa não está — é quando a lista revela algo
+ * que ainda não está no palco. Dentro da própria call, a grade já mostra todo
+ * mundo e a coluna seria uma duplicação. `null` quer dizer "decide sozinho";
+ * `true`/`false` é a pessoa tendo mexido na mão, e essa escolha vale até a
+ * próxima troca de grupo.
  */
 let presentesForcado = null;
 
 function presentesDeveAbrir() {
   if (presentesForcado !== null) return presentesForcado;
+  if (estado.canalVoz) return false;
   return [...estado.membros.values()].some((m) => m.canalVoz);
 }
 
@@ -2595,6 +2645,11 @@ function abrirCanalTexto(id) {
   estado.conversaPrivada = null;
   estado.naoLidos.delete(id);
 
+  // Dentro da call, escolher um canal de texto é uma intenção explícita de
+  // conversar. O painel abre; fora dela, continua sendo a navegação normal.
+  if (salaDeVozAtiva()) definirChatDaSalaAberto(true);
+  else naoLidasChatDaSala = 0;
+
   // O histórico é pedido uma vez por canal; daí em diante as mensagens novas
   // chegam sozinhas pela difusão do servidor.
   if (!estado.mensagens.has(id)) sinal.enviar({ tipo: "historico", canal: id });
@@ -2617,6 +2672,10 @@ function aoMensagem(mensagem) {
 
   if (mensagem.canal === estado.canalTexto) {
     desenharConversa();
+    if (salaDeVozAtiva() && !chatDaSalaAberto) {
+      naoLidasChatDaSala++;
+      atualizarChatDaSala();
+    }
   } else {
     estado.naoLidos.set(mensagem.canal, (estado.naoLidos.get(mensagem.canal) ?? 0) + 1);
     redesenhar();
@@ -2637,21 +2696,60 @@ function alvoDaConversa() {
   return null;
 }
 
-function desenharConversa() {
-  const conversa = $("conversa");
-  const linhaDoTempo = $("linha-do-tempo");
+/** A sala focada existe quando os quadros pertencem ao canal de voz atual.
+ *  Durante os poucos milissegundos da entrada ainda não há quadro: nesse
+ *  intervalo a conversa normal permanece, evitando um painel vazio piscando. */
+function salaDeVozAtiva() {
+  return Boolean(estado.canalVoz && telas.size + presencasDeVoz.size > 0);
+}
+
+function definirChatDaSalaAberto(aberto) {
+  chatDaSalaAberto = Boolean(aberto && salaDeVozAtiva() && alvoDaConversa());
+  if (chatDaSalaAberto) naoLidasChatDaSala = 0;
+  atualizarChatDaSala();
+}
+
+/** Reflete o estado no botão e no arranjo sem mover o DOM da conversa. Assim
+ *  abrir e fechar preserva rolagem, rascunho e foco exatamente onde estavam. */
+function atualizarChatDaSala() {
+  const emVoz = salaDeVozAtiva();
   const alvo = alvoDaConversa();
+  if (!emVoz) chatDaSalaAberto = false;
 
-  $("titulo-canal").textContent = alvo ? alvo.nome : "Nenhum canal";
-  $("redator").classList.toggle("oculto", !alvo || telaCheiaAtiva());
+  const sala = document.querySelector(".sala");
+  sala.classList.toggle("sala--em-voz", emVoz);
+  sala.classList.toggle("sala--chat-aberto", emVoz && chatDaSalaAberto);
 
+  const botao = $("botao-chat-da-sala");
+  botao.classList.toggle("oculto", !emVoz || !alvo);
+  botao.setAttribute("aria-pressed", String(emVoz && chatDaSalaAberto));
+  botao.setAttribute("aria-expanded", String(emVoz && chatDaSalaAberto));
+  botao.title = chatDaSalaAberto ? "Fechar chat" : "Abrir chat";
+  botao.setAttribute("aria-label", botao.title);
+
+  const badge = $("badge-chat-da-sala");
+  badge.textContent = naoLidasChatDaSala > 99 ? "99+" : String(naoLidasChatDaSala);
+  badge.classList.toggle("oculto", naoLidasChatDaSala === 0 || chatDaSalaAberto);
+  $("chat-da-sala-titulo").textContent = alvo?.nome ?? "Chat";
+}
+
+function atualizarCabecalhoDaSala() {
+  if (salaDeVozAtiva()) {
+    const canal = acharCanal(estado.canalVoz);
+    const quantidade = membrosNaVoz(estado.canalVoz).length;
+    const resumoDeTelas =
+      telas.size === 0 ? "" : telas.size === 1 ? " • 1 transmissão" : ` • ${telas.size} transmissões`;
+    $("titulo-canal").textContent = canal?.nome ?? "Sala de voz";
+    $("subtitulo-canal").textContent =
+      quantidade === 1
+        ? `Só você na sala por enquanto${resumoDeTelas}`
+        : `${quantidade} pessoas na sala${resumoDeTelas}`;
+    return;
+  }
+
+  const alvo = alvoDaConversa();
+  $("titulo-canal").textContent = alvo?.nome ?? "Nenhum canal";
   if (!alvo) {
-    linhaDoTempo.textContent = "";
-    $("conversa-vazio").classList.remove("oculto");
-    vazio(
-      estado.vistaAmigos ? "Selecione um amigo" : estado.grupo ? "Selecione um canal" : "Selecione um grupo",
-      ""
-    );
     $("subtitulo-canal").textContent = estado.vistaAmigos
       ? "Selecione um amigo"
       : estado.grupo
@@ -2667,6 +2765,28 @@ function desenharConversa() {
       : mensagens.length === 0
         ? "Nenhuma mensagem ainda"
         : `${mensagens.length} mensagem${mensagens.length === 1 ? "" : "s"}`;
+}
+
+function desenharConversa() {
+  const conversa = $("conversa");
+  const linhaDoTempo = $("linha-do-tempo");
+  const alvo = alvoDaConversa();
+
+  $("redator").classList.toggle("oculto", !alvo);
+  atualizarChatDaSala();
+  atualizarCabecalhoDaSala();
+
+  if (!alvo) {
+    linhaDoTempo.textContent = "";
+    $("conversa-vazio").classList.remove("oculto");
+    vazio(
+      estado.vistaAmigos ? "Selecione um amigo" : estado.grupo ? "Selecione um canal" : "Selecione um grupo",
+      ""
+    );
+    return;
+  }
+
+  const mensagens = estado.mensagens.get(alvo.id);
 
   $("conversa-vazio").classList.toggle("oculto", (mensagens?.length ?? 0) > 0);
   vazio("Sem mensagens", "");
@@ -2983,9 +3103,11 @@ function aoMensagemAtualizada(mensagem, canal = mensagem.canal) {
 const ESPERA_RECONEXAO_SOCIAL = [1000, 2000, 5000, 10000, 20000, 30000];
 let tentativasSocial = 0;
 let reconexaoSocialPendente = null;
+let atualizacaoPresencasPendente = null;
+const INTERVALO_PRESENCAS_GRUPOS = 30_000;
 
 function socialDeveEstarLigada() {
-  return Boolean(estado.conta && estado.token);
+  return Boolean((estado.conta && estado.token) || estado.atalhos.length);
 }
 
 /** Abre (ou reabre) o socket social. Chamado sempre que a conta assume uma
@@ -3016,6 +3138,10 @@ function desligarSocial() {
   estado.amigos = [];
   estado.pedidosAmigo = [];
   estado.conversaPrivada = null;
+  estado.presencasGrupos.clear();
+  clearTimeout(atualizacaoPresencasPendente);
+  atualizacaoPresencasPendente = null;
+  desenharAtalhos();
   if (estado.vistaAmigos) fecharVistaAmigos();
 }
 
@@ -3024,11 +3150,13 @@ social.addEventListener("aberto", () => {
   // O "alô" que registra a presença no servidor e já traz a lista — ver
   // `listar_amigos` em main.rs.
   social.enviar({ tipo: "amigos", token: estado.token });
+  pedirPresencasDosGrupos();
 });
 social.addEventListener("queda", () => agendarReconexaoSocial());
 social.addEventListener("amigo-pedido", (e) => aoPedidoDeAmizade(e.detail));
 social.addEventListener("amigo-atualizado", () => pedirListaDeAmigos());
 social.addEventListener("amigos", (e) => aoListaDeAmigos(e.detail));
+social.addEventListener("presencas-grupos", (e) => aoPresencasDosGrupos(e.detail));
 social.addEventListener("mensagem-privada", (e) => aoMensagemPrivada(e.detail));
 social.addEventListener("mensagem-privada-atualizada", (e) => aoMensagemPrivadaAtualizada(e.detail));
 social.addEventListener("reacao-privada", (e) => aoReacaoPrivada(e.detail));
@@ -3106,6 +3234,7 @@ function abrirConversaPrivada(amigoId) {
     redesenharAmigos();
     desenharConversa();
   }
+  if (salaDeVozAtiva()) definirChatDaSalaAberto(true);
   $("campo-mensagem").focus();
 }
 
@@ -3200,6 +3329,10 @@ function aoMensagemPrivada({ mensagem, para }) {
 
   if (outraParte === estado.conversaPrivada) {
     desenharConversa();
+    if (salaDeVozAtiva() && !chatDaSalaAberto) {
+      naoLidasChatDaSala++;
+      atualizarChatDaSala();
+    }
   } else if (mensagem.autor !== estado.usuario) {
     avisar(`${mensagem.apelido} mandou uma mensagem.`);
   }
@@ -3316,6 +3449,8 @@ async function aoEntrarNaVoz({ canal, pares, midia }) {
   // permissão — no meio de uma troca que deveria ser instantânea.
   if (estado.canalVoz && estado.canalVoz !== canal) await desmontarMalha(false);
   estado.canalVoz = canal;
+  chatDaSalaAberto = false;
+  naoLidasChatDaSala = 0;
 
   const eu = estado.membros.get(estado.meuId);
   if (eu) eu.canalVoz = canal;
@@ -4552,17 +4687,11 @@ function alternarMaximizarTela(id) {
 }
 
 /**
- * Quando alguém liga a transmissão de tela, o palco toma o lugar do chat em
- * vez de dividir a coluna com ele, do mesmo jeito que o Discord: uma
- * transmissão espremida numa faixa de 40vh, com o chat embaixo, não dá para
- * acompanhar direito. A sala de voz sozinha — só avatares, ninguém
- * transmitindo — continua como sempre, ao lado do chat: aí o palco é
- * pequeno de propósito, e não sobra o que ver.
+ * A sala de voz inteira é o contexto principal, haja transmissão ou apenas
+ * avatares. O chat não disputa altura embaixo: abre na lateral quando pedido.
+ * Isso também torna a transição para uma tela compartilhada natural, porque
+ * o vídeo entra na mesma grade que já estava ocupando o espaço certo.
  */
-function telaCheiaAtiva() {
-  return telas.size > 0;
-}
-
 function atualizarPalco() {
   const total = telas.size + presencasDeVoz.size;
   const grade = $("palco-grade");
@@ -4574,10 +4703,12 @@ function atualizarPalco() {
   grade.dataset.colunas = String(total <= 1 ? 1 : total <= 4 ? 2 : total <= 9 ? 3 : 4);
   $("palco").classList.toggle("oculto", total === 0);
 
-  const cheio = telaCheiaAtiva();
-  $("palco").classList.toggle("palco--cheio", cheio);
-  $("conversa").classList.toggle("oculto", cheio);
-  $("redator").classList.toggle("oculto", cheio || !alvoDaConversa());
+  const emVoz = Boolean(estado.canalVoz && total > 0);
+  $("palco").classList.toggle("palco--cheio", emVoz);
+  $("conversa").classList.remove("oculto");
+  $("redator").classList.toggle("oculto", !alvoDaConversa());
+  atualizarChatDaSala();
+  atualizarCabecalhoDaSala();
 
   for (const [id, quadro] of telas) {
     const maximizada = id === telaMaximizada;
@@ -5813,6 +5944,26 @@ carregarPreferencias();
 const versaoDoAplicativo = await invocar("versao_do_aplicativo").catch(() => null);
 if (typeof versaoDoAplicativo === "string" && versaoDoAplicativo) {
   versaoAtual = versaoDoAplicativo;
+}
+
+function pedirPresencasDosGrupos() {
+  if (!estado.atalhos.length || !social.conectado) return;
+  social.enviar({
+    tipo: "presencas-grupos",
+    token: estado.token,
+    codigos: estado.atalhos.map((atalho) => atalho.codigo),
+  });
+  clearTimeout(atualizacaoPresencasPendente);
+  atualizacaoPresencasPendente = setTimeout(pedirPresencasDosGrupos, INTERVALO_PRESENCAS_GRUPOS);
+}
+
+function aoPresencasDosGrupos({ presencas = [] } = {}) {
+  estado.presencasGrupos = new Map(
+    presencas
+      .filter((item) => item?.codigo)
+      .map((item) => [item.codigo, Math.max(0, Number(item.quantidade) || 0)])
+  );
+  desenharAtalhos();
 }
 
 if (estado.atualizacaoPendente) {

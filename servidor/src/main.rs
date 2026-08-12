@@ -487,6 +487,7 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "amigo-responder" => amigo_responder(v, id, fila, estado, cofre).await,
         "amigo-remover" => amigo_remover(v, id, fila, estado, cofre).await,
         "amigos" => listar_amigos(v, id, fila, estado, cofre).await,
+        "presencas-grupos" => listar_presencas_grupos(v, fila, estado, cofre).await,
         "mensagem-privada" => mensagem_privada(v, id, fila, estado, cofre).await,
         "editar-mensagem-privada" => alterar_mensagem_privada(v, id, fila, estado, cofre, false).await,
         "excluir-mensagem-privada" => alterar_mensagem_privada(v, id, fila, estado, cofre, true).await,
@@ -1843,6 +1844,43 @@ async fn listar_amigos(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estad
         "tipo": "amigos",
         "amigos": amigos,
         "pedidos": conta.pedidos_amigo
+    })));
+}
+
+/// Retorna apenas a quantidade de conexões dos atalhos da própria conta.
+///
+/// O cliente usa isto para desenhar o pequeno ponto de presença nos grupos
+/// sem precisar entrar em cada um deles. Não devolvemos perfis nem ids — só o
+/// código que já pertence à conta e a contagem atual naquele grupo.
+async fn listar_presencas_grupos(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let codigos: Vec<String> = if let Some(conta) = cofre.conta_do_token(&texto_de(v, "token")).await {
+        conta.atalhos.into_iter().map(|atalho| atalho.codigo).collect()
+    } else {
+        // Visitantes também podem ter atalhos locais. O código já é uma chave
+        // de convite conhecida pelo navegador; limitar o formato aqui impede
+        // que este pedido vire uma consulta arbitrária ao acervo.
+        v.get("codigos")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|codigo| codigo.len() == 10 && codigo.chars().all(|c| c.is_ascii_alphanumeric()))
+            .map(str::to_uppercase)
+            .collect()
+    };
+    let e = estado.lock().unwrap();
+    let presencas: Vec<Value> = codigos
+        .iter()
+        .map(|codigo| {
+            json!({
+                "codigo": codigo,
+                "quantidade": e.do_grupo(codigo).len(),
+            })
+        })
+        .collect();
+    let _ = fila.send(texto_json(&json!({
+        "tipo": "presencas-grupos",
+        "presencas": presencas,
     })));
 }
 

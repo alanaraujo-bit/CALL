@@ -35,6 +35,12 @@
   --raio-g: 14px;
 
   --transicao: 140ms cubic-bezier(0.32, 0.72, 0.28, 1);
+  /* Movimento de superfícies grandes. A curva desacelera cedo: o gesto fica
+     perceptível sem dar a sensação de que a interface está esperando a
+     animação terminar para responder. */
+  --movimento-suave: cubic-bezier(0.16, 1, 0.3, 1);
+  --tempo-painel: 300ms;
+  --tempo-cortina: 220ms;
 
   --fonte: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI",
     system-ui, -apple-system, "Inter", "Helvetica Neue", Arial, sans-serif;
@@ -1377,6 +1383,7 @@ svg {
 }
 
 .grupo {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2001,6 +2008,43 @@ svg {
   border-radius: var(--raio-m);
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
   overflow: hidden;
+  transform-origin: 50% 100%;
+  animation: popover-entrar 240ms var(--movimento-suave) both;
+}
+
+/* Presença de outro grupo: um único ponto, como no Discord. Ele só existe
+   quando o servidor confirmou pelo menos uma conexão naquele grupo; não há
+   contador ou texto disputando espaço com a marca do grupo. */
+.grupo__presenca {
+  position: absolute;
+  right: 7px;
+  bottom: 6px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--superficie-1);
+  border-radius: 999px;
+  background: var(--texto-3);
+  opacity: 0;
+  transform: scale(0.72);
+  transition: opacity 180ms ease, transform 220ms var(--movimento-suave), background var(--transicao);
+}
+
+.grupo__presenca[data-online="sim"] {
+  background: var(--vivo);
+  opacity: 1;
+  transform: scale(1);
+  box-shadow: 0 0 0 2px rgba(79, 201, 140, 0.08);
+}
+
+.grupo--ativo .grupo__presenca {
+  border-color: var(--superficie-2);
+}
+
+@keyframes popover-entrar {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
 }
 
 .soundboard__topo {
@@ -2120,6 +2164,28 @@ svg {
   gap: 6px;
 }
 
+.icone--chat {
+  position: relative;
+}
+
+.icone--chat[aria-pressed="true"] {
+  background: var(--superficie-3);
+  color: var(--texto);
+}
+
+.icone--chat .contador {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 9.5px;
+  background: var(--acento);
+  color: #fff;
+  border: 2px solid var(--fundo);
+}
+
 .icone--presentes {
   position: relative;
 }
@@ -2175,10 +2241,121 @@ svg {
   white-space: nowrap;
 }
 
+.sala__corpo {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Fora de uma call, este bloco é simplesmente a conversa normal. Dentro da
+   sala de voz ele vira um painel lateral sem duplicar histórico, redator nem
+   regras de mensagem. */
+.chat-da-sala {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--fundo);
+}
+
+.chat-da-sala__topo {
+  display: none;
+}
+
+.sala--em-voz .sala__corpo {
+  flex-direction: row;
+}
+
+.sala--em-voz .chat-da-sala {
+  flex: none;
+  width: clamp(320px, 32vw, 390px);
+  max-width: 42%;
+  border-left: 1px solid var(--borda);
+  overflow: hidden;
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  transition:
+    width var(--tempo-painel) var(--movimento-suave),
+    max-width var(--tempo-painel) var(--movimento-suave),
+    opacity 180ms ease-out,
+    transform var(--tempo-painel) var(--movimento-suave),
+    border-color 180ms ease-out,
+    visibility 0s;
+}
+
+.sala--em-voz:not(.sala--chat-aberto) .chat-da-sala {
+  width: 0;
+  max-width: 0;
+  border-left-color: transparent;
+  opacity: 0;
+  transform: translateX(16px);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    width var(--tempo-painel) var(--movimento-suave),
+    max-width var(--tempo-painel) var(--movimento-suave),
+    opacity 150ms ease-in,
+    transform 240ms ease-in,
+    border-color 150ms ease-in,
+    visibility 0s var(--tempo-painel);
+}
+
+.sala--em-voz .chat-da-sala__topo {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.chat-da-sala__identidade {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.chat-da-sala__sinal {
+  color: var(--texto-3);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.chat-da-sala__titulo {
+  overflow: hidden;
+  color: var(--texto-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icone--chat[aria-expanded="true"] {
+  background: var(--acento-suave);
+  color: #a8b0f2;
+}
+
+.icone--chat svg {
+  transition: transform 240ms var(--movimento-suave);
+}
+
+.icone--chat[aria-expanded="true"] svg {
+  transform: scale(1.06);
+}
+
 /* ─── Palco de transmissão ─────────────────────────────────────── */
 
-/* O palco é uma faixa acima da conversa, e não a tela inteira: enquanto
-   alguém transmite, o canal de texto continua legível e utilizável. */
+/* O palco existe apenas durante a call. A regra base ainda permite a montagem
+   progressiva; assim que o primeiro quadro entra, `.sala--em-voz` o promove a
+   conteúdo principal e o chat passa a ser opcional. */
 .palco {
   flex: none;
   height: 40vh;
@@ -2187,12 +2364,21 @@ svg {
   overflow: hidden;
 }
 
-/* Alguém transmitindo tela: o palco vira a coluna inteira, e não uma faixa
-   de 40vh dividindo espaço com um chat escondido embaixo. */
+/* Mantida para compatibilidade com o estado de transmissão; no novo arranjo a
+   sala de voz inteira, e não só o vídeo, já merece a área toda. */
 .palco--cheio {
   flex: 1;
   height: auto;
   padding-bottom: 14px;
+}
+
+.sala--em-voz .palco {
+  flex: 1;
+  height: auto;
+  padding: 18px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(95, 106, 217, 0.055), transparent 42%),
+    var(--fundo);
 }
 
 .palco__grade {
@@ -2213,6 +2399,21 @@ svg {
 
 .palco__grade[data-colunas="4"] {
   grid-template-columns: repeat(4, 1fr);
+}
+
+/* Uma pessoa sozinha não precisa virar um painel de cinema de ponta a ponta.
+   O limite cria um cartão com presença, mantendo ar ao redor e crescendo até
+   onde ainda parece uma chamada, não um fundo vazio. */
+.palco__grade[data-quantidade="1"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.palco__grade[data-quantidade="1"] > * {
+  width: min(100%, 760px);
+  height: min(100%, 540px);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.2);
 }
 
 .transmissao {
@@ -2339,7 +2540,9 @@ svg {
   min-height: 0;
   display: grid;
   place-items: center;
-  background: var(--superficie-2);
+  background:
+    radial-gradient(circle at 50% 47%, rgba(95, 106, 217, 0.09), transparent 25%),
+    var(--superficie-2);
   border: 1px solid var(--borda);
   border-radius: var(--raio-m);
   overflow: hidden;
@@ -2348,7 +2551,9 @@ svg {
 }
 
 .presenca:hover {
-  background: var(--superficie-3);
+  background:
+    radial-gradient(circle at 50% 47%, rgba(95, 106, 217, 0.13), transparent 29%),
+    var(--superficie-3);
 }
 
 /* Largura e altura explícitas, e não `aspect-ratio`: a base `.avatar` já
@@ -2356,9 +2561,9 @@ svg {
    sem repetir a altura aqui, só a largura mudava, e a foto esticava num
    retângulo achatado em vez de continuar redonda. */
 .avatar--palco {
-  width: 84px;
-  height: 84px;
-  font-size: 28px;
+  width: 96px;
+  height: 96px;
+  font-size: 32px;
   border: 2px solid transparent;
   transition: border-color var(--transicao), box-shadow var(--transicao);
 }
@@ -2429,6 +2634,10 @@ svg {
   position: relative;
   overflow-y: auto;
   padding: 16px 18px 8px;
+}
+
+.sala--em-voz .conversa {
+  padding: 12px 14px 8px;
 }
 
 .conversa__vazio {
@@ -2842,6 +3051,10 @@ svg {
   transition: border-color var(--transicao);
 }
 
+.sala--em-voz .redator {
+  margin: 0 12px 12px;
+}
+
 #redator-emoji,
 .icone--enviar {
   flex: none;
@@ -3149,16 +3362,28 @@ svg {
   place-items: center;
   background: rgba(8, 9, 10, 0.62);
   backdrop-filter: blur(3px);
-  animation: aparecer 140ms ease;
+  animation: cortina-entrar var(--tempo-cortina) ease-out both;
   z-index: 40;
 }
 
-@keyframes aparecer {
+/* Todos os cartões sobre uma cortina compartilham o mesmo gesto. A pequena
+   subida comunica profundidade; o scale é curto o bastante para não parecer
+   zoom nem chamar mais atenção do que o conteúdo. */
+.cortina > :is(.dialogo, .painel-perfil, .cartao, .ajustes, .transmitir, .seletor, .novidades) {
+  transform-origin: 50% 42%;
+  animation: modal-entrar var(--tempo-painel) var(--movimento-suave) both;
+}
+
+@keyframes cortina-entrar {
   from {
     opacity: 0;
   }
-  to {
-    opacity: 1;
+}
+
+@keyframes modal-entrar {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.975);
   }
 }
 
@@ -5355,6 +5580,28 @@ button.cartao__atividade-cabecalho:hover {
    zero nunca veria o histórico da call, e não haveria nada na tela sugerindo
    que ele existe. Agora ela encolhe antes de sumir, e só sai quando a coluna
    da conversa deixaria de caber. */
+@media (max-width: 1100px) {
+  /* Na janela compacta, dividir a largura deixaria tanto a grade quanto o chat
+     ruins. O chat vira uma gaveta por cima do lado direito; fechar devolve a
+     sala intacta, e abrir continua sendo uma decisão reversível e óbvia. */
+  .sala--em-voz .chat-da-sala {
+    position: absolute;
+    z-index: 12;
+    inset: 0 0 0 auto;
+    width: min(360px, 88%);
+    max-width: none;
+    box-shadow: -18px 0 40px rgba(0, 0, 0, 0.34);
+  }
+
+  .sala--em-voz:not(.sala--chat-aberto) .chat-da-sala {
+    width: min(360px, 88%);
+    max-width: none;
+    border-left-color: transparent;
+    box-shadow: none;
+    transform: translateX(calc(100% + 18px));
+  }
+}
+
 @media (max-width: 1120px) {
   .aplicacao {
     --largura-presentes: 190px;
