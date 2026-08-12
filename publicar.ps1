@@ -7,8 +7,8 @@
 # Depois disso, toda maquina que ja tem o CALL detecta a versao nova em ate
 # meia hora e oferece a atualizacao com um clique.
 #
-# Antes de rodar: suba o numero da versao em src-tauri/tauri.conf.json e em
-# src-tauri/Cargo.toml. Os dois precisam bater.
+# Antes de rodar: suba o numero da versao em src-tauri/tauri.conf.json,
+# src-tauri/Cargo.toml e package.json. Os tres precisam bater.
 #
 #   powershell -File publicar.ps1
 #   powershell -File publicar.ps1 -SemCompilar    # reaproveita o build atual
@@ -37,9 +37,10 @@ $conf = Get-Content "src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json
 $versao = $conf.version
 $cargo = Select-String -Path "src-tauri\Cargo.toml" -Pattern '^version = "(.+)"' | Select-Object -First 1
 $versaoCargo = $cargo.Matches[0].Groups[1].Value
+$versaoPacote = (Get-Content "package.json" -Raw | ConvertFrom-Json).version
 
-if ($versao -ne $versaoCargo) {
-  Write-Error "Versoes divergentes: tauri.conf.json diz $versao e Cargo.toml diz $versaoCargo."
+if ($versao -ne $versaoCargo -or $versao -ne $versaoPacote) {
+  Write-Error "Versoes divergentes: tauri.conf.json diz $versao, Cargo.toml diz $versaoCargo e package.json diz $versaoPacote."
 }
 
 if (-not (Test-Path "src-tauri\binaries\sinalizacao-x86_64-pc-windows-msvc.exe")) {

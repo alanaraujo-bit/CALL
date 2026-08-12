@@ -153,6 +153,14 @@ fn apelido_do_ambiente() -> Option<String> {
     std::env::var("CALL_APELIDO").ok().filter(|s| !s.is_empty())
 }
 
+/// Fonte unica para o numero mostrado pela interface. Ler os metadados do
+/// executavel evita que um texto esquecido no JavaScript anuncie uma versao
+/// diferente daquela que o atualizador realmente compara.
+#[tauri::command]
+fn versao_do_aplicativo(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 /// O que a interface precisa saber de uma versao nova: o numero, e o texto
 /// das notas que o publicador escreveu no manifesto (`latest.json`). As notas
 /// viajam do plugin para ca no campo `body` — e o que o cartao "Ver o que ha
@@ -419,6 +427,7 @@ pub fn run() {
             convite_pendente,
             servidor_do_ambiente,
             apelido_do_ambiente,
+            versao_do_aplicativo,
             procurar_atualizacao,
             instalar_atualizacao,
             definir_atalho_mudo,

@@ -34,7 +34,9 @@ const invocar = (comando, args) =>
     : Promise.reject(new Error("Recurso disponível apenas no aplicativo."));
 
 const CHAVE = "call.preferencias";
-const VERSAO_ATUAL = "0.12.0";
+// Vem dos metadados do proprio executavel. No navegador de desenvolvimento
+// nao existe pacote Tauri, portanto o rotulo assume explicitamente esse caso.
+let versaoAtual = "desenvolvimento";
 /** Servidor oficial do CALL, hospedado. É o padrão para que ninguém precise
  *  subir nada na própria máquina para conversar com os amigos. */
 const SERVIDOR_PADRAO = "wss://sinalizacao-production.up.railway.app";
@@ -5406,7 +5408,7 @@ function atualizarAjustesDaInterface() {
   $("ajuste-intensidade-brilho").value = String(estado.intensidadeBrilhoCursor);
   $("valor-intensidade-brilho").textContent = `${estado.intensidadeBrilhoCursor}%`;
   $("ajuste-busca-automatica").checked = estado.buscarAtualizacoesAutomaticamente;
-  $("versao-atual").textContent = `CALL ${VERSAO_ATUAL}`;
+  $("versao-atual").textContent = `CALL ${versaoAtual}`;
   $("ajuste-cursor-personalizado").checked = estado.cursorPersonalizado;
 }
 
@@ -5577,7 +5579,7 @@ async function procurarAtualizacao({ manual = false } = {}) {
       atualizacaoDisponivel = null;
       atualizacaoNotas = "";
       mostrarMarcaDeAtualizacao();
-      if (manual) mostrarEstadoDaAtualizacao(`CALL ${VERSAO_ATUAL} já está atualizado.`);
+      if (manual) mostrarEstadoDaAtualizacao(`CALL ${versaoAtual} já está atualizado.`);
       return;
     }
     atualizacaoDisponivel = achado.versao;
@@ -5807,6 +5809,11 @@ window.addEventListener("beforeunload", () => {
 });
 
 carregarPreferencias();
+
+const versaoDoAplicativo = await invocar("versao_do_aplicativo").catch(() => null);
+if (typeof versaoDoAplicativo === "string" && versaoDoAplicativo) {
+  versaoAtual = versaoDoAplicativo;
+}
 
 if (estado.atualizacaoPendente) {
   atualizacaoDisponivel = estado.atualizacaoPendente.versao;
