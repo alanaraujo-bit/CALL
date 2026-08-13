@@ -46,6 +46,11 @@ const TEXTO_MAX: usize = 2000;
 /// que impede um cliente adulterado de empurrar um romance para dentro do
 /// cartao de perfil de todo mundo no grupo.
 const BIO_MAX: usize = 160;
+/// Foto de perfil enquadrada pelo cliente. O teto acompanha `perfil.js`: a
+/// imagem comum, comprimida, fica muito abaixo dele; a folga maior preserva
+/// GIFs curtos sem deixar um cliente empurrar uma mensagem sem limite para o
+/// grupo inteiro.
+const FOTO_PERFIL_MAX_CARACTERES: usize = 2_200_000;
 /// Identificador do mascote. O servidor de proposito **nao** conhece a lista:
 /// mascote e assunto da interface, e uma versao nova do aplicativo com um
 /// setimo desenho nao pode depender de o servidor hospedado ser atualizado
@@ -90,6 +95,9 @@ struct Cartao {
     apelido: String,
     avatar: String,
     bio: String,
+    /// Data URL (ou enquadramento serializado que contém uma data URL) da foto.
+    /// Diferente do perfil da conta, isto vive só durante a presença no grupo.
+    foto: String,
     /// Conta a que esta conexao pertence, quando o token da saudacao valeu.
     conta: Option<String>,
 }
@@ -122,6 +130,7 @@ impl Cartao {
                 .take(AVATAR_MAX)
                 .collect(),
             bio: texto_de(v, "bio").trim().chars().take(BIO_MAX).collect(),
+            foto: foto_serializada_aceita(texto_de(v, "foto"), FOTO_PERFIL_MAX_CARACTERES),
             conta,
         }
     }
@@ -136,6 +145,8 @@ struct Conexao {
     avatar: String,
     /// Uma linha sobre a pessoa, mostrada no cartao de perfil dela.
     bio: String,
+    /// Foto atual anunciada ao grupo. Não é persistida pelo servidor.
+    foto: String,
     /// Conta que esta conexao provou ser, ou `None` para quem entrou sem
     /// conta. E o que autoriza gravar o perfil e a lista de grupos.
     conta: Option<String>,
@@ -165,6 +176,7 @@ impl Conexao {
             "apelido": self.apelido,
             "avatar": self.avatar,
             "bio": self.bio,
+            "foto": self.foto,
             "canalVoz": self.canal_voz,
             "mudo": self.mudo,
             "transmitindo": self.transmitindo,
@@ -916,6 +928,7 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, c
         apelido: cartao.apelido,
         avatar: cartao.avatar,
         bio: cartao.bio,
+        foto: cartao.foto,
         conta: cartao.conta,
         grupo: Some(codigo.to_string()),
         canal_voz: None,
@@ -1195,6 +1208,7 @@ async fn perfil(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cof
         eu.apelido = cartao.apelido.clone();
         eu.avatar = cartao.avatar.clone();
         eu.bio = cartao.bio.clone();
+        eu.foto = cartao.foto.clone();
         let conta = eu.conta.clone();
         let Some(codigo) = eu.grupo.clone() else {
             return;
@@ -1205,7 +1219,8 @@ async fn perfil(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cof
             "de": id.to_string(),
             "apelido": cartao.apelido.clone(),
             "avatar": cartao.avatar.clone(),
-            "bio": cartao.bio.clone()
+            "bio": cartao.bio.clone(),
+            "foto": cartao.foto.clone()
         });
         e.difundir(&codigo, &aviso, Some(id));
         conta

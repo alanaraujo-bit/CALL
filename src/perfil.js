@@ -69,10 +69,9 @@ const cortar = (texto, maximo) => [...String(texto ?? "")].slice(0, maximo).join
  * servidor é quem manda — ele recorta o que chega de qualquer cliente —, e
  * isto é só para a tela não prometer um campo que seria cortado depois.
  *
- * `foto` não passa pelo servidor — ele só aceita um mascote de 24 caracteres
- * no campo `avatar`, e uma foto de verdade não cabe nisso. Por enquanto ela
- * fica só neste computador; daí só validar a forma (é mesmo um data URL de
- * imagem, dentro do teto de tamanho) e não um limite do protocolo.
+ * `foto` passa pelo servidor apenas como presença efêmera, para o grupo ver a
+ * troca na hora. Ela continua guardada neste computador, e o mesmo teto é
+ * aplicado nas duas pontas do protocolo.
  */
 export function saneado({ apelido, avatar, bio, foto } = {}) {
   return {

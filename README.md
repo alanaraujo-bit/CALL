@@ -125,9 +125,9 @@ Em **Transmissão**: quatro perfis, de 720p a 30 quadros até 1440p a 60. Todos
 preferem H.264 para aproveitar o codificador da GPU e preservar o FPS escolhido;
 se a rede apertar, a resolução cede antes dos quadros. Trocar de perfil durante
 uma transmissão vale na hora. O **som do sistema** viaja numa trilha separada da
-sua voz, no teto do codec e sem os filtros de voz. A captura exclui o processo
-do CALL e seus filhos, portanto as vozes que você ouve não retornam pela
-transmissão e não criam eco.
+sua voz, no teto do codec e sem os filtros de voz. A captura exclui a árvore
+de processos do WebView2 que reproduz o áudio do CALL, portanto as vozes que
+você ouve não retornam pela transmissão e não criam eco.
 
 Em **Atividade**: mostrar ao grupo o programa que está na sua frente. Vai **só
 o nome do programa** — "Google Chrome", "Rocket League" —, e nunca o título da

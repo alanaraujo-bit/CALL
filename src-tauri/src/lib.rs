@@ -275,10 +275,18 @@ fn liberar_microfone(janela: &tauri::WebviewWindow) {
     };
     use webview2_com::PermissionRequestedEventHandler;
 
-    let _ = janela.with_webview(|webview| unsafe {
+    let app = janela.app_handle().clone();
+    let _ = janela.with_webview(move |webview| unsafe {
         let Ok(nucleo) = webview.controller().CoreWebView2() else {
             return;
         };
+        // O WebView2 reproduz o áudio em processos próprios. A captura de som
+        // da tela usa este pid como raiz da árvore a excluir, para não mandar
+        // as vozes da chamada de volta aos participantes.
+        let mut processo = 0u32;
+        if nucleo.BrowserProcessId(&mut processo).is_ok() {
+            app.state::<AudioAtivo>().definir_processo_webview(processo);
+        }
         // A API devolve um token de registro; nao precisamos remover o handler.
         let mut ficha = 0i64;
         let _ = nucleo.add_PermissionRequested(

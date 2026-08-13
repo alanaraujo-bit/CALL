@@ -556,7 +556,8 @@ try {
   // repassa e esquece. O que se exige dele é que a troca no meio da sessão
   // chegue aos outros, que os tetos valham, e — o mais importante — que trocar
   // de perfil não seja um jeito de trocar de identidade.
-  console.log("\nPerfil: mascote e bio");
+  console.log("\nPerfil: mascote, bio e foto");
+  const fotoElis = "data:image/png;base64,Zm90by1kYS1lbGlz";
   const elis = await cliente({
     tipo: "entrar",
     codigo,
@@ -564,16 +565,26 @@ try {
     usuario: "elis-006",
     avatar: "capivara",
     bio: "Fuso de Brasília. Jogo à noite.",
+    foto: fotoElis,
   });
   const bemVindoElis = await elis.aguardar("bem-vindo");
   conferir(bemVindoElis?.eu?.avatar === "capivara", "o mascote da saudação volta no bem-vindo");
   conferir(bemVindoElis?.eu?.bio?.startsWith("Fuso"), "a bio da saudação também");
+  conferir(bemVindoElis?.eu?.foto === fotoElis, "e a foto volta no bem-vindo");
 
   const chegada = await aguardarQual(ana, "entrou", (m) => m.membro?.id === bemVindoElis.eu.id);
   conferir(chegada?.membro?.avatar === "capivara", "o grupo vê o mascote de quem chega");
   conferir(chegada?.membro?.bio?.startsWith("Fuso"), "e a bio junto");
+  conferir(chegada?.membro?.foto === fotoElis, "com a foto visível para o grupo");
 
-  elis.enviar({ tipo: "perfil", apelido: "Elis R.", avatar: "dragao", bio: "Mudei de ideia." });
+  const fotoNova = "data:image/png;base64,Zm90by1ub3Zh";
+  elis.enviar({
+    tipo: "perfil",
+    apelido: "Elis R.",
+    avatar: "dragao",
+    bio: "Mudei de ideia.",
+    foto: fotoNova,
+  });
   const trocado = await ana.aguardar("perfil");
   conferir(trocado?.de === bemVindoElis.eu.id, "a troca de perfil identifica quem trocou");
   conferir(
@@ -581,6 +592,7 @@ try {
     "apelido e mascote novos chegam ao grupo"
   );
   conferir(trocado?.bio === "Mudei de ideia.", "e a bio nova");
+  conferir(trocado?.foto === fotoNova, "a foto nova chega na mesma atualização");
   conferir((await elis.aguardar("perfil", 300)) === null, "quem trocou não recebe o próprio eco");
 
   const fabio = await cliente({ tipo: "entrar", codigo, apelido: "Fábio", usuario: "fabio-007" });
@@ -588,6 +600,10 @@ try {
   conferir(
     bemVindoFabio?.presentes?.find((p) => p.usuario === "elis-006")?.avatar === "dragao",
     "quem entra depois vê o perfil trocado, e não o da saudação"
+  );
+  conferir(
+    bemVindoFabio?.presentes?.find((p) => p.usuario === "elis-006")?.foto === fotoNova,
+    "quem entra depois também vê a foto atual"
   );
 
   elis.enviar({ tipo: "perfil", apelido: "Elis", avatar: "<img src=x>coruja", bio: "B".repeat(400) });

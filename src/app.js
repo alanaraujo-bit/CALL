@@ -81,9 +81,9 @@ const estado = {
   /** Uma linha sobre você, mostrada no cartão para quem está no mesmo grupo.
    *  Viaja na saudação; quem tem conta a encontra de volta em outra máquina. */
   bio: "",
-  /** Um data URL quadrado, escolhido no onboarding ou no perfil. Nunca viaja
-   *  para o servidor — ele só entende o mascote de `avatar` —, e por isso só
-   *  aparece para a própria pessoa, neste computador. */
+  /** Um data URL quadrado, escolhido no onboarding ou no perfil. Viaja com a
+   *  presença no grupo para os outros verem a troca na hora, mas continua
+   *  guardado apenas neste computador. */
   foto: "",
 
   /** A conta em que se entrou — `{ id, email, apelido, avatar, bio, atalhos,
@@ -235,6 +235,15 @@ let inicioDaCall = 0;
 let relogioDaCall = null;
 
 const sinal = new Sinal();
+
+/** Uma queda curta do servidor não deve expulsar a sala inteira. A sessão
+ * permanece desenhada enquanto tentamos abrir outro socket; o atraso cresce
+ * para não martelar um servidor que ainda esteja reiniciando. */
+const ATRASOS_RECONEXAO_GRUPO = [0, 1000, 2000, 5000, 10000, 20000, 30000];
+let temporizadorReconexaoGrupo = null;
+let tentativaReconexaoGrupo = 0;
+let sessaoParaReconectar = null;
+let geracaoReconexaoGrupo = 0;
 
 /**
  * O socket social: amigos e mensagem privada, vivo por toda a sessão de
@@ -1320,11 +1329,7 @@ function prepararAplicacao() {
   // Amigos e PV são tratados pelo socket social (`social`, mais abaixo), não
   // por este — este é só o de grupo, que nasce e morre a cada troca.
   sinal.addEventListener("erro", (e) => avisar(e.detail.motivo, "erro"));
-  sinal.addEventListener("queda", () => {
-    if (!estado.grupo) return;
-    avisar("A conexão com o servidor caiu.", "erro");
-    desligar();
-  });
+  sinal.addEventListener("queda", () => agendarReconexaoGrupo());
 
   desenharAtalhos();
   redesenhar();
@@ -1394,9 +1399,7 @@ async function abrirMeuPerfil() {
 
   Object.assign(estado, escolhido);
   salvarPreferencias();
-  // `foto` fica de fora: o servidor só entende o mascote de `avatar`, e
-  // mandar um data URL de 24 caracteres de sobra seria só ser recusado.
-  const { apelido, avatar, bio } = escolhido;
+  const { apelido, avatar, bio, foto } = escolhido;
   sincronizarConta({ apelido, avatar, bio });
   mostrarMeuPerfil();
 
@@ -1404,10 +1407,8 @@ async function abrirMeuPerfil() {
   // valeria na próxima entrada — os outros continuariam vendo o antigo.
   const eu = estado.membros.get(estado.meuId);
   if (eu) {
-    // `eu` é a própria pessoa, do jeito que só ela se vê: a foto entra aqui,
-    // e não no que se manda pela rede duas linhas abaixo.
     Object.assign(eu, escolhido);
-    sinal.enviar({ tipo: "perfil", apelido, avatar, bio });
+    sinal.enviar({ tipo: "perfil", apelido, avatar, bio, foto });
     redesenhar();
   }
   // `redesenhar` não alcança a linha do tempo, e as mensagens da própria
@@ -1511,7 +1512,7 @@ function voltarAoPortal() {
   perguntarPeloGoogle();
 }
 
-function aoPerfilDeOutro({ de, apelido, avatar, bio }) {
+function aoPerfilDeOutro({ de, apelido, avatar, bio, foto }) {
   const membro = estado.membros.get(de);
   if (!membro) return;
 
@@ -1519,6 +1520,9 @@ function aoPerfilDeOutro({ de, apelido, avatar, bio }) {
   membro.apelido = apelido;
   membro.avatar = avatar;
   membro.bio = bio;
+  // Durante uma atualização gradual, um servidor antigo pode não conhecer o
+  // campo ainda. Nesse caso preservamos a foto já vista em vez de apagá-la.
+  if (typeof foto === "string") membro.foto = foto;
   redesenhar();
 
   // Um nome que muda sozinho na lista é confuso; dito uma vez, deixa de ser.
@@ -1723,23 +1727,113 @@ async function conectar(saudacao) {
   $("descricao-grupo").textContent = "";
 
   try {
-    const boasVindas = await sinal.conectar(estado.servidor, {
-      ...saudacao,
-      apelido: estado.apelido,
-      // Com token, o servidor ignora o `usuario` e usa o da conta: quem tem
-      // conta não se apresenta, se identifica. Sem token, a saudação é
-      // exatamente a que sempre foi.
-      token: estado.token,
-      usuario: estado.usuario,
-      avatar: estado.avatar,
-      bio: estado.bio,
-    });
+    const boasVindas = await sinal.conectar(estado.servidor, saudacaoComPerfil(saudacao));
     assumirGrupo(boasVindas);
   } catch (erro) {
     desligar();
     avisar(erro.message ?? String(erro), "erro");
   } finally {
     estado.ocupado = false;
+  }
+}
+
+/** Completa qualquer saudação de grupo com o cartão vigente. Com token, o
+ * servidor continua sendo quem decide a identidade efetiva da conta. */
+function saudacaoComPerfil(saudacao) {
+  return {
+    ...saudacao,
+    apelido: estado.apelido,
+    token: estado.token,
+    usuario: estado.usuario,
+    avatar: estado.avatar,
+    bio: estado.bio,
+    foto: estado.foto,
+  };
+}
+
+function cancelarReconexaoGrupo() {
+  clearTimeout(temporizadorReconexaoGrupo);
+  temporizadorReconexaoGrupo = null;
+  tentativaReconexaoGrupo = 0;
+  sessaoParaReconectar = null;
+  geracaoReconexaoGrupo++;
+}
+
+/** Guarda somente intenções que podem ser retomadas sem pedir permissão de
+ * dispositivo outra vez. A seleção de uma tela, por segurança do sistema,
+ * nunca pode ser refeita silenciosamente. */
+function agendarReconexaoGrupo() {
+  if (!estado.grupo) return;
+
+  if (!sessaoParaReconectar) {
+    sessaoParaReconectar = {
+      codigo: estado.grupo.codigo,
+      canalTexto: estado.canalTexto,
+      canalVoz: estado.canalVoz,
+    };
+    tentativaReconexaoGrupo = 0;
+    atualizarConexao("reconectando");
+    avisar("A conexão caiu. Tentando voltar ao grupo…");
+  }
+
+  if (temporizadorReconexaoGrupo) return;
+  const geracao = geracaoReconexaoGrupo;
+  const indice = Math.min(tentativaReconexaoGrupo, ATRASOS_RECONEXAO_GRUPO.length - 1);
+  const atraso = ATRASOS_RECONEXAO_GRUPO[indice];
+  tentativaReconexaoGrupo++;
+  temporizadorReconexaoGrupo = setTimeout(() => {
+    temporizadorReconexaoGrupo = null;
+    reconectarGrupo(geracao);
+  }, atraso);
+}
+
+async function reconectarGrupo(geracao) {
+  const sessao = sessaoParaReconectar;
+  if (!sessao || geracao !== geracaoReconexaoGrupo || estado.grupo?.codigo !== sessao.codigo) return;
+
+  try {
+    const boasVindas = await sinal.conectar(
+      estado.servidor,
+      saudacaoComPerfil({ tipo: "entrar", codigo: sessao.codigo })
+    );
+    if (geracao !== geracaoReconexaoGrupo || sessao !== sessaoParaReconectar) return;
+
+    // O novo socket recebe outro id de sessão e, no LiveKit, outra identidade.
+    // A trilha do microfone continua aberta, mas os transportes antigos não.
+    if (sessao.canalVoz && estado.fluxoMicrofone) {
+      await desmontarMalha(false);
+      estado.canalVoz = null;
+    }
+    if (geracao !== geracaoReconexaoGrupo || sessao !== sessaoParaReconectar) return;
+
+    assumirGrupo(boasVindas);
+
+    if (sessao.canalTexto && acharCanal(sessao.canalTexto)?.tipo === "texto") {
+      abrirCanalTexto(sessao.canalTexto);
+      // Repõe mensagens que possam ter chegado durante o intervalo.
+      sinal.enviar({ tipo: "historico", canal: sessao.canalTexto });
+    }
+    if (sessao.canalVoz && estado.fluxoMicrofone && acharCanal(sessao.canalVoz)?.tipo === "voz") {
+      sinal.enviar({ tipo: "entrar-voz", canal: sessao.canalVoz, transportes: ["livekit", "malha"] });
+    } else {
+      anunciarEstado();
+    }
+
+    clearTimeout(temporizadorReconexaoGrupo);
+    temporizadorReconexaoGrupo = null;
+    tentativaReconexaoGrupo = 0;
+    sessaoParaReconectar = null;
+    atualizarConexao(true);
+    avisar("Conexão restabelecida.");
+  } catch (erro) {
+    console.warn("[sinal] reconexão do grupo falhou", erro);
+    if (geracao !== geracaoReconexaoGrupo) return;
+    if (/convite inválido|grupo removido/i.test(erro?.message ?? "")) {
+      desligar();
+      avisar("O grupo não existe mais no servidor.", "erro");
+      return;
+    }
+    agendarReconexaoGrupo();
   }
 }
 
@@ -1770,9 +1864,8 @@ function assumirGrupo({ eu, grupo, presentes, conta: daConta, sons }) {
   }
 
   estado.membros.clear();
-  // `foto` entra aqui — e só aqui, na própria entrada — porque este mapa é
-  // que alimenta como cada um se desenha na tela, e é a própria pessoa vendo
-  // a si mesma. A saudação que os outros recebem sobre "eu" não carrega isto.
+  // O mapa alimenta todos os retratos da interface. Para a própria pessoa,
+  // as preferências locais recém-salvas vencem o eco confirmado pelo servidor.
   estado.membros.set(eu.id, {
     ...eu,
     apelido: estado.apelido,
@@ -1810,6 +1903,7 @@ function assumirGrupo({ eu, grupo, presentes, conta: daConta, sons }) {
 
 /** Encerra a participação no grupo sem tocar na lista de atalhos. */
 function desligar() {
+  cancelarReconexaoGrupo();
   sairDaVoz(false);
   // `false`: o socket está indo embora de qualquer jeito, e um anúncio de
   // saída numa conexão que já não existe não chega a ninguém.
@@ -2456,7 +2550,7 @@ async function ajustarVolumeDe(membro) {
   const anterior = estado.volumes.get(membro.usuario) ?? 1;
   const aplicar = (valor) => {
     motor.definirVolumeDe(membro.id, valor);
-    motor.definirVolumeDe(`tela:${membro.id}`, valor);
+    motor.definirVolumeDe(`tela:${membro.id}`, transmissoesMudas.has(membro.id) ? 0 : valor);
   };
 
   const resposta = await perguntar({
@@ -2488,12 +2582,14 @@ async function ajustarVolumeDe(membro) {
 
 function atualizarConexao(ligado) {
   const rotulo = $("rotulo-conexao");
-  rotulo.textContent = ligado ? "Conectado" : "Desconectado";
-  rotulo.dataset.ligado = ligado ? "sim" : "nao";
+  const reconectando = ligado === "reconectando";
+  const conectado = ligado === true;
+  rotulo.textContent = reconectando ? "Reconectando…" : conectado ? "Conectado" : "Desconectado";
+  rotulo.dataset.ligado = conectado ? "sim" : reconectando ? "tentando" : "nao";
   // O pontinho no avatar do rodapé é quem carrega esse estado no trilho
   // estreito — `rotulo-conexao` continua existindo, só que sem espaço para
   // aparecer.
-  $("avatar-usuario").dataset.ligado = ligado ? "sim" : "nao";
+  $("avatar-usuario").dataset.ligado = conectado ? "sim" : reconectando ? "tentando" : "nao";
 }
 
 /* ═══ Conversa ══════════════════════════════════════════════════ */
@@ -4618,14 +4714,20 @@ function atualizarBotaoTransmissao() {
 /** Qual transmissão ocupa a tela toda da janela agora — no máximo uma, e só
  *  enquanto o quadro dela ainda existir (ver `atualizarPalco`). */
 let telaMaximizada = null;
+/** Mudo local por transmissão. Não altera o que os demais espectadores ouvem. */
+const transmissoesMudas = new Set();
 
 const GLIFO_EXPANDIR =
   '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>';
 const GLIFO_RECOLHER =
   '<path d="M4 9h5V4M15 4v5h5M20 15h-5v5M9 20v-5H4"/>';
+const GLIFO_SOM =
+  '<path d="M11 5 7 9H4v6h3l4 4V5Zm4 4c1.3 1.3 1.3 4.7 0 6M18 6c3.2 3.2 3.2 8.8 0 12"/>';
+const GLIFO_SOM_MUDO =
+  '<path d="M11 5 7 9H4v6h3l4 4V5Zm4 5 5 5m0-5-5 5"/>';
 
 function mostrarTela(id, fluxo, rotulo, trilhaLiveKit = null) {
-  removerTela(id);
+  removerTela(id, false);
 
   const quadro = document.createElement("div");
   quadro.className = "transmissao";
@@ -4656,7 +4758,17 @@ function mostrarTela(id, fluxo, rotulo, trilhaLiveKit = null) {
   expandir.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${GLIFO_EXPANDIR}</svg>`;
   expandir.addEventListener("click", () => alternarMaximizarTela(id));
 
-  quadro.append(video, etiqueta, qualidade, expandir);
+  const controles = [video, etiqueta, qualidade, expandir];
+  if (id !== estado.meuId) {
+    const mutar = document.createElement("button");
+    mutar.type = "button";
+    mutar.className = "transmissao__mutar";
+    atualizarBotaoMudoDaTransmissao(id, mutar);
+    mutar.addEventListener("click", () => alternarMudoDaTransmissao(id, mutar));
+    controles.push(mutar);
+  }
+
+  quadro.append(...controles);
   $("palco-grade").append(quadro);
   telas.set(id, quadro);
   quadro.trilhaLiveKit = trilhaLiveKit;
@@ -4665,17 +4777,41 @@ function mostrarTela(id, fluxo, rotulo, trilhaLiveKit = null) {
   sincronizarPalcoDeVoz();
 }
 
-function removerTela(id) {
+function removerTela(id, esquecerMudo = true) {
   const quadro = telas.get(id);
-  if (!quadro) return;
+  if (!quadro) {
+    if (esquecerMudo) transmissoesMudas.delete(id);
+    return;
+  }
   const video = quadro.querySelector("video");
   if (quadro.trilhaLiveKit) quadro.trilhaLiveKit.detach(video);
   else video.srcObject = null;
   quadro.remove();
   telas.delete(id);
+  if (esquecerMudo) transmissoesMudas.delete(id);
   if (telaMaximizada === id) telaMaximizada = null;
   // Devolve o quadro de presença dessa pessoa, se ela ainda estiver na voz.
   sincronizarPalcoDeVoz();
+}
+
+function atualizarBotaoMudoDaTransmissao(id, botao) {
+  const mudo = transmissoesMudas.has(id);
+  const rotulo = mudo ? "Ouvir transmissão" : "Mutar transmissão";
+  botao.dataset.mudo = mudo ? "sim" : "nao";
+  botao.setAttribute("aria-pressed", mudo ? "true" : "false");
+  botao.title = rotulo;
+  botao.setAttribute("aria-label", rotulo);
+  botao.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${mudo ? GLIFO_SOM_MUDO : GLIFO_SOM}</svg>`;
+}
+
+function alternarMudoDaTransmissao(id, botao) {
+  if (transmissoesMudas.has(id)) transmissoesMudas.delete(id);
+  else transmissoesMudas.add(id);
+
+  const membro = estado.membros.get(id);
+  const volume = transmissoesMudas.has(id) ? 0 : estado.volumes.get(membro?.usuario) ?? 1;
+  motor.definirVolumeDe(`tela:${id}`, volume);
+  atualizarBotaoMudoDaTransmissao(id, botao);
 }
 
 /** Maximizar não move o quadro nem mexe no `<video>` — só empresta a tela
@@ -4871,7 +5007,9 @@ function receberTrilha(id, trilha, fluxo, origem = null, trilhaLiveKit = null) {
       motor
         .ligarSaida(`tela:${id}`, fluxo)
         .then((ganho) => {
-          if (ganho) ganho.gain.value = estado.volumes.get(membro?.usuario) ?? 1;
+          if (ganho) {
+            ganho.gain.value = transmissoesMudas.has(id) ? 0 : estado.volumes.get(membro?.usuario) ?? 1;
+          }
         })
         .catch(() => {});
       return;

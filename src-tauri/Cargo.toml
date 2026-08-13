@@ -1,6 +1,6 @@
 [package]
 name = "call"
-version = "0.13.2"
+version = "0.14.0"
 description = "Comunicacao em grupo com voz e transmissao de tela"
 authors = ["CALL"]
 edition = "2021"

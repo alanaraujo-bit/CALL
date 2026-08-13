@@ -1496,6 +1496,10 @@ svg {
   color: var(--vivo);
 }
 
+.perfil__estado[data-ligado="tentando"] {
+  color: #d9aa55;
+}
+
 .avatar {
   width: 28px;
   height: 28px;
@@ -2475,10 +2479,10 @@ svg {
   letter-spacing: 0.02em;
 }
 
-.transmissao__expandir {
+.transmissao__expandir,
+.transmissao__mutar {
   position: absolute;
   top: 10px;
-  right: 10px;
   display: grid;
   place-items: center;
   width: 28px;
@@ -2493,18 +2497,32 @@ svg {
   transition: opacity var(--transicao), color var(--transicao), background-color var(--transicao);
 }
 
+.transmissao__expandir {
+  right: 10px;
+}
+
+.transmissao__mutar {
+  right: 46px;
+}
+
 .transmissao:hover .transmissao__expandir,
+.transmissao:hover .transmissao__mutar,
 .transmissao__expandir:focus-visible,
-.transmissao__expandir[aria-pressed="true"] {
+.transmissao__mutar:focus-visible,
+.transmissao__expandir[aria-pressed="true"],
+.transmissao__mutar[aria-pressed="true"] {
   opacity: 1;
 }
 
-.transmissao__expandir:hover {
+.transmissao__expandir:hover,
+.transmissao__mutar:hover,
+.transmissao__mutar[aria-pressed="true"] {
   color: var(--texto);
   background: rgba(14, 15, 17, 0.92);
 }
 
-.transmissao__expandir svg {
+.transmissao__expandir svg,
+.transmissao__mutar svg {
   width: 15px;
   height: 15px;
   fill: none;
@@ -2528,7 +2546,8 @@ svg {
   object-fit: contain;
 }
 
-.transmissao--cheia .transmissao__expandir {
+.transmissao--cheia .transmissao__expandir,
+.transmissao--cheia .transmissao__mutar {
   opacity: 1;
 }
 
@@ -4993,6 +5012,10 @@ select.campo__entrada {
 
 .grupos__rodape .avatar[data-ligado="sim"]::after {
   background: var(--vivo);
+}
+
+.grupos__rodape .avatar[data-ligado="tentando"]::after {
+  background: #d9aa55;
 }
 
 .avatar--grande {

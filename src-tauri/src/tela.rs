@@ -22,15 +22,31 @@ const AUDIO_CANAIS: usize = 2;
 const AUDIO_QUADROS_POR_PEDACO: usize = 960;
 
 #[derive(Default)]
-pub struct AudioAtivo(Mutex<Option<Arc<AtomicBool>>>);
+pub struct AudioAtivo {
+    captura: Mutex<Option<Arc<AtomicBool>>>,
+    processo_webview: Mutex<Option<u32>>,
+}
 
 impl AudioAtivo {
     fn parar_o_anterior(&self) {
-        if let Ok(mut atual) = self.0.lock() {
+        if let Ok(mut atual) = self.captura.lock() {
             if let Some(parar) = atual.take() {
                 parar.store(true, Ordering::SeqCst);
             }
         }
+    }
+
+    pub fn definir_processo_webview(&self, processo: u32) {
+        if processo == 0 {
+            return;
+        }
+        if let Ok(mut atual) = self.processo_webview.lock() {
+            *atual = Some(processo);
+        }
+    }
+
+    fn processo_webview(&self) -> Option<u32> {
+        self.processo_webview.lock().ok().and_then(|atual| *atual)
     }
 }
 
@@ -46,12 +62,16 @@ struct PedacoDeAudio {
 /// do dispositivo inclui também as vozes remotas que o aplicativo acabou de
 /// tocar; enviá-las de volta cria o eco ouvido por toda a sala. O process
 /// loopback do Windows, em modo EXCLUDE_TARGET_PROCESS_TREE, captura tudo menos
-/// este processo e seus filhos — exatamente a separação usada por aplicativos
-/// de chamada.
+/// o processo raiz do WebView2 e seus filhos — exatamente onde voz e alertas
+/// do CALL são renderizados.
 ///
 /// As amostras chegam em ponto flutuante e saem daqui em inteiro de 16 bits,
 /// metade do tamanho e ainda acima da resolução útil depois do Opus.
-fn gravar_audio_do_sistema(app: &AppHandle, parar: &AtomicBool) -> Result<(), wasapi::WasapiError> {
+fn gravar_audio_do_sistema(
+    app: &AppHandle,
+    parar: &AtomicBool,
+    processo_excluido: u32,
+) -> Result<(), wasapi::WasapiError> {
     initialize_mta().ok()?;
 
     let formato = WaveFormat::new(
@@ -65,7 +85,7 @@ fn gravar_audio_do_sistema(app: &AppHandle, parar: &AtomicBool) -> Result<(), wa
     // `false` seleciona PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE.
     // Esta API existe no Windows 10 build 20348 em diante. Em versões mais
     // antigas preferimos seguir sem som de tela a reintroduzir retorno de voz.
-    let mut cliente = AudioClient::new_application_loopback_client(std::process::id(), false)?;
+    let mut cliente = AudioClient::new_application_loopback_client(processo_excluido, false)?;
     let modo = StreamMode::EventsShared {
         autoconvert: true,
         // Process loopback não expõe get_device_period; 20 ms casa com o
@@ -119,12 +139,16 @@ pub fn iniciar_audio_da_tela(app: AppHandle, estado: State<'_, AudioAtivo>) -> R
 
     let parar = Arc::new(AtomicBool::new(false));
     *estado
-        .0
+        .captura
         .lock()
         .map_err(|_| "Estado interno inconsistente.".to_string())? = Some(parar.clone());
+    // O som é renderizado pelo conjunto de processos do WebView2, não pelo
+    // executável hospedeiro do Tauri. Excluir a raiz desse conjunto impede que
+    // voz remota e alertas do CALL voltem dentro do áudio compartilhado.
+    let processo_excluido = estado.processo_webview().unwrap_or_else(std::process::id);
 
     thread::spawn(move || {
-        if let Err(erro) = gravar_audio_do_sistema(&app, &parar) {
+        if let Err(erro) = gravar_audio_do_sistema(&app, &parar, processo_excluido) {
             eprintln!("[tela] captura de áudio do sistema encerrada: {erro}");
             let _ = app.emit("erro-audio-tela", erro.to_string());
         }
