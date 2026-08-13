@@ -108,6 +108,8 @@ export const RECEITAS = {
   sai: { subindo: false, ganho: 0.21, peso: 0.16 },
   /** Alguém saiu do seu canal de voz. */
   saiu: { subindo: false, ganho: 0.12, peso: 0 },
+  /** Mensagem nova de outra pessoa. Curto, agudo e um pouco mais presente. */
+  mensagem: { subindo: true, ganho: 0.2, peso: 0 },
 };
 
 /* ── Construção ───────────────────────────────────────────────────── */

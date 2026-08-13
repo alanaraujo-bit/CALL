@@ -819,11 +819,18 @@
         <div class="cartao__corpo">
           <h3 class="cartao__nome" id="cartao-nome">—</h3>
           <span class="cartao__etiquetas" id="cartao-etiquetas" hidden></span>
-          <p class="cartao__bio" id="cartao-bio" hidden></p>
-          <p class="cartao__vazio" id="cartao-vazio">Sem bio.</p>
-          <!-- Por último no corpo, de propósito: é o "jogando agora" do
-               Discord, e lá também vem depois da bio, colado nos botões. -->
-          <div class="cartao__atividade" id="cartao-atividade" hidden></div>
+
+          <!-- O painel próprio é o que dá ao cartão a sensação de "cartão
+               dentro do cartão" do Discord — bio e atividade moram juntas
+               numa superfície separada da capa, em vez de soltas no fundo. -->
+          <div class="cartao__painel">
+            <p class="cartao__bio" id="cartao-bio" hidden></p>
+            <p class="cartao__vazio" id="cartao-vazio">Sem bio.</p>
+            <!-- Por último no painel, de propósito: é o "jogando agora" do
+                 Discord, e lá também vem depois da bio. -->
+            <div class="cartao__atividade" id="cartao-atividade" hidden></div>
+          </div>
+
           <div class="cartao__acoes" id="cartao-acoes" hidden></div>
         </div>
       </div>

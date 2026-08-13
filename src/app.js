@@ -12,6 +12,7 @@ import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
 import { Vigia } from "./atividade.js";
 import { buscarResumoDeAtividade } from "./resumo.js";
 import { avatarSugerido, pintarAvatar, pintarMarcaDeGrupo } from "./avatares.js";
+import { preencherIconeDeAtividade } from "./plataformas.js";
 import { CATEGORIAS_EMOJI, TODOS_EMOJIS, TOKEN_EMOJI, acharEmoji, elementoDeEmoji } from "./emojis.js";
 import {
   editarGrupo,
@@ -182,6 +183,8 @@ const estado = {
 
 const audiosRemotos = new Map(); // id -> HTMLAudioElement de sustentação
 const telas = new Map(); // id -> HTMLElement do palco
+// id da transmissão -> ids de quem está recebendo aquela tela
+const espectadoresDeTelas = new Map();
 // id -> HTMLElement do quadro de presença no palco — quem está na voz mas não
 // está transmitindo tela. Mapa à parte de `telas`: um vídeo de verdade nunca
 // pode ser desmontado e remontado só porque o palco foi redesenhado.
@@ -1305,6 +1308,7 @@ function prepararAplicacao() {
     if (provedorDeMidia === "malha") malha.receberSinal(e.detail.de, e.detail.dados);
   });
   sinal.addEventListener("estado", (e) => aoEstadoDeMidia(e.detail));
+  sinal.addEventListener("espectadores", (e) => aoEstadoDeEspectador(e.detail));
   sinal.addEventListener("perfil", (e) => aoPerfilDeOutro(e.detail));
   sinal.addEventListener("mensagem", (e) => aoMensagem(e.detail.mensagem));
   sinal.addEventListener("mensagem-atualizada", (e) => aoMensagemAtualizada(e.detail.mensagem, e.detail.canal));
@@ -1530,29 +1534,36 @@ function aoPerfilDeOutro({ de, apelido, avatar, bio, foto }) {
 }
 
 /**
- * O cartão de alguém. Em si mesmo abre o editor — a pergunta "quem é essa
- * pessoa?" só tem resposta interessante quando a pessoa é outra.
+ * O cartão de alguém — inclusive de si mesmo, que é como o Discord também
+ * faz: o cartão sempre mostra quem a pessoa é para o grupo, e "Editar
+ * perfil" é só mais uma ação da lista, não uma tela diferente. O botão de
+ * perfil no rodapé continua sendo o atalho direto para editar.
  */
 function abrirCartaoDe(membro) {
-  if (membro.id === estado.meuId) {
-    abrirMeuPerfil();
-    return;
-  }
+  const souEu = membro.id === estado.meuId;
 
   const etiquetas = [];
   if (membro.usuario === estado.grupo?.dono) etiquetas.push("dono");
-  if (membro.canalVoz) etiquetas.push("na voz");
+  if (membro.canalVoz) {
+    const canal = acharCanal(membro.canalVoz);
+    etiquetas.push(canal ? `na voz · #${canal.nome}` : "na voz");
+  }
 
-  const acoes = [{ rotulo: "Ajustar volume…", fazer: () => ajustarVolumeDe(membro) }];
-  // Amizade e PV exigem conta dos dois lados: sem ela `membro.usuario` é só
-  // um número sorteado que não sobrevive nem à própria sessão de quem o tem,
-  // e a ação some em vez de aparecer desabilitada.
-  if (estado.conta) {
-    if (souAmigoDe(membro.usuario)) {
-      acoes.push({ rotulo: "Mandar mensagem", fazer: () => abrirConversaPrivada(membro.usuario) });
-      acoes.push({ rotulo: "Desfazer amizade", fazer: () => removerAmizade(membro.usuario) });
-    } else if (membro.usuario !== estado.usuario) {
-      acoes.push({ rotulo: "Adicionar amigo", fazer: () => pedirAmizade(membro.usuario) });
+  const acoes = [];
+  if (souEu) {
+    acoes.push({ rotulo: "Editar perfil", fazer: abrirMeuPerfil });
+  } else {
+    acoes.push({ rotulo: "Ajustar volume…", fazer: () => ajustarVolumeDe(membro) });
+    // Amizade e PV exigem conta dos dois lados: sem ela `membro.usuario` é só
+    // um número sorteado que não sobrevive nem à própria sessão de quem o
+    // tem, e a ação some em vez de aparecer desabilitada.
+    if (estado.conta) {
+      if (souAmigoDe(membro.usuario)) {
+        acoes.push({ rotulo: "Mandar mensagem", fazer: () => abrirConversaPrivada(membro.usuario) });
+        acoes.push({ rotulo: "Desfazer amizade", fazer: () => removerAmizade(membro.usuario) });
+      } else if (membro.usuario !== estado.usuario) {
+        acoes.push({ rotulo: "Adicionar amigo", fazer: () => pedirAmizade(membro.usuario) });
+      }
     }
   }
 
@@ -1710,6 +1721,10 @@ async function entrarPorConvite() {
 
 function abrirGrupo(codigo) {
   if (codigo === estado.grupo?.codigo) return;
+  if (estado.canalVoz) {
+    avisar("Você está em uma call. Saia dela antes de trocar de grupo.", "neutro");
+    return;
+  }
   return conectar({ tipo: "entrar", codigo });
 }
 
@@ -1719,6 +1734,14 @@ function abrirGrupo(codigo) {
  */
 async function conectar(saudacao) {
   if (estado.ocupado) return;
+  if (
+    saudacao?.tipo === "entrar" &&
+    saudacao.codigo !== estado.grupo?.codigo &&
+    estado.canalVoz
+  ) {
+    avisar("Você está em uma call. Saia dela antes de trocar de grupo.", "neutro");
+    return;
+  }
   estado.ocupado = true;
   desligar();
 
@@ -2336,6 +2359,12 @@ function aoEntrar(membro) {
 function aoSair(id) {
   const membro = estado.membros.get(id);
   estado.membros.delete(id);
+  espectadoresDeTelas.delete(id);
+  for (const [transmissao, espectadores] of espectadoresDeTelas) {
+    espectadores.delete(id);
+    if (!espectadores.size) espectadoresDeTelas.delete(transmissao);
+    atualizarIndicadorDeEspectadores(transmissao);
+  }
   if (estado.grupo?.codigo) {
     estado.presencasGrupos.set(estado.grupo.codigo, estado.membros.size);
     desenharAtalhos();
@@ -2352,8 +2381,22 @@ function aoEstadoDeMidia({ de, mudo, transmitindo, atividade, atividadeIcone }) 
   membro.transmitindo = transmitindo;
   membro.atividade = atividade ?? null;
   membro.atividadeIcone = atividadeIcone ?? null;
-  if (!transmitindo) removerTela(de);
+  if (!transmitindo) {
+    espectadoresDeTelas.delete(de);
+    removerTela(de);
+  }
   redesenhar();
+}
+
+function aoEstadoDeEspectador({ transmissao, de, assistindo }) {
+  const idTransmissao = String(transmissao);
+  const idEspectador = String(de);
+  const espectadores = espectadoresDeTelas.get(idTransmissao) ?? new Set();
+  if (assistindo) espectadores.add(idEspectador);
+  else espectadores.delete(idEspectador);
+  if (espectadores.size) espectadoresDeTelas.set(idTransmissao, espectadores);
+  else espectadoresDeTelas.delete(idTransmissao);
+  atualizarIndicadorDeEspectadores(idTransmissao);
 }
 
 /**
@@ -2457,13 +2500,9 @@ function desenharParticipantes() {
       const fazendo = document.createElement("span");
       fazendo.className = "participante__atividade";
       fazendo.title = membro.atividade;
-      if (membro.atividadeIcone) {
-        const icone = document.createElement("img");
-        icone.className = "participante__atividade-icone";
-        icone.src = membro.atividadeIcone;
-        icone.alt = "";
-        fazendo.append(icone);
-      }
+      const icone = document.createElement("span");
+      preencherIconeDeAtividade(icone, membro, "participante__atividade-icone");
+      fazendo.append(icone);
       const rotulo = document.createElement("span");
       rotulo.textContent = membro.atividade;
       fazendo.append(rotulo);
@@ -2765,6 +2804,10 @@ function aoMensagem(mensagem) {
   // sozinha faria a conversa parecer começar aqui; quando o histórico for
   // pedido, ele já a trará. A marca de novidade, essa, vale de qualquer jeito.
   estado.mensagens.get(mensagem.canal)?.push(mensagem);
+
+  // O servidor devolve a mensagem também para quem enviou. O aviso é só para
+  // quem recebeu de outra pessoa, para não duplicar o retorno da própria ação.
+  if (mensagem.autor !== estado.usuario) motor.ouvirAviso("mensagem").catch(() => {});
 
   if (mensagem.canal === estado.canalTexto) {
     desenharConversa();
@@ -3422,6 +3465,8 @@ function aoMensagemPrivada({ mensagem, para }) {
   // amigo quem escreveu.
   const outraParte = mensagem.autor === estado.usuario ? para : mensagem.autor;
   estado.mensagens.get(outraParte)?.push(mensagem);
+
+  if (mensagem.autor !== estado.usuario) motor.ouvirAviso("mensagem").catch(() => {});
 
   if (outraParte === estado.conversaPrivada) {
     desenharConversa();
@@ -4558,6 +4603,7 @@ function pararTransmissao() {
   estado.fluxoTela?.getTracks().forEach((t) => t.stop());
   estado.fluxoTela = null;
   removerTela(estado.meuId);
+  espectadoresDeTelas.delete(String(estado.meuId));
 
   const eu = estado.membros.get(estado.meuId);
   if (eu) eu.transmitindo = false;
@@ -4749,6 +4795,10 @@ function mostrarTela(id, fluxo, rotulo, trilhaLiveKit = null) {
   const qualidade = document.createElement("span");
   qualidade.className = "transmissao__qualidade oculto";
 
+  const espectadores = document.createElement("span");
+  espectadores.className = "transmissao__espectadores";
+  atualizarIndicadorDeEspectadores(id, espectadores);
+
   const expandir = document.createElement("button");
   expandir.type = "button";
   expandir.className = "transmissao__expandir";
@@ -4758,7 +4808,7 @@ function mostrarTela(id, fluxo, rotulo, trilhaLiveKit = null) {
   expandir.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${GLIFO_EXPANDIR}</svg>`;
   expandir.addEventListener("click", () => alternarMaximizarTela(id));
 
-  const controles = [video, etiqueta, qualidade, expandir];
+  const controles = [video, etiqueta, qualidade, espectadores, expandir];
   if (id !== estado.meuId) {
     const mutar = document.createElement("button");
     mutar.type = "button";
@@ -4777,11 +4827,27 @@ function mostrarTela(id, fluxo, rotulo, trilhaLiveKit = null) {
   sincronizarPalcoDeVoz();
 }
 
+function atualizarIndicadorDeEspectadores(id, elemento = telas.get(String(id))?.querySelector(".transmissao__espectadores")) {
+  if (!elemento) return;
+  if (String(id) !== String(estado.meuId)) {
+    elemento.classList.add("oculto");
+    return;
+  }
+  const ids = [...(espectadoresDeTelas.get(String(id)) ?? [])];
+  const nomes = ids.map((espectador) => estado.membros.get(espectador)?.apelido).filter(Boolean);
+  elemento.classList.remove("oculto");
+  elemento.textContent = nomes.length ? `◉ ${nomes.join(", ")}` : "◉ Ninguém assistindo";
+  elemento.title = nomes.length ? `Assistindo: ${nomes.join(", ")}` : "Ninguém está assistindo";
+}
+
 function removerTela(id, esquecerMudo = true) {
   const quadro = telas.get(id);
   if (!quadro) {
     if (esquecerMudo) transmissoesMudas.delete(id);
     return;
+  }
+  if (String(id) !== String(estado.meuId)) {
+    sinal.enviar({ tipo: "assistindo", transmissao: String(id), assistindo: false });
   }
   const video = quadro.querySelector("video");
   if (quadro.trilhaLiveKit) quadro.trilhaLiveKit.detach(video);
@@ -5040,6 +5106,9 @@ function receberTrilha(id, trilha, fluxo, origem = null, trilhaLiveKit = null) {
   if (membro) {
     membro.transmitindo = true;
     redesenhar();
+  }
+  if (id !== estado.meuId) {
+    sinal.enviar({ tipo: "assistindo", transmissao: String(id), assistindo: true });
   }
 }
 

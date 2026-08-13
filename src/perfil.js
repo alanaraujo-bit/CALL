@@ -20,13 +20,10 @@ import {
   pintarAvatar,
   pintarMarcaDeGrupo,
 } from "./avatares.js";
+import { preencherIconeDeAtividade } from "./plataformas.js";
 
 const $ = (id) => document.getElementById(id);
 
-/** Substitui o ícone do programa quando não há um — a maioria dos casos,
- *  já que só quem foi cadastrado a mão em `atividade.js` ganha imagem. */
-const GLIFO_ATIVIDADE =
-  '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="10" rx="1.5"/><path d="M7.5 17h5M10 14v3"/></svg>';
 /** A seta que diz "isto abre" — só aparece quando o quadro é clicável. */
 const GLIFO_SETA = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 7.5l4.5 4.5 4.5-4.5"/></svg>';
 
@@ -893,19 +890,7 @@ export function mostrarCartao({
   caixaAtividade.hidden = !atividade;
   if (atividade) {
     const icone = document.createElement("span");
-    icone.className = "cartao__atividade-icone";
-    if (atividadeIcone) {
-      const imagem = document.createElement("img");
-      imagem.src = atividadeIcone;
-      imagem.alt = "";
-      icone.append(imagem);
-    } else {
-      // A maioria dos programas nunca ganhou um ícone — só quem foi
-      // cadastrado a mão tem um (`atividade.js`) —, e o quadro não pode ficar
-      // pela metade só porque falta essa parte.
-      icone.classList.add("cartao__atividade-icone--generico");
-      icone.innerHTML = GLIFO_ATIVIDADE;
-    }
+    preencherIconeDeAtividade(icone, { atividade, atividadeIcone }, "cartao__atividade-icone");
 
     const texto = document.createElement("span");
     texto.className = "cartao__atividade-texto";

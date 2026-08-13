@@ -474,6 +474,7 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "sair-voz" => sair_voz(id, estado),
         "sinal" => sinal(v, id, estado),
         "estado" => estado_de_midia(v, id, estado),
+        "assistindo" => estado_de_assistencia(v, id, estado),
         "perfil" => perfil(v, id, estado, cofre).await,
         "mensagem" => mensagem(v, id, fila, estado),
         "editar-mensagem" => alterar_mensagem(v, id, fila, estado, false),
@@ -989,6 +990,16 @@ fn despedir(id: u64, estado: &Arc<Mutex<Estado>>) {
     // Quem estava na mesma voz precisa desmontar o elo WebRTC; o resto do
     // grupo so precisa parar de ver a pessoa na lista.
     if let Some(canal) = &saindo.canal_voz {
+        for c in e.na_voz(canal) {
+            if c.id != id && c.transmitindo {
+                let _ = c.fila.send(texto_json(&json!({
+                    "tipo": "espectadores",
+                    "transmissao": c.id.to_string(),
+                    "de": id.to_string(),
+                    "assistindo": false
+                })));
+            }
+        }
         let aviso = json!({ "tipo": "saiu-voz", "id": id.to_string(), "canal": canal });
         for c in e.na_voz(canal) {
             let _ = c.fila.send(texto_json(&aviso));
@@ -1099,6 +1110,16 @@ fn largar_voz(e: &mut Estado, id: u64) {
     let Some(anterior) = e.conexoes.get(&id).and_then(|c| c.canal_voz.clone()) else {
         return;
     };
+    for c in e.na_voz(&anterior) {
+        if c.id != id && c.transmitindo {
+            let _ = c.fila.send(texto_json(&json!({
+                "tipo": "espectadores",
+                "transmissao": c.id.to_string(),
+                "de": id.to_string(),
+                "assistindo": false
+            })));
+        }
+    }
     if let Some(c) = e.conexoes.get_mut(&id) {
         c.canal_voz = None;
         c.provedor_midia = None;
@@ -1187,6 +1208,36 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
         "atividadeIcone": atividade_icone
     });
     e.difundir(&codigo, &aviso, Some(id));
+}
+
+/// Informa somente ao dono da transmissão que uma pessoa passou a receber
+/// (ou deixou de receber) a tela. O vídeo continua indo pelo transporte de
+/// mídia; este evento carrega apenas a presença do espectador.
+fn estado_de_assistencia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
+    let Some(transmissao) = v
+        .get("transmissao")
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse::<u64>().ok())
+    else {
+        return;
+    };
+    let assistindo = v.get("assistindo").and_then(Value::as_bool).unwrap_or(false);
+
+    let e = estado.lock().unwrap();
+    let Some(espectador) = e.conexoes.get(&id) else { return };
+    let Some(dono) = e.conexoes.get(&transmissao) else { return };
+    if espectador.canal_voz.is_none()
+        || espectador.canal_voz != dono.canal_voz
+    {
+        return;
+    }
+
+    let _ = dono.fila.send(texto_json(&json!({
+        "tipo": "espectadores",
+        "transmissao": transmissao.to_string(),
+        "de": id.to_string(),
+        "assistindo": assistindo
+    })));
 }
 
 /// Perfil trocado com o grupo ja em andamento. Sem isto, mudar o apelido, o
