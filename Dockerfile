@@ -21,6 +21,10 @@ COPY servidor/src servidor/src
 # so na imagem final. O schema vira parte do executavel; nao ha pasta de
 # migracoes para copiar depois.
 COPY servidor/migracoes servidor/migracoes
+# A pagina do painel administrativo, embutida no binario da mesma forma
+# (`include_str!("../admin.html")` em `main.rs`) -- o servidor continua um
+# unico executavel, sem pasta de assets ao lado dele em producao.
+COPY servidor/admin.html servidor/admin.html
 COPY Cargo.lock Cargo.lock
 
 RUN printf '[workspace]\n\
