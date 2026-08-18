@@ -9,6 +9,7 @@ use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
 mod atividade;
+mod controle;
 mod google;
 mod resumo;
 mod tela;
@@ -358,6 +359,13 @@ pub fn run() {
             app.manage(AtalhoMudo::default());
             app.manage(SaindoDeVerdade::default());
 
+            // Canal de controle local (ver `controle.rs`). Sobe cedo, e sem poder
+            // derrubar a partida: quem nao tem o SLATE instalado nunca precisa
+            // saber que ele existe.
+            let controle = std::sync::Arc::new(controle::Controle::default());
+            app.manage(controle.clone());
+            controle::iniciar(app.handle(), controle);
+
             // O instalador registra o esquema no sistema; em desenvolvimento
             // nao passa instalador nenhum, e sem isto o `call://` nao existiria
             // fora de uma maquina onde o CALL ja foi instalado alguma vez.
@@ -439,6 +447,7 @@ pub fn run() {
             procurar_atualizacao,
             instalar_atualizacao,
             definir_atalho_mudo,
+            controle::anotar_estado_de_controle,
             google::google_autenticar,
             tela::iniciar_audio_da_tela,
             tela::parar_audio_da_tela,
@@ -454,6 +463,7 @@ pub fn run() {
     app.run(|app, evento| {
         if let RunEvent::Exit = evento {
             app.state::<Hospedagem>().encerrar();
+            controle::esquecer_descoberta();
             let _ = tela::parar_audio_da_tela(app.state::<AudioAtivo>());
         }
     });

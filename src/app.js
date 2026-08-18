@@ -4420,6 +4420,53 @@ function atualizarBotaoMicrofone() {
   const rotulo = estado.mudo ? "Microfone mudo — clique para falar" : "Microfone aberto";
   botao.title = rotulo;
   botao.setAttribute("aria-label", rotulo);
+  publicarEstadoDeControle();
+}
+
+/**
+ * Deixa o microfone no estado pedido de fora — pelo SLATE, hoje.
+ *
+ * Recebe o valor desejado em vez de alternar, e não faz nada quando já está
+ * assim. Alternar por um canal que pode repetir uma mensagem deixaria o botão
+ * do celular dizendo o contrário do que está acontecendo aqui; dizer "fique
+ * mudo" converge sozinho, quantas vezes chegar.
+ *
+ * Passa por `alternarMicrofone` de propósito: é ele que desliga a trilha,
+ * atualiza o membro local, redesenha e avisa a sala. Mexer no áudio por fora
+ * dele deixaria os outros achando que você continua falando.
+ */
+function definirMudo(valor) {
+  if (!estado.fluxoMicrofone) return;
+  if (estado.mudo === Boolean(valor)) return;
+  alternarMicrofone();
+}
+
+/** A última assinatura publicada, para não repetir a mesma linha no canal. */
+let ultimoEstadoDeControle = "";
+
+/**
+ * Conta ao canal de controle local o que mudou (ver `src-tauri/src/controle.rs`).
+ *
+ * Chamada de `atualizarBotaoMicrofone` e `atualizarBotaoTransmissao` porque as
+ * duas juntas cobrem as três coisas publicadas — mudo, transmissão, e entrar ou
+ * sair de um canal de voz, que passa por `atualizarRodapeDeVoz` e chama as duas.
+ * Pendurar em cada ponto que mexe no estado daria a mesma cobertura e um lugar
+ * a mais para esquecer.
+ *
+ * `emChamada` sai também de `fluxoMicrofone`, e não só do canal: é exatamente a
+ * condição em que `alternarMicrofone` desiste na primeira linha. Publicar
+ * `true` sem ela daria ao celular um botão que não faz nada.
+ */
+function publicarEstadoDeControle() {
+  const atual = {
+    emChamada: Boolean(estado.canalVoz && estado.fluxoMicrofone),
+    mudo: Boolean(estado.mudo),
+    transmitindo: Boolean(estado.transmitindo),
+  };
+  const assinatura = JSON.stringify(atual);
+  if (assinatura === ultimoEstadoDeControle) return;
+  ultimoEstadoDeControle = assinatura;
+  invocar("anotar_estado_de_controle", atual).catch(() => {});
 }
 
 /* ═══ Transmissão de tela ═══════════════════════════════════════ */
@@ -4777,6 +4824,7 @@ function atualizarBotaoTransmissao() {
   const rotulo = estado.transmitindo ? "Parar a transmissão" : "Transmitir tela";
   botao.title = rotulo;
   botao.setAttribute("aria-label", rotulo);
+  publicarEstadoDeControle();
 }
 
 /* ═══ Palco ═════════════════════════════════════════════════════ */
@@ -6499,6 +6547,13 @@ receberConvite();
 // partida, e não só quando o painel de ajustes abre.
 window.__TAURI__?.event?.listen("atalho-mudo", alternarMicrofone);
 if (estado.atalhoMudo) invocar("definir_atalho_mudo", { atalho: estado.atalhoMudo }).catch(() => {});
+
+// O canal de controle local manda o valor desejado, não um "alterne" — por isso
+// entra por `definirMudo`, e não pelo mesmo ouvinte do atalho global.
+window.__TAURI__?.event?.listen("controle-mudo", (evento) => definirMudo(evento?.payload));
+// Publica a primeira vez na partida: sem isto, quem se conectasse antes de
+// qualquer botão mudar receberia o estado zerado que o Rust guarda por padrão.
+publicarEstadoDeControle();
 
 procurarAtualizacao();
 setInterval(procurarAtualizacao, INTERVALO_ATUALIZACAO);

@@ -18,6 +18,23 @@
  */
 export const NOTAS_DE_VERSAO = [
   {
+    versao: "0.17.0",
+    data: "2026-08-18",
+    titulo: "O mudo agora cabe no seu celular",
+    resumo:
+      "Quem usa o SLATE passa a mutar o microfone do CALL pelo celular — e o botão de lá sabe se você está mudo.",
+    destaques: [
+      {
+        titulo: "Novo",
+        itens: [
+          "O CALL passou a atender o SLATE, o painel de controle que roda no celular: dá para mutar e voltar a falar sem sair do sofá.",
+          "O botão no celular não é um chute — ele acende junto com o do CALL, inclusive quando quem mutou foi o atalho do teclado no computador.",
+          "A tecla só aparece quando há chamada de voz aberta. Sem chamada, o celular explica o que fazer em vez de mostrar um botão que não faz nada.",
+        ],
+      },
+    ],
+  },
+  {
     versao: "0.15.0",
     data: "2026-08-12",
     titulo: "Um perfil que conta mais sobre você",
