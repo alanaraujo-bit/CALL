@@ -25,6 +25,9 @@ import {
   saneadoGrupo,
 } from "./perfil.js";
 import * as conta from "./conta.js";
+import { montarHistorico } from "./historico.js";
+import { NOTAS_DE_VERSAO } from "./notas-de-versao.js";
+import { montarListaDeFeedback, ROTULOS_STATUS } from "./feedback.js";
 
 /* ═══ Atalhos ═══════════════════════════════════════════════════ */
 
@@ -162,6 +165,10 @@ const estado = {
   /** Última versão encontrada, mantida para o atalho de atualização continuar
    * visível mesmo se o aplicativo for fechado antes de ela ser instalada. */
   atualizacaoPendente: null,
+  /** Versão mais recente cujas notas já foram abertas na Central de
+   * Novidades — não a versão instalada. Controla só o ponto de "não lido"
+   * no botão; `null` para quem nunca abriu o painel. */
+  ultimaVersaoNotasVista: null,
   /** O que já foi anunciado ao grupo. Não é preferência: é o que está no ar. */
   minhaAtividade: null,
   /** Ícone da atividade no ar, quando ela veio de um programa cadastrado a
@@ -355,6 +362,9 @@ function carregarPreferencias() {
     ) {
       estado.atualizacaoPendente = bruto.atualizacaoPendente;
     }
+    if (typeof bruto.ultimaVersaoNotasVista === "string") {
+      estado.ultimaVersaoNotasVista = bruto.ultimaVersaoNotasVista;
+    }
     if (typeof bruto.atalhoMudo === "string") estado.atalhoMudo = bruto.atalhoMudo;
     estado.volumes = new Map(Array.isArray(bruto.volumes) ? bruto.volumes : []);
     estado.programasPersonalizados = new Map(
@@ -409,6 +419,7 @@ function salvarPreferencias() {
         buscarAtualizacoesAutomaticamente: estado.buscarAtualizacoesAutomaticamente,
         lembreteAtualizacao: estado.lembreteAtualizacao,
         atualizacaoPendente: estado.atualizacaoPendente,
+        ultimaVersaoNotasVista: estado.ultimaVersaoNotasVista,
         atalhoMudo: estado.atalhoMudo,
         volumes: [...estado.volumes],
         programasPersonalizados: [...estado.programasPersonalizados],
@@ -1161,6 +1172,9 @@ function abrirAplicacao() {
   // depois faria a espera aparecer como uma tela preta.
   $("tela-aplicacao").classList.remove("oculto");
   mostrarMarcaDeAtualizacao();
+  prepararHistorico();
+  marcaDeHistoricoPendente();
+  prepararFeedback();
   // Quem saiu da conta e entrou de novo já tem tudo ligado; repetir aqui
   // duplicaria cada ouvinte, e cada clique passaria a valer por dois.
   if (aplicacaoPronta) {
@@ -3300,6 +3314,16 @@ social.addEventListener("mensagem-privada", (e) => aoMensagemPrivada(e.detail));
 social.addEventListener("mensagem-privada-atualizada", (e) => aoMensagemPrivadaAtualizada(e.detail));
 social.addEventListener("reacao-privada", (e) => aoReacaoPrivada(e.detail));
 social.addEventListener("historico-privado", (e) => aoHistoricoPrivado(e.detail));
+social.addEventListener("feedback-enviado", () => aoFeedbackEnviado());
+social.addEventListener("feedback-lista", (e) => aoListaDeFeedback(e.detail));
+social.addEventListener("feedback-atualizado", (e) => aoFeedbackAtualizado(e.detail.feedback));
+social.addEventListener("sem-sessao", () => avisar("Sua sessão expirou. Entre novamente.", "erro"));
+// Escopado ao próprio painel: o socket social é compartilhado com amizade e
+// DM, que já têm seus próprios avisos de sucesso — um "erro" genérico só vira
+// mensagem no formulário de feedback quando ele está de fato aberto.
+social.addEventListener("erro", (e) => {
+  if (!$("feedback-dialogo").classList.contains("oculto")) aoFeedbackFalhou(e.detail.motivo);
+});
 
 function souAmigoDe(contaId) {
   return estado.amigos.some((a) => a.id === contaId);
@@ -6099,6 +6123,211 @@ function montarNovidades(corpo, notas) {
     }
   }
   fecharBloco();
+}
+
+/* ═══ Central de Novidades ══════════════════════════════════════ */
+
+let historicoPreparado = false;
+
+/** O ponto no botão acende quando a versão mais recente do histórico ainda
+ * não foi vista — independente de haver ou não uma atualização pendente
+ * para instalar. Alguém pode continuar em uma versão antiga por semanas e
+ * ainda assim querer ler o que já foi lançado. */
+function marcaDeHistoricoPendente() {
+  const ponto = $("historico-ponto");
+  if (!ponto) return;
+  const maisRecente = NOTAS_DE_VERSAO[0]?.versao ?? null;
+  ponto.classList.toggle("oculto", !maisRecente || maisRecente === estado.ultimaVersaoNotasVista);
+}
+
+function abrirHistorico() {
+  montarHistorico($("historico-corpo"), NOTAS_DE_VERSAO);
+  $("historico-dialogo").classList.remove("oculto");
+
+  const maisRecente = NOTAS_DE_VERSAO[0]?.versao ?? null;
+  if (maisRecente && estado.ultimaVersaoNotasVista !== maisRecente) {
+    estado.ultimaVersaoNotasVista = maisRecente;
+    salvarPreferencias();
+    marcaDeHistoricoPendente();
+  }
+
+  const fechar = () => fecharHistorico();
+  const aoTeclar = (evento) => {
+    if (evento.key === "Escape") fechar();
+  };
+  $("historico-fechar").onclick = fechar;
+  $("historico-dialogo").onclick = (evento) => {
+    if (evento.target === $("historico-dialogo")) fechar();
+  };
+  document.addEventListener("keydown", aoTeclar);
+  $("historico-dialogo").dataset.aoTeclar = "1";
+  historicoAoTeclarAtivo = aoTeclar;
+
+  $("historico-fechar").focus();
+}
+
+let historicoAoTeclarAtivo = null;
+
+function fecharHistorico() {
+  $("historico-dialogo").classList.add("oculto");
+  if (historicoAoTeclarAtivo) {
+    document.removeEventListener("keydown", historicoAoTeclarAtivo);
+    historicoAoTeclarAtivo = null;
+  }
+  $("botao-historico").focus();
+}
+
+function prepararHistorico() {
+  if (historicoPreparado) return;
+  historicoPreparado = true;
+  $("botao-historico").addEventListener("click", abrirHistorico);
+}
+
+/* ═══ Feedback ═══════════════════════════════════════════════════ */
+
+let feedbackPreparado = false;
+let categoriaFeedback = "bug";
+
+function abrirFeedback() {
+  const semConta = $("feedback-sem-conta");
+  const comConta = $("feedback-com-conta");
+  if (!estado.conta) {
+    semConta.classList.remove("oculto");
+    comConta.classList.add("oculto");
+  } else {
+    semConta.classList.add("oculto");
+    comConta.classList.remove("oculto");
+    trocarAbaFeedback("enviar");
+  }
+  $("feedback-dialogo").classList.remove("oculto");
+
+  const fechar = () => fecharFeedback();
+  $("feedback-fechar").onclick = fechar;
+  $("feedback-dialogo").onclick = (evento) => {
+    if (evento.target === $("feedback-dialogo")) fechar();
+  };
+  const aoTeclar = (evento) => {
+    if (evento.key === "Escape") fechar();
+  };
+  document.addEventListener("keydown", aoTeclar);
+  feedbackAoTeclarAtivo = aoTeclar;
+
+  $("feedback-fechar").focus();
+}
+
+let feedbackAoTeclarAtivo = null;
+
+function fecharFeedback() {
+  $("feedback-dialogo").classList.add("oculto");
+  if (feedbackAoTeclarAtivo) {
+    document.removeEventListener("keydown", feedbackAoTeclarAtivo);
+    feedbackAoTeclarAtivo = null;
+  }
+  $("botao-feedback").focus();
+}
+
+function trocarAbaFeedback(nome) {
+  for (const aba of document.querySelectorAll("[data-aba-feedback]")) {
+    aba.setAttribute("aria-selected", aba.dataset.abaFeedback === nome ? "true" : "false");
+  }
+  $("feedback-form").classList.toggle("oculto", nome !== "enviar");
+  const naListaDeMeus = nome === "meus";
+  $("feedback-lista").classList.toggle("oculto", !naListaDeMeus);
+  $("feedback-vazio").classList.add("oculto");
+  if (naListaDeMeus) social.enviar({ tipo: "feedback-meu", token: estado.token });
+}
+
+function selecionarCategoriaFeedback(categoria) {
+  categoriaFeedback = categoria;
+  for (const botao of document.querySelectorAll(".feedback__categoria")) {
+    botao.setAttribute("aria-pressed", String(botao.dataset.categoria === categoria));
+  }
+}
+
+async function enviarFeedback(evento) {
+  evento.preventDefault();
+  const titulo = $("feedback-titulo").value.trim();
+  const descricao = $("feedback-descricao").value.trim();
+  const erro = $("feedback-erro");
+  erro.classList.add("oculto");
+
+  if (!titulo || !descricao) {
+    erro.textContent = "Preencha o título e a descrição.";
+    erro.classList.remove("oculto");
+    return;
+  }
+
+  const botao = $("feedback-enviar-botao");
+  botao.disabled = true;
+  botao.textContent = "Enviando…";
+  social.enviar({
+    tipo: "feedback-enviar",
+    token: estado.token,
+    categoria: categoriaFeedback,
+    titulo,
+    descricao,
+  });
+}
+
+function aoFeedbackEnviado() {
+  const botao = $("feedback-enviar-botao");
+  botao.disabled = false;
+  botao.textContent = "Enviar";
+  $("feedback-titulo").value = "";
+  $("feedback-descricao").value = "";
+  $("feedback-descricao-conta").textContent = "0/4000";
+  avisar("Feedback enviado — obrigado!", "bom");
+  trocarAbaFeedback("meus");
+}
+
+function aoFeedbackFalhou(motivo) {
+  const botao = $("feedback-enviar-botao");
+  botao.disabled = false;
+  botao.textContent = "Enviar";
+  const erro = $("feedback-erro");
+  erro.textContent = motivo;
+  erro.classList.remove("oculto");
+}
+
+function aoListaDeFeedback({ feedback }) {
+  const lista = $("feedback-lista");
+  montarListaDeFeedback(lista, feedback ?? []);
+  $("feedback-vazio").classList.toggle("oculto", Boolean(feedback?.length));
+}
+
+/** O painel administrativo mudou o status de um relato — chega a qualquer
+ * momento, não só com o diálogo de feedback aberto. Sempre vira aviso;
+ * se a aba "Meus envios" estiver na tela, busca a lista de novo para
+ * refletir na hora, em vez de deixar a pessoa reabrir para notar. */
+function aoFeedbackAtualizado(feedback) {
+  const rotulo = ROTULOS_STATUS[feedback.status] ?? feedback.status;
+  avisar(`Seu feedback "${feedback.titulo}" agora está: ${rotulo}.`, "bom");
+
+  const dialogoAberto = !$("feedback-dialogo").classList.contains("oculto");
+  const abaMeusAtiva = $('[data-aba-feedback="meus"]')?.getAttribute("aria-selected") === "true";
+  if (dialogoAberto && abaMeusAtiva) {
+    social.enviar({ tipo: "feedback-meu", token: estado.token });
+  }
+}
+
+function prepararFeedback() {
+  if (feedbackPreparado) return;
+  feedbackPreparado = true;
+
+  $("botao-feedback").addEventListener("click", abrirFeedback);
+  $("feedback-form").addEventListener("submit", enviarFeedback);
+
+  for (const aba of document.querySelectorAll("[data-aba-feedback]")) {
+    aba.addEventListener("click", () => trocarAbaFeedback(aba.dataset.abaFeedback));
+  }
+  for (const botao of document.querySelectorAll(".feedback__categoria")) {
+    botao.addEventListener("click", () => selecionarCategoriaFeedback(botao.dataset.categoria));
+  }
+
+  const campoDescricao = $("feedback-descricao");
+  campoDescricao.addEventListener("input", () => {
+    $("feedback-descricao-conta").textContent = `${[...campoDescricao.value].length}/4000`;
+  });
 }
 
 async function instalarAtualizacao() {

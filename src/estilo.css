@@ -3426,7 +3426,7 @@ svg {
 /* Todos os cartões sobre uma cortina compartilham o mesmo gesto. A pequena
    subida comunica profundidade; o scale é curto o bastante para não parecer
    zoom nem chamar mais atenção do que o conteúdo. */
-.cortina > :is(.dialogo, .painel-perfil, .cartao, .ajustes, .transmitir, .seletor, .novidades) {
+.cortina > :is(.dialogo, .painel-perfil, .cartao, .ajustes, .transmitir, .seletor, .novidades, .historico, .feedback) {
   transform-origin: 50% 42%;
   animation: modal-entrar var(--tempo-painel) var(--movimento-suave) both;
 }
@@ -3824,6 +3824,470 @@ svg {
   gap: 8px;
   padding: 12px 18px 16px;
   border-top: 1px solid var(--borda);
+}
+
+/* ─── Central de Novidades ─────────────────────────────────────── */
+
+/* O botão da barra do topo, sempre presente — mas discreto até ter algo a
+   dizer. O ponto usa a mesma cor de acento de qualquer marca "não lido" do
+   aplicativo, para não inventar uma terceira linguagem de destaque. */
+.historico-botao {
+  position: relative;
+}
+
+.historico-botao__ponto {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--acento);
+  border: 2px solid var(--fundo);
+}
+
+/* O painel em si: mais largo e mais alto que o cartão de "O que há de novo"
+   de uma única versão, porque aqui é uma linha do tempo de várias — precisa
+   de espaço para respirar sem virar uma parede de rolagem infinita. */
+.historico {
+  width: min(600px, calc(100vw - 40px));
+  max-height: min(82vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-g);
+  overflow: hidden;
+  animation: surgir 180ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.historico__topo {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.historico__cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.historico__etiqueta {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--raio-m);
+  background: var(--acento-suave);
+  border: 1px solid rgba(95, 106, 217, 0.22);
+  color: #a8b0f2;
+}
+
+.historico__etiqueta svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.historico__titulo-painel {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.historico__corpo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 20px 20px;
+}
+
+.historico__vazio {
+  padding: 20px 0;
+  font-size: 12.5px;
+  color: var(--texto-3);
+}
+
+/* Uma entrada por versão, com um traço vertical ligando-as — o gesto de
+   linha do tempo, sem precisar de uma biblioteca de gráficos para isso: uma
+   borda esquerda e um respiro bastam. */
+.historico__entrada {
+  position: relative;
+  padding: 18px 0 18px 22px;
+  border-left: 2px solid var(--borda);
+}
+
+.historico__entrada::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 24px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--acento);
+  border: 2px solid var(--superficie-1);
+}
+
+.historico__entrada:first-child {
+  padding-top: 2px;
+}
+
+.historico__entrada:first-child::before {
+  top: 8px;
+}
+
+.historico__entrada:last-child {
+  border-left-color: transparent;
+  padding-bottom: 2px;
+}
+
+.historico__entrada-topo {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 6px;
+}
+
+.historico__versao {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--acento-suave);
+  color: #a8b0f2;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.historico__data {
+  font-size: 11.5px;
+  color: var(--texto-3);
+}
+
+.historico__titulo {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--texto);
+  margin-bottom: 5px;
+}
+
+.historico__resumo {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--texto-2);
+  margin-bottom: 12px;
+}
+
+/* Uma captura real da própria ferramenta, nunca ilustração — a prova de que
+   a nota descreve algo que existe, não uma promessa. */
+.historico__captura {
+  margin: 0 0 14px;
+  border-radius: var(--raio-m);
+  overflow: hidden;
+  border: 1px solid var(--borda-forte);
+  background: var(--superficie-2);
+  line-height: 0;
+}
+
+.historico__captura img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.historico__secao {
+  margin: 12px 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+}
+
+.historico__secao:first-of-type {
+  margin-top: 0;
+}
+
+/* Cada categoria ganha a cor que já significa a mesma coisa no resto do
+   aplicativo — verde de "vivo"/positivo para o que é novo, acento para o que
+   melhorou, e a cor de atenção (não de erro: nada quebrou) para o que foi
+   consertado. */
+.historico__secao--novo {
+  color: var(--vivo);
+}
+
+.historico__secao--melhorado {
+  color: #a8b0f2;
+}
+
+.historico__secao--consertado {
+  color: var(--atencao);
+}
+
+.historico__lista {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+}
+
+.historico__item {
+  position: relative;
+  padding-left: 16px;
+  margin-bottom: 7px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--texto-2);
+}
+
+.historico__item::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--texto-3);
+}
+
+/* ─── Feedback ──────────────────────────────────────────────────── */
+
+.feedback {
+  width: min(480px, calc(100vw - 40px));
+  max-height: min(82vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--superficie-1);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-g);
+  overflow: hidden;
+  animation: surgir 180ms cubic-bezier(0.32, 0.72, 0.28, 1);
+}
+
+.feedback__topo {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.feedback__cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.feedback__etiqueta {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--raio-m);
+  background: var(--acento-suave);
+  border: 1px solid rgba(95, 106, 217, 0.22);
+  color: #a8b0f2;
+}
+
+.feedback__etiqueta svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.feedback__titulo-painel {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.feedback__abas {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 14px 20px 0;
+  border-bottom: 1px solid var(--borda);
+}
+
+.feedback__corpo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 20px;
+}
+
+.feedback__form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.feedback__categorias {
+  display: flex;
+  gap: 8px;
+}
+
+.feedback__categoria {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 6px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-m);
+  background: var(--superficie-2);
+  color: var(--texto-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: var(--cursor-clicavel);
+  transition: background var(--transicao), color var(--transicao), border-color var(--transicao);
+}
+
+.feedback__categoria svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.feedback__categoria:hover {
+  background: var(--superficie-3);
+  color: var(--texto);
+}
+
+.feedback__categoria[aria-pressed="true"] {
+  background: var(--acento-suave);
+  border-color: rgba(95, 106, 217, 0.42);
+  color: #a8b0f2;
+}
+
+.feedback__erro {
+  display: flex;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: var(--raio-p);
+  background: var(--perigo-suave);
+  border: 1px solid rgba(226, 100, 93, 0.24);
+  color: #f0928c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.feedback__rodape {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.feedback__lista {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.feedback__item {
+  padding: 13px 14px;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-m);
+  background: var(--superficie-2);
+}
+
+.feedback__item-topo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.feedback__etiqueta-categoria,
+.feedback__etiqueta-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.feedback__etiqueta-categoria {
+  background: var(--superficie-3);
+  color: var(--texto-2);
+}
+
+.feedback__etiqueta-status {
+  margin-left: auto;
+}
+
+/* O status usa a mesma linguagem de cor da Central de Novidades: acento para
+   o que já foi olhado, atenção para o que está em movimento, vivo para o que
+   terminou — nunca vermelho, nada aqui é um erro. */
+.feedback__etiqueta-status--recebido {
+  background: var(--superficie-3);
+  color: var(--texto-3);
+}
+
+.feedback__etiqueta-status--aceito {
+  background: var(--acento-suave);
+  color: #a8b0f2;
+}
+
+.feedback__etiqueta-status--em_andamento {
+  background: rgba(217, 164, 65, 0.16);
+  color: var(--atencao);
+}
+
+.feedback__etiqueta-status--finalizado {
+  background: rgba(79, 201, 140, 0.16);
+  color: var(--vivo);
+}
+
+.feedback__item-titulo {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--texto);
+  margin-bottom: 4px;
+}
+
+.feedback__item-descricao {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--texto-2);
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+}
+
+.feedback__item-data {
+  font-size: 11px;
+  color: var(--texto-3);
+}
+
+.feedback__vazio {
+  padding: 20px 4px;
+  font-size: 12.5px;
+  color: var(--texto-3);
+  text-align: center;
+}
+
+.feedback__sem-conta {
+  padding: 16px 20px 22px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--texto-3);
 }
 
 /* ─── Menu suspenso ────────────────────────────────────────────── */

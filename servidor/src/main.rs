@@ -373,20 +373,200 @@ async fn responder_se_for_http(fluxo: &TcpStream) -> Result<bool, String> {
     Ok(true)
 }
 
-async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Cofre>) -> Result<(), String> {
+// ------------------------------------------------------------- painel admin
+
+/// A página do painel, embutida no binário em tempo de compilação — o
+/// mesmo motivo de `capabilities/default.json` não ser lido do disco em
+/// produção: o servidor é um único artefato implantável, sem pasta de
+/// assets ao lado para se perder.
+const PAGINA_ADMIN: &str = include_str!("../admin.html");
+
+/// Tamanho máximo do corpo de um pedido HTTP — generoso o bastante para o
+/// maior corpo que o painel manda (uma mudança de status, poucos bytes de
+/// JSON), apertado o bastante para não virar uma porta de upload disfarçada.
+const HTTP_CORPO_MAX: usize = 16 * 1024;
+
+struct PedidoHttp {
+    metodo: String,
+    caminho: String,
+    cabecalhos: HashMap<String, String>,
+    corpo: Vec<u8>,
+}
+
+impl PedidoHttp {
+    fn cabecalho(&self, nome: &str) -> Option<&str> {
+        self.cabecalhos.get(nome).map(String::as_str)
+    }
+}
+
+/// Lê um pedido HTTP simples do socket — linha de pedido, cabeçalhos e corpo
+/// por `Content-Length`. De propósito não entende `chunked` nem `multipart`:
+/// o único cliente é a própria página em `admin.html`, que nunca manda nada
+/// disso. Um parser HTTP completo compraria correção que ninguém aqui usa —
+/// mesmo raciocínio que já vale para o corpo de um som do soundboard, que
+/// viaja em base64 dentro do WebSocket em vez de multipart (ver `Cargo.toml`).
+async fn ler_pedido_http(fluxo: &mut TcpStream) -> Result<PedidoHttp, String> {
+    use tokio::io::AsyncReadExt;
+
+    let mut bruto = Vec::new();
+    let mut buf = [0u8; 2048];
+    let fim_cabecalho = loop {
+        let n = fluxo.read(&mut buf).await.map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("conexão fechada antes do pedido".into());
+        }
+        bruto.extend_from_slice(&buf[..n]);
+        if let Some(pos) = bruto.windows(4).position(|j| j == b"\r\n\r\n") {
+            break pos;
+        }
+        if bruto.len() > CABECALHO_MAX {
+            return Err("cabeçalho grande demais".into());
+        }
+    };
+
+    let texto_cabecalho = String::from_utf8_lossy(&bruto[..fim_cabecalho]).to_string();
+    let mut linhas = texto_cabecalho.split("\r\n");
+    let primeira = linhas.next().unwrap_or_default();
+    let mut partes = primeira.split_whitespace();
+    let metodo = partes.next().unwrap_or_default().to_string();
+    let caminho = partes.next().unwrap_or_default().to_string();
+
+    let mut cabecalhos = HashMap::new();
+    for linha in linhas {
+        if let Some((chave, valor)) = linha.split_once(':') {
+            cabecalhos.insert(chave.trim().to_lowercase(), valor.trim().to_string());
+        }
+    }
+
+    let tamanho: usize = cabecalhos
+        .get("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+        .min(HTTP_CORPO_MAX);
+
+    let mut corpo = bruto[fim_cabecalho + 4..].to_vec();
+    while corpo.len() < tamanho {
+        let n = fluxo.read(&mut buf).await.map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        corpo.extend_from_slice(&buf[..n]);
+    }
+    corpo.truncate(tamanho);
+
+    Ok(PedidoHttp { metodo, caminho, cabecalhos, corpo })
+}
+
+fn resposta_http(status: u16, motivo: &str, tipo: &str, corpo: &[u8]) -> Vec<u8> {
+    let cabecalho = format!(
+        "HTTP/1.1 {status} {motivo}\r\nContent-Type: {tipo}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        corpo.len()
+    );
+    let mut resposta = cabecalho.into_bytes();
+    resposta.extend_from_slice(corpo);
+    resposta
+}
+
+fn resposta_texto(status: u16, motivo: &str, corpo: &str) -> Vec<u8> {
+    resposta_http(status, motivo, "text/plain; charset=utf-8", corpo.as_bytes())
+}
+
+fn resposta_json(status: u16, motivo: &str, valor: &Value) -> Vec<u8> {
+    resposta_http(status, motivo, "application/json", valor.to_string().as_bytes())
+}
+
+/// O único jeito de entrar no painel: uma variável de ambiente, sem cadastro
+/// nem papéis — é uma pessoa só usando. Sem `ADMIN_TOKEN` no ambiente, toda
+/// rota de dado recusa; a comparação byte a byte (e não `==` cedo demais)
+/// evita que o tempo de resposta vaze quantos caracteres já bateram.
+fn admin_autorizado(pedido: &PedidoHttp) -> bool {
+    let Ok(esperado) = std::env::var("ADMIN_TOKEN") else { return false };
+    if esperado.is_empty() {
+        return false;
+    }
+    let Some(cabecalho) = pedido.cabecalho("authorization") else { return false };
+    let Some(recebido) = cabecalho.strip_prefix("Bearer ") else { return false };
+
+    let e = esperado.as_bytes();
+    let r = recebido.as_bytes();
+    if e.len() != r.len() {
+        return false;
+    }
+    let mut diferenca = 0u8;
+    for (a, b) in e.iter().zip(r.iter()) {
+        diferenca |= a ^ b;
+    }
+    diferenca == 0
+}
+
+async fn atender_http(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Cofre>) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+
+    let pedido = match ler_pedido_http(&mut fluxo).await {
+        Ok(p) => p,
+        Err(_) => {
+            let _ = fluxo.shutdown().await;
+            return Ok(());
+        }
+    };
+
+    let resposta = rotear_http(&pedido, &estado, &cofre).await;
+    let _ = fluxo.write_all(&resposta).await;
+    let _ = fluxo.shutdown().await;
+    Ok(())
+}
+
+async fn rotear_http(pedido: &PedidoHttp, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) -> Vec<u8> {
+    let caminho = pedido.caminho.split('?').next().unwrap_or("");
+
+    match (pedido.metodo.as_str(), caminho) {
+        ("GET", "/") => resposta_texto(200, "OK", "CALL: servidor de sinalizacao no ar."),
+
+        ("GET", "/admin" | "/admin/") => {
+            resposta_http(200, "OK", "text/html; charset=utf-8", PAGINA_ADMIN.as_bytes())
+        }
+
+        ("GET", "/admin/api/feedback") => {
+            if !admin_autorizado(pedido) {
+                return resposta_json(401, "Unauthorized", &json!({ "erro": "token inválido" }));
+            }
+            let lista = cofre.todos_feedbacks().await;
+            resposta_json(200, "OK", &json!({ "feedback": lista }))
+        }
+
+        ("POST", caminho) if caminho.starts_with("/admin/api/feedback/") && caminho.ends_with("/status") => {
+            if !admin_autorizado(pedido) {
+                return resposta_json(401, "Unauthorized", &json!({ "erro": "token inválido" }));
+            }
+            let id = caminho
+                .trim_start_matches("/admin/api/feedback/")
+                .trim_end_matches("/status");
+            let Ok(corpo) = serde_json::from_slice::<Value>(&pedido.corpo) else {
+                return resposta_json(400, "Bad Request", &json!({ "erro": "corpo inválido" }));
+            };
+            let status = corpo.get("status").and_then(Value::as_str).unwrap_or("");
+
+            match cofre.mudar_status_feedback(id, status).await {
+                Some(feedback) => {
+                    // O autor sabe na hora, se estiver online — o mesmo canal
+                    // ponto-a-ponto que já entrega mensagem privada.
+                    let aviso = json!({ "tipo": "feedback-atualizado", "feedback": feedback });
+                    estado.lock().unwrap().enviar_a_conta(&feedback.conta_id, &aviso);
+                    resposta_json(200, "OK", &json!({ "feedback": feedback }))
+                }
+                None => resposta_json(404, "Not Found", &json!({ "erro": "feedback ou status inválido" })),
+            }
+        }
+
+        _ => resposta_texto(404, "Not Found", "Não encontrado."),
+    }
+}
+
+async fn atender(fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Cofre>) -> Result<(), String> {
     let _ = fluxo.set_nodelay(true);
 
     if responder_se_for_http(&fluxo).await? {
-        use tokio::io::AsyncWriteExt;
-        let corpo = "CALL: servidor de sinalizacao no ar.";
-        let resposta = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n\
-             Content-Length: {}\r\nConnection: close\r\n\r\n{corpo}",
-            corpo.len()
-        );
-        let _ = fluxo.write_all(resposta.as_bytes()).await;
-        let _ = fluxo.shutdown().await;
-        return Ok(());
+        return atender_http(fluxo, estado, cofre).await;
     }
 
     let ws = tokio_tungstenite::accept_async(fluxo)
@@ -434,7 +614,7 @@ async fn atender(mut fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Co
         // repetitiva de quem esta no grupo, e o teto existe para o mesmo
         // motivo — um cliente com defeito nao deve conseguir encher o disco
         // de quem hospeda.
-        if matches!(tipo, "mensagem" | "mensagem-privada" | "adicionar-som" | "adicionar-som-pessoal") {
+        if matches!(tipo, "mensagem" | "mensagem-privada" | "adicionar-som" | "adicionar-som-pessoal" | "feedback-enviar") {
             enviadas_na_janela += 1;
             if enviadas_na_janela > MENSAGENS_POR_JANELA {
                 let _ = fila.send(erro("Muitas mensagens em pouco tempo."));
@@ -506,6 +686,8 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "excluir-mensagem-privada" => alterar_mensagem_privada(v, id, fila, estado, cofre, true).await,
         "reagir-privado" => reagir_privado(v, id, fila, estado, cofre).await,
         "historico-privado" => historico_privado(v, id, fila, estado, cofre).await,
+        "feedback-enviar" => feedback_enviar(v, id, fila, estado, cofre).await,
+        "feedback-meu" => feedback_meu(v, id, fila, estado, cofre).await,
         _ => {}
     }
 }
@@ -2070,6 +2252,35 @@ async fn historico_privado(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<E
         "com": com,
         "mensagens": e.acervo.historico(&conversa)
     })));
+}
+
+async fn feedback_enviar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    estado.lock().unwrap().registrar_online(&minha.id, id, fila);
+    let categoria = texto_de(v, "categoria");
+    let titulo = texto_de(v, "titulo");
+    let descricao = texto_de(v, "descricao");
+    match cofre.enviar_feedback(&minha, categoria, titulo, descricao).await {
+        Ok(feedback) => {
+            let _ = fila.send(texto_json(&json!({ "tipo": "feedback-enviado", "feedback": feedback })));
+        }
+        Err(motivo) => {
+            let _ = fila.send(erro(motivo));
+        }
+    }
+}
+
+async fn feedback_meu(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(minha) = cofre.conta_do_token(&texto_de(v, "token")).await else {
+        let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
+        return;
+    };
+    estado.lock().unwrap().registrar_online(&minha.id, id, fila);
+    let lista = cofre.meu_feedback(&minha.id).await;
+    let _ = fila.send(texto_json(&json!({ "tipo": "feedback-lista", "feedback": lista })));
 }
 
 // ------------------------------------------------------------------ apoio

@@ -70,6 +70,47 @@ pub struct PreferenciaSom {
     pub id: String,
 }
 
+/// Tamanho máximo do título e da descrição de um feedback — generoso o
+/// bastante para um relato completo, apertado o bastante para não virar
+/// upload de texto disfarçado.
+pub const FEEDBACK_TITULO_MAX: usize = 120;
+pub const FEEDBACK_DESCRICAO_MAX: usize = 4000;
+
+/// Teto de feedbacks abertos por conta. O limite de taxa em `main.rs`
+/// (`MENSAGENS_POR_JANELA`) já impede uma rajada; este é o teto de longo
+/// prazo, para que uma conta esquecida enviando o mesmo relato por meses não
+/// cresça a tabela sem limite.
+pub const FEEDBACK_POR_CONTA_MAX: usize = 200;
+
+/// Um relato — bug, sugestão ou elogio — mandado por uma conta. `apelido` é
+/// uma cópia de quando foi enviado, o mesmo princípio de `PedidoAmigo`: o
+/// painel administrativo mostra quem pediu como a pessoa era naquele
+/// momento, e o relato não muda de nome sozinho se a conta for renomeada
+/// depois.
+///
+/// `status` começa em `"recebido"` e só muda pelo painel administrativo (uma
+/// peça futura, ainda não construída) — o valor aqui é sempre a verdade
+/// atual, nunca reconstruído a partir de outra coisa.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Feedback {
+    pub id: String,
+    pub conta_id: String,
+    pub apelido: String,
+    pub categoria: String,
+    pub titulo: String,
+    pub descricao: String,
+    pub status: String,
+    pub criado_em: u64,
+    pub atualizado_em: u64,
+}
+
+const CATEGORIAS_FEEDBACK: [&str; 3] = ["bug", "sugestao", "elogio"];
+
+/// Os quatro estados que o painel administrativo pode atribuir a um
+/// relato — a mesma lista que `src/feedback.js` conhece do lado do
+/// cliente, em `ROTULOS_STATUS`.
+const STATUS_FEEDBACK: [&str; 4] = ["recebido", "aceito", "em_andamento", "finalizado"];
+
 /// Quanto tempo um token vale sem que ninguem o use. Noventa dias e o
 /// intervalo em que "eu uso o CALL" ainda e verdade; alem disso, pedir a senha
 /// de novo custa dez segundos e evita que uma maquina emprestada continue
@@ -514,6 +555,73 @@ impl Cofre {
         }
     }
 
+    /// Registra um relato novo. Recusa categoria fora de bug/sugestão/elogio
+    /// e uma conta que já acumulou relatos demais — ver `FEEDBACK_POR_CONTA_MAX`.
+    pub async fn enviar_feedback(
+        &self,
+        de: &Conta,
+        categoria: String,
+        titulo: String,
+        descricao: String,
+    ) -> Result<Feedback, &'static str> {
+        if !CATEGORIAS_FEEDBACK.contains(&categoria.as_str()) {
+            return Err("Categoria de feedback inválida.");
+        }
+        let titulo: String = titulo.trim().chars().take(FEEDBACK_TITULO_MAX).collect();
+        let descricao: String = descricao.trim().chars().take(FEEDBACK_DESCRICAO_MAX).collect();
+        if titulo.is_empty() || descricao.is_empty() {
+            return Err("Título e descrição não podem ficar vazios.");
+        }
+
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                estado.lock().unwrap().enviar_feedback(de, categoria, titulo, descricao)
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::enviar_feedback(pool, de, categoria, titulo, descricao).await,
+        }
+    }
+
+    /// Os relatos que uma conta já enviou, mais recente primeiro — é a lista
+    /// que mostra ao próprio autor o status de cada pedido.
+    pub async fn meu_feedback(&self, conta_id: &str) -> Vec<Feedback> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => estado.lock().unwrap().feedback_de(conta_id),
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::feedback_de(pool, conta_id).await,
+        }
+    }
+
+    /// Todos os relatos, de todas as contas, mais recente primeiro — só o
+    /// painel administrativo chama isto; ninguém mais tem por que ver o
+    /// feedback de outra pessoa.
+    pub async fn todos_feedbacks(&self) -> Vec<Feedback> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                let e = estado.lock().unwrap();
+                let mut todos: Vec<Feedback> = e.feedback.values().flatten().cloned().collect();
+                todos.sort_by(|a, b| b.criado_em.cmp(&a.criado_em));
+                todos
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::todos_feedbacks(pool).await,
+        }
+    }
+
+    /// Muda o status de um relato pelo id. `None` quando o id não existe ou
+    /// o status pedido não é um dos quatro válidos — o painel administrativo
+    /// é a única porta para isto, e ela não decide status novo nenhum.
+    pub async fn mudar_status_feedback(&self, id: &str, status: &str) -> Option<Feedback> {
+        if !STATUS_FEEDBACK.contains(&status) {
+            return None;
+        }
+        match &self.armazem {
+            Armazem::Arquivo(estado) => estado.lock().unwrap().mudar_status_feedback(id, status),
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::mudar_status_feedback(pool, id, status).await,
+        }
+    }
+
     /// `None` volta o som de entrada para o sino sintetizado padrão.
     pub async fn guardar_som_entrada(&self, conta_id: &str, preferencia: Option<PreferenciaSom>) -> bool {
         match &self.armazem {
@@ -711,6 +819,8 @@ struct EstadoArquivo {
     /// id do som -> bytes. Sempre em memoria, como os blobs de grupo em
     /// `modelo::Acervo`.
     blobs: HashMap<String, Vec<u8>>,
+    /// conta_id -> relatos que ela enviou.
+    feedback: HashMap<String, Vec<Feedback>>,
     pasta: Option<PathBuf>,
 }
 
@@ -732,6 +842,7 @@ impl EstadoArquivo {
             sessoes: HashMap::new(),
             sons_pessoais: HashMap::new(),
             blobs: HashMap::new(),
+            feedback: HashMap::new(),
             pasta: pasta.clone(),
         };
 
@@ -778,6 +889,13 @@ impl EstadoArquivo {
                     estado.sons_pessoais = mapa;
                 }
                 Err(e) => eprintln!("[contas] sons_pessoais.json ilegivel: {e}"),
+            }
+        }
+
+        if let Ok(bruto) = std::fs::read_to_string(pasta.join("feedback.json")) {
+            match serde_json::from_str::<HashMap<String, Vec<Feedback>>>(&bruto) {
+                Ok(mapa) => estado.feedback = mapa,
+                Err(e) => eprintln!("[contas] feedback.json ilegivel: {e}"),
             }
         }
 
@@ -893,6 +1011,61 @@ impl EstadoArquivo {
         self.salvar_sons_pessoais();
         true
     }
+
+    fn salvar_feedback(&self) {
+        let Some(pasta) = &self.pasta else { return };
+        match serde_json::to_string(&self.feedback) {
+            Ok(corpo) => {
+                if let Err(e) = gravar_atomico(&pasta.join("feedback.json"), &corpo) {
+                    eprintln!("[contas] falha ao salvar feedback: {e}");
+                }
+            }
+            Err(e) => eprintln!("[contas] feedback nao serializavel: {e}"),
+        }
+    }
+
+    fn enviar_feedback(
+        &mut self,
+        de: &Conta,
+        categoria: String,
+        titulo: String,
+        descricao: String,
+    ) -> Result<Feedback, &'static str> {
+        let lista = self.feedback.entry(de.id.clone()).or_default();
+        if lista.len() >= FEEDBACK_POR_CONTA_MAX {
+            return Err("Você já enviou relatos demais — tente reaproveitar um existente.");
+        }
+        let agora = agora_ms();
+        let feedback = Feedback {
+            id: novo_id(),
+            conta_id: de.id.clone(),
+            apelido: de.apelido.clone(),
+            categoria,
+            titulo,
+            descricao,
+            status: "recebido".to_string(),
+            criado_em: agora,
+            atualizado_em: agora,
+        };
+        lista.push(feedback.clone());
+        self.salvar_feedback();
+        Ok(feedback)
+    }
+
+    fn feedback_de(&self, conta_id: &str) -> Vec<Feedback> {
+        let mut lista = self.feedback.get(conta_id).cloned().unwrap_or_default();
+        lista.sort_by(|a, b| b.criado_em.cmp(&a.criado_em));
+        lista
+    }
+
+    fn mudar_status_feedback(&mut self, id: &str, status: &str) -> Option<Feedback> {
+        let item = self.feedback.values_mut().flatten().find(|f| f.id == id)?;
+        item.status = status.to_string();
+        item.atualizado_em = agora_ms();
+        let atualizado = item.clone();
+        self.salvar_feedback();
+        Some(atualizado)
+    }
 }
 
 /* ─── Backend Postgres ────────────────────────────────────────────────── */
@@ -903,7 +1076,7 @@ mod postgres {
     use sqlx::PgPool;
     use std::path::Path;
 
-    use super::{Atalho, Conta, PedidoAmigo, PreferenciaSom, Recusa, SomPessoal};
+    use super::{Atalho, Conta, Feedback, PedidoAmigo, PreferenciaSom, Recusa, SomPessoal};
     use crate::modelo::{agora_ms, novo_id};
 
     /// (id, email, senha, google, apelido, avatar, bio, criada_em,
@@ -1481,6 +1654,116 @@ mod postgres {
             .execute(pool)
             .await;
         matches!(resultado, Ok(r) if r.rows_affected() > 0)
+    }
+
+    pub async fn enviar_feedback(
+        pool: &PgPool,
+        de: &Conta,
+        categoria: String,
+        titulo: String,
+        descricao: String,
+    ) -> Result<Feedback, &'static str> {
+        let contagem: (i64,) = sqlx::query_as("SELECT count(*) FROM feedback WHERE conta_id = $1")
+            .bind(&de.id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or((0,));
+        if contagem.0 as usize >= super::FEEDBACK_POR_CONTA_MAX {
+            return Err("Você já enviou relatos demais — tente reaproveitar um existente.");
+        }
+
+        let id = novo_id();
+        let agora = agora_ms() as i64;
+        let resultado = sqlx::query(
+            "INSERT INTO feedback (id, conta_id, apelido, categoria, titulo, descricao, status, criado_em, atualizado_em)
+             VALUES ($1, $2, $3, $4, $5, $6, 'recebido', $7, $7)",
+        )
+        .bind(&id)
+        .bind(&de.id)
+        .bind(&de.apelido)
+        .bind(&categoria)
+        .bind(&titulo)
+        .bind(&descricao)
+        .bind(agora)
+        .execute(pool)
+        .await;
+
+        match resultado {
+            Ok(_) => Ok(Feedback {
+                id,
+                conta_id: de.id.clone(),
+                apelido: de.apelido.clone(),
+                categoria,
+                titulo,
+                descricao,
+                status: "recebido".to_string(),
+                criado_em: agora as u64,
+                atualizado_em: agora as u64,
+            }),
+            Err(e) => {
+                eprintln!("[contas] falha ao gravar feedback: {e}");
+                Err("Não foi possível enviar agora.")
+            }
+        }
+    }
+
+    pub async fn feedback_de(pool: &PgPool, conta_id: &str) -> Vec<Feedback> {
+        sqlx::query_as::<_, (String, String, String, String, String, String, String, i64, i64)>(
+            "SELECT id, conta_id, apelido, categoria, titulo, descricao, status, criado_em, atualizado_em
+             FROM feedback WHERE conta_id = $1 ORDER BY criado_em DESC",
+        )
+        .bind(conta_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(montar_feedback)
+        .collect()
+    }
+
+    pub async fn todos_feedbacks(pool: &PgPool) -> Vec<Feedback> {
+        sqlx::query_as::<_, (String, String, String, String, String, String, String, i64, i64)>(
+            "SELECT id, conta_id, apelido, categoria, titulo, descricao, status, criado_em, atualizado_em
+             FROM feedback ORDER BY criado_em DESC",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(montar_feedback)
+        .collect()
+    }
+
+    pub async fn mudar_status_feedback(pool: &PgPool, id: &str, status: &str) -> Option<Feedback> {
+        let agora = agora_ms() as i64;
+        let linha = sqlx::query_as::<_, (String, String, String, String, String, String, String, i64, i64)>(
+            "UPDATE feedback SET status = $1, atualizado_em = $2 WHERE id = $3
+             RETURNING id, conta_id, apelido, categoria, titulo, descricao, status, criado_em, atualizado_em",
+        )
+        .bind(status)
+        .bind(agora)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()??;
+        Some(montar_feedback(linha))
+    }
+
+    fn montar_feedback(
+        linha: (String, String, String, String, String, String, String, i64, i64),
+    ) -> Feedback {
+        let (id, conta_id, apelido, categoria, titulo, descricao, status, criado_em, atualizado_em) = linha;
+        Feedback {
+            id,
+            conta_id,
+            apelido,
+            categoria,
+            titulo,
+            descricao,
+            status,
+            criado_em: criado_em as u64,
+            atualizado_em: atualizado_em as u64,
+        }
     }
 
     pub async fn guardar_som_entrada(pool: &PgPool, conta_id: &str, preferencia: Option<PreferenciaSom>) -> bool {

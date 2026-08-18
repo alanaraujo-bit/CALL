@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>CALL — Painel administrativo</title>
+<style>
+  :root {
+    --fundo: #0e0f11;
+    --superficie-1: #141619;
+    --superficie-2: #191c20;
+    --superficie-3: #1f2328;
+    --borda: rgba(255, 255, 255, 0.06);
+    --borda-forte: rgba(255, 255, 255, 0.1);
+    --texto: #e9ebee;
+    --texto-2: #9ba1a9;
+    --texto-3: #6a7079;
+    --acento: #5f6ad9;
+    --acento-suave: rgba(95, 106, 217, 0.16);
+    --vivo: #4fc98c;
+    --atencao: #d9a441;
+    --perigo: #e2645d;
+    --perigo-suave: rgba(226, 100, 93, 0.12);
+    --raio-p: 7px;
+    --raio-m: 10px;
+    --raio-g: 14px;
+    --fonte: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Inter", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--fundo);
+    color: var(--texto);
+    font-family: var(--fonte);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .topo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--borda);
+    background: var(--superficie-1);
+  }
+  .topo__marca {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .topo__marca span {
+    color: var(--texto-3);
+    font-weight: 500;
+  }
+  .topo__token {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  input, select {
+    background: var(--superficie-2);
+    border: 1px solid var(--borda-forte);
+    border-radius: var(--raio-p);
+    color: var(--texto);
+    font: inherit;
+    padding: 7px 10px;
+  }
+  input:focus, select:focus {
+    outline: 2px solid var(--acento);
+    outline-offset: -1px;
+  }
+  #token {
+    width: 260px;
+    font-family: "Consolas", monospace;
+  }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: var(--raio-p);
+    padding: 7px 14px;
+    background: var(--superficie-3);
+    color: var(--texto-2);
+    transition: background 140ms ease, color 140ms ease;
+  }
+  button:hover { background: var(--acento-suave); color: var(--texto); }
+  button.primario { background: var(--acento); color: #fff; }
+  button.primario:hover { background: #6d78e6; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  main { max-width: 980px; margin: 0 auto; padding: 24px; }
+
+  .filtros {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .filtros button {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  .filtros button[aria-pressed="true"] {
+    background: var(--acento-suave);
+    color: #a8b0f2;
+  }
+
+  .estado-vazio, .estado-carregando, .estado-erro {
+    padding: 40px 0;
+    text-align: center;
+    color: var(--texto-3);
+  }
+  .estado-erro { color: #f0928c; }
+
+  .lista { display: flex; flex-direction: column; gap: 10px; }
+
+  .item {
+    background: var(--superficie-2);
+    border: 1px solid var(--borda-forte);
+    border-radius: var(--raio-m);
+    padding: 14px 16px;
+  }
+  .item__topo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .pilula {
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .pilula--categoria { background: var(--superficie-3); color: var(--texto-2); }
+  .pilula--status-recebido { background: var(--superficie-3); color: var(--texto-3); }
+  .pilula--status-aceito { background: var(--acento-suave); color: #a8b0f2; }
+  .pilula--status-em_andamento { background: rgba(217, 164, 65, 0.16); color: var(--atencao); }
+  .pilula--status-finalizado { background: rgba(79, 201, 140, 0.16); color: var(--vivo); }
+  .item__autor { color: var(--texto-3); font-size: 11.5px; margin-left: auto; }
+  .item__titulo { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .item__descricao { color: var(--texto-2); white-space: pre-wrap; margin-bottom: 10px; }
+  .item__rodape { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .item__data { color: var(--texto-3); font-size: 11px; margin-right: auto; }
+  .item__acoes { display: flex; gap: 6px; }
+  .item__acoes button { font-size: 11.5px; padding: 5px 10px; }
+
+  .aviso {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    padding: 10px 14px;
+    background: var(--superficie-3);
+    border: 1px solid var(--borda-forte);
+    border-radius: var(--raio-m);
+    font-size: 12.5px;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 180ms ease, transform 180ms ease;
+    pointer-events: none;
+  }
+  .aviso--visivel { opacity: 1; transform: translateY(0); }
+  .aviso--erro { border-color: rgba(226, 100, 93, 0.34); color: #f0928c; }
+</style>
+</head>
+<body>
+  <header class="topo">
+    <div class="topo__marca">CALL <span>· painel administrativo</span></div>
+    <div class="topo__token">
+      <input id="token" type="password" placeholder="Token de administrador" autocomplete="off" />
+      <button id="entrar" class="primario">Entrar</button>
+    </div>
+  </header>
+
+  <main>
+    <nav class="filtros" id="filtros" hidden>
+      <button data-status="" aria-pressed="true">Todos</button>
+      <button data-status="recebido" aria-pressed="false">Recebido</button>
+      <button data-status="aceito" aria-pressed="false">Aceito</button>
+      <button data-status="em_andamento" aria-pressed="false">Em andamento</button>
+      <button data-status="finalizado" aria-pressed="false">Finalizado</button>
+    </nav>
+    <div id="conteudo">
+      <p class="estado-vazio">Informe o token de administrador para ver os relatos.</p>
+    </div>
+  </main>
+
+  <div class="aviso" id="aviso"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const ROTULOS_CATEGORIA = { bug: "Bug", sugestao: "Sugestão", elogio: "Elogio" };
+const ROTULOS_STATUS = { recebido: "Recebido", aceito: "Aceito", em_andamento: "Em andamento", finalizado: "Finalizado" };
+const PROXIMO_STATUS = { recebido: "aceito", aceito: "em_andamento", em_andamento: "finalizado" };
+
+let token = localStorage.getItem("call.admin.token") || "";
+let filtroStatus = "";
+let todosOsFeedbacks = [];
+
+$("token").value = token;
+
+function mostrarAviso(texto, erro = false) {
+  const el = $("aviso");
+  el.textContent = texto;
+  el.className = "aviso aviso--visivel" + (erro ? " aviso--erro" : "");
+  setTimeout(() => el.classList.remove("aviso--visivel"), 2600);
+}
+
+async function chamarApi(caminho, opcoes = {}) {
+  const resposta = await fetch(caminho, {
+    ...opcoes,
+    headers: { ...(opcoes.headers || {}), Authorization: `Bearer ${token}` },
+  });
+  const corpo = await resposta.json().catch(() => ({}));
+  if (!resposta.ok) throw new Error(corpo.erro || `Erro ${resposta.status}`);
+  return corpo;
+}
+
+async function carregar() {
+  const conteudo = $("conteudo");
+  conteudo.innerHTML = '<p class="estado-carregando">Carregando…</p>';
+  try {
+    const { feedback } = await chamarApi("/admin/api/feedback");
+    todosOsFeedbacks = feedback;
+    $("filtros").hidden = false;
+    localStorage.setItem("call.admin.token", token);
+    renderizar();
+  } catch (erro) {
+    conteudo.innerHTML = `<p class="estado-erro">${escaparHtml(erro.message)}</p>`;
+    $("filtros").hidden = true;
+  }
+}
+
+function renderizar() {
+  const conteudo = $("conteudo");
+  const lista = filtroStatus ? todosOsFeedbacks.filter((f) => f.status === filtroStatus) : todosOsFeedbacks;
+
+  if (!lista.length) {
+    conteudo.innerHTML = '<p class="estado-vazio">Nada por aqui.</p>';
+    return;
+  }
+
+  conteudo.innerHTML = `<div class="lista">${lista.map(montarItem).join("")}</div>`;
+
+  for (const el of conteudo.querySelectorAll("[data-avancar]")) {
+    el.addEventListener("click", () => mudarStatus(el.dataset.avancar, PROXIMO_STATUS[el.dataset.statusAtual]));
+  }
+  for (const el of conteudo.querySelectorAll("[data-status-manual]")) {
+    el.addEventListener("change", () => mudarStatus(el.dataset.id, el.value));
+  }
+}
+
+function montarItem(item) {
+  const proximo = PROXIMO_STATUS[item.status];
+  const data = new Date(item.criado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+  return `
+    <article class="item">
+      <div class="item__topo">
+        <span class="pilula pilula--categoria">${ROTULOS_CATEGORIA[item.categoria] ?? item.categoria}</span>
+        <span class="pilula pilula--status-${item.status}">${ROTULOS_STATUS[item.status] ?? item.status}</span>
+        <span class="item__autor">${escaparHtml(item.apelido)}</span>
+      </div>
+      <h3 class="item__titulo">${escaparHtml(item.titulo)}</h3>
+      <p class="item__descricao">${escaparHtml(item.descricao)}</p>
+      <div class="item__rodape">
+        <span class="item__data">${data}</span>
+        <div class="item__acoes">
+          <select data-status-manual data-id="${item.id}">
+            ${STATUS_ORDEM.map((s) => `<option value="${s}" ${s === item.status ? "selected" : ""}>${ROTULOS_STATUS[s]}</option>`).join("")}
+          </select>
+          ${proximo ? `<button class="primario" data-avancar="${item.id}" data-status-atual="${item.status}">Avançar para "${ROTULOS_STATUS[proximo]}"</button>` : ""}
+        </div>
+      </div>
+    </article>`;
+}
+
+const STATUS_ORDEM = ["recebido", "aceito", "em_andamento", "finalizado"];
+
+async function mudarStatus(id, novoStatus) {
+  if (!novoStatus) return;
+  try {
+    await chamarApi(`/admin/api/feedback/${id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: novoStatus }),
+    });
+    const item = todosOsFeedbacks.find((f) => f.id === id);
+    if (item) item.status = novoStatus;
+    renderizar();
+    mostrarAviso("Status atualizado.");
+  } catch (erro) {
+    mostrarAviso(erro.message, true);
+  }
+}
+
+function escaparHtml(texto) {
+  const div = document.createElement("div");
+  div.textContent = String(texto ?? "");
+  return div.innerHTML;
+}
+
+$("entrar").addEventListener("click", () => {
+  token = $("token").value.trim();
+  if (!token) return;
+  carregar();
+});
+$("token").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("entrar").click();
+});
+for (const botao of document.querySelectorAll("#filtros button")) {
+  botao.addEventListener("click", () => {
+    filtroStatus = botao.dataset.status;
+    for (const b of document.querySelectorAll("#filtros button")) b.setAttribute("aria-pressed", String(b === botao));
+    renderizar();
+  });
+}
+
+if (token) carregar();
+</script>
+</body>
+</html>

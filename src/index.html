@@ -436,6 +436,27 @@
               <span>Atualizar</span>
             </button>
 
+            <!-- Aberto a qualquer momento, não só quando há atualização
+                 pendente — o registro permanente do que mudou. O ponto some
+                 assim que a versão mais recente é vista uma vez. -->
+            <button class="icone historico-botao" type="button" id="botao-historico"
+                    title="Novidades" aria-label="Novidades">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 4l14 4-3 3 6 6-2 2-6-6-3 3z"/>
+              </svg>
+              <span class="historico-botao__ponto oculto" id="historico-ponto" aria-hidden="true"></span>
+            </button>
+
+            <!-- Reportar bug, sugerir algo ou elogiar — sempre disponível,
+                 nunca em destaque: é um convite discreto, não um lembrete. -->
+            <button class="icone" type="button" id="botao-feedback"
+                    title="Enviar feedback" aria-label="Enviar feedback">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 4.5h16a1 1 0 0 1 1 1V15a1 1 0 0 1-1 1H9l-4 4v-4H4a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z"/>
+                <path d="M8 9.5h8M8 12.5h5"/>
+              </svg>
+            </button>
+
             <!-- Na sala de voz o palco é o conteúdo principal. O chat fica
                  disponível sob demanda, como painel lateral, e este contador
                  impede que fechá-lo signifique perder mensagens novas. -->
@@ -1556,6 +1577,103 @@
           <button class="botao botao--sutil" type="button" id="novidades-depois">Depois</button>
           <button class="botao botao--primario" type="button" id="novidades-atualizar">Atualizar agora</button>
         </footer>
+      </div>
+    </div>
+
+    <!-- ══ Central de Novidades ═════════════════════════════════════ -->
+    <div class="cortina oculto" id="historico-dialogo">
+      <div class="historico" role="dialog" aria-modal="true" aria-labelledby="historico-titulo">
+        <header class="historico__topo">
+          <div class="historico__cabecalho">
+            <span class="historico__etiqueta" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 4l14 4-3 3 6 6-2 2-6-6-3 3z"/></svg>
+            </span>
+            <h3 class="historico__titulo-painel" id="historico-titulo">Central de Novidades</h3>
+          </div>
+          <button class="icone" type="button" id="historico-fechar" title="Fechar" aria-label="Fechar">
+            <svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg>
+          </button>
+        </header>
+        <div class="historico__corpo" id="historico-corpo"></div>
+      </div>
+    </div>
+
+    <!-- ══ Feedback ═════════════════════════════════════════════════ -->
+    <div class="cortina oculto" id="feedback-dialogo">
+      <div class="feedback" role="dialog" aria-modal="true" aria-labelledby="feedback-titulo-painel">
+        <header class="feedback__topo">
+          <div class="feedback__cabecalho">
+            <span class="feedback__etiqueta" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M4 4.5h16a1 1 0 0 1 1 1V15a1 1 0 0 1-1 1H9l-4 4v-4H4a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z"/>
+              </svg>
+            </span>
+            <h3 class="feedback__titulo-painel" id="feedback-titulo-painel">Feedback</h3>
+          </div>
+          <button class="icone" type="button" id="feedback-fechar" title="Fechar" aria-label="Fechar">
+            <svg viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15"/></svg>
+          </button>
+        </header>
+
+        <div id="feedback-com-conta">
+          <nav class="feedback__abas" role="tablist">
+            <button class="aba" type="button" data-aba-feedback="enviar" role="tab" aria-selected="true">Enviar</button>
+            <button class="aba" type="button" data-aba-feedback="meus" role="tab" aria-selected="false">Meus envios</button>
+          </nav>
+
+          <div class="feedback__corpo">
+            <form class="feedback__form" id="feedback-form" data-painel-feedback="enviar">
+              <div class="feedback__categorias" role="radiogroup" aria-label="Categoria">
+                <button type="button" class="feedback__categoria" data-categoria="bug" aria-pressed="true">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v3M6 5l1.5 2M14 5l-1.5 2M4 10h2m8 0h2M6 15l1.5-2m5 2L11 13M7 8h6a1 1 0 0 1 1 1v3a4 4 0 0 1-4 4 4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"/></svg>
+                  Bug
+                </button>
+                <button type="button" class="feedback__categoria" data-categoria="sugestao" aria-pressed="false">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2a5 5 0 0 1 3 9c-.6.5-1 1.2-1 2H8c0-.8-.4-1.5-1-2a5 5 0 0 1 3-9z"/><path d="M8 16h4M9 18h2"/></svg>
+                  Sugestão
+                </button>
+                <button type="button" class="feedback__categoria" data-categoria="elogio" aria-pressed="false">
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 17.5S3 13 3 8.2A3.7 3.7 0 0 1 10 6a3.7 3.7 0 0 1 7 2.2c0 4.8-7 9.3-7 9.3z"/></svg>
+                  Elogio
+                </button>
+              </div>
+
+              <div class="campo">
+                <span class="campo__rotulo">Título</span>
+                <div class="campo__caixa">
+                  <input class="campo__entrada" id="feedback-titulo" maxlength="120" placeholder="Resuma em uma frase" />
+                </div>
+              </div>
+
+              <div class="ajuste">
+                <div class="campo__cabecalho">
+                  <label class="ajuste__rotulo" for="feedback-descricao">Descrição</label>
+                  <span class="campo__aviso" id="feedback-descricao-conta">0/4000</span>
+                </div>
+                <textarea
+                  class="campo__entrada campo__area"
+                  id="feedback-descricao"
+                  maxlength="4000"
+                  rows="5"
+                  placeholder="Conte com detalhes — quanto mais contexto, mais fácil de agir."
+                ></textarea>
+              </div>
+
+              <p class="feedback__erro oculto" id="feedback-erro"></p>
+
+              <footer class="feedback__rodape">
+                <button class="botao botao--primario" type="submit" id="feedback-enviar-botao">Enviar</button>
+              </footer>
+            </form>
+
+            <div class="feedback__lista oculto" id="feedback-lista" data-painel-feedback="meus"></div>
+            <p class="feedback__vazio oculto" id="feedback-vazio">Você ainda não enviou nada por aqui.</p>
+          </div>
+        </div>
+
+        <p class="feedback__sem-conta oculto" id="feedback-sem-conta">
+          Crie uma conta para enviar feedback e acompanhar o status de cada pedido.
+        </p>
       </div>
     </div>
 
