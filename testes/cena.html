@@ -23,18 +23,27 @@
       marcação. `?cena=` escolhe o que montar.
 
       A cena do cartão monta os dados à mão, injetando um módulo no documento
-      da aplicação — e não ligando uma segunda pessoa de verdade. O motivo é
-      chato e vale registrar: a captura headless só funciona com
-      `--virtual-time-budget`, e o relógio virtual corre à frente da rede real,
-      então o limite de oito segundos da conexão estoura antes de o servidor
-      responder. Quem prova o caminho de verdade, com outra pessoa no
-      WebSocket, é o `rodar-perfil.ps1`; aqui o que se quer é olhar o desenho.
+      da aplicação, em vez de ligar uma segunda pessoa de verdade — mais barato
+      quando o que se quer olhar é só o desenho de um componente isolado. As
+      cenas "voz" e "voz-chat" já ligam uma segunda pessoa real, pelo mesmo
+      WebSocket cru que `rodar-perfil.ps1` usa: aqui o que se prova é a sala
+      de voz de ponta a ponta — o quadro que `criarQuadroDeVoz` desenha de
+      verdade, com a foto e a atividade que chegaram pela rede —, e uma
+      marcação copiada à mão ficaria para trás na primeira vez que aquela
+      função mudasse de forma (foi exatamente o que aconteceu aqui antes).
+      Isso só é seguro porque a captura roda em tempo real, sem
+      `--virtual-time-budget`: o `/segurar?ms=` abaixo é quem segura o
+      `load` — em relógio de parede, o único que a rede concorda — enquanto a
+      cena inteira, rede incluída, tem tempo de acontecer.
     -->
-    <iframe id="app" src="/src/index.html" width="1180" height="760"></iframe>
+    <!-- Sem `src`: precisa nascer depois de semear `localStorage`, ver abaixo. -->
+    <iframe id="app" width="1180" height="760"></iframe>
     <!-- Segura o `load` da página, que é quando a captura dispara, enquanto a
          cena se monta. Fica fora do fluxo para não empurrar o quadro nem um
-         pixel. Ver o comentário em `servir.mjs`. -->
-    <img src="/segurar?ms=7000" alt="" style="position: absolute; top: 0; left: 0; opacity: 0" />
+         pixel. Ver o comentário em `servir.mjs`. As cenas "voz"/"voz-chat"
+         são as mais lentas — criam grupo, ligam uma segunda pessoa e entram
+         na voz de verdade —, por isso a folga generosa. -->
+    <img src="/segurar?ms=14000" alt="" style="position: absolute; top: 0; left: 0; opacity: 0" />
 
     <script type="module">
       const params = new URLSearchParams(location.search);
@@ -42,15 +51,26 @@
       const servidor = params.get("servidor") ?? "ws://127.0.0.1:8898";
 
       const quadro = document.getElementById("app");
+
+      // O endereço do servidor deixou de ser campo da tela de entrada e virou
+      // preferência (ver `rodar-perfil.ps1`), então semear antes de carregar é
+      // o único jeito de o aplicativo nascer apontado para o servidor local
+      // deste teste — sem isto, toda ação de rede desta cena (criar grupo
+      // incluído) iria para o servidor de produção, `SERVIDOR_PADRAO` em
+      // `app.js`. A página e o quadro têm a mesma origem, logo o mesmo
+      // `localStorage`.
+      localStorage.setItem("call.preferencias", JSON.stringify({ servidor }));
+      quadro.src = "/src/index.html";
       await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
       const doc = quadro.contentDocument;
       const jan = quadro.contentWindow;
       const $ = (id) => doc.getElementById(id);
       const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+      const prefs = () => JSON.parse(jan.localStorage.getItem("call.preferencias") ?? "{}");
 
       // Sem isto a captura pega o painel no meio do surgimento, meio
-      // transparente: o `--virtual-time-budget` decide a hora do disparo, e ela
-      // não coincide com o fim da animação.
+      // transparente: a captura roda em tempo real, e um `transition` ou uma
+      // animação em andamento no instante do `load` renderiza pela metade.
       if (params.get("movimento") !== "sim") {
         const parado = doc.createElement("style");
         parado.textContent = "*, *::before, *::after { animation: none !important; transition: none !important; }";
@@ -68,6 +88,22 @@
         }
         return false;
       };
+
+      /** O jeito real de criar um grupo: o "+" do trilho abre um menu, e só
+       *  o item escolhido chama `editarGrupo` — que é quem monta o diálogo
+       *  com `grupo-nome`/`grupo-confirmar`. Devolve o código do convite,
+       *  lido das preferências salvas (como `rodar-perfil.ps1` já faz), e
+       *  não de um elemento de tela que não existe mais. */
+      async function criarGrupoReal(nome) {
+        doc.querySelector(".grupo--novo").click();
+        await esperar(150);
+        [...$("menu").children].find((item) => item.textContent === "Criar grupo").click();
+        await esperar(150);
+        teclar($("grupo-nome"), nome);
+        $("grupo-confirmar").click();
+        await aguardar(() => prefs().atalhos?.[0]?.codigo?.length === 10);
+        return prefs().atalhos[0].codigo;
+      }
 
       if (cena === "entrada") {
         $("criar-apelido").value = "Alan";
@@ -93,7 +129,6 @@
         document.title = "PRONTO";
       } else {
         $("criar-apelido").value = "Alan";
-        $("campo-servidor").value = servidor;
         $("botao-sem-conta").click();
         await esperar(400);
 
@@ -106,12 +141,7 @@
         }
 
         if (cena === "grupo") {
-          $("botao-novo-grupo").click();
-          await esperar(200);
-          doc.querySelector("#dialogo-campos input").value = "Estúdio";
-          $("dialogo-formulario").dispatchEvent(new jan.Event("submit", { cancelable: true }));
-          await aguardar(() => $("codigo-convite").textContent.length === 10);
-          const codigo = $("codigo-convite").textContent;
+          const codigo = await criarGrupoReal("Estúdio");
 
           const gente = [
             ["Bruna", "bruna-x", "raposa", "Front-end de dia, Valorant de noite."],
@@ -129,58 +159,64 @@
         }
 
         if (cena === "voz" || cena === "voz-chat") {
-          // Cena puramente visual da sala focada. Não abre microfone nem
-          // anuncia presença no servidor: monta os mesmos elementos e classes
-          // que `sincronizarPalcoDeVoz` produziria em uma call real.
-          const sala = doc.querySelector(".sala");
-          sala.classList.add("sala--em-voz");
-          sala.classList.toggle("sala--chat-aberto", cena === "voz-chat");
-          $("titulo-canal").textContent = "Sala de voz";
-          $("subtitulo-canal").textContent = "Só você na sala por enquanto";
-          $("botao-chat-da-sala").classList.remove("oculto");
-          $("botao-chat-da-sala").setAttribute("aria-pressed", String(cena === "voz-chat"));
-          $("botao-chat-da-sala").setAttribute("aria-expanded", String(cena === "voz-chat"));
-          $("palco").classList.remove("oculto");
-          $("palco").classList.add("palco--cheio");
-          $("palco-grade").dataset.quantidade = "1";
-          $("palco-grade").dataset.colunas = "1";
-          $("palco-grade").innerHTML = `
-            <button class="presenca" type="button">
-              <span class="avatar avatar--palco">A</span>
-              <span class="presenca__etiqueta">Alan (você)</span>
-            </button>
-          `;
+          // Sala de voz real, com uma segunda pessoa de verdade entrando pelo
+          // WebSocket — e não marcação copiada à mão. A versão anterior
+          // desenhava `.presenca` no braço, e ficou para trás na primeira vez
+          // que `criarQuadroDeVoz` mudou de forma: aqui quem desenha é o
+          // código real, então a cena não pode ficar desatualizada de novo.
+          const codigo = await criarGrupoReal("Estúdio");
 
-          $("chat-da-sala-titulo").textContent = "geral";
-          $("conversa-vazio").classList.add("oculto");
-          $("linha-do-tempo").innerHTML = `
-            <div class="marco">Hoje</div>
-            <article class="mensagem">
-              <span class="avatar">R</span>
-              <div class="mensagem__conteudo">
-                <div><strong class="mensagem__autor">Rafael</strong></div>
-                <div class="mensagem__texto">Chego na sala em cinco minutos.</div>
-              </div>
-            </article>
-          `;
-          $("redator").classList.remove("oculto");
-          $("rodape-voz").classList.remove("oculto");
-          $("nome-canal-voz").textContent = "Sala de voz";
-          $("tela-aplicacao").dataset.presentes = "fechado";
+          // 1×1 PNG válido, só para provar que o cartão e o quadro de voz
+          // pintam uma foto de verdade em vez de caírem no mascote.
+          const FOTO_EXEMPLO =
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
-          // Na captura o estado fica parado; com `?movimento=sim`, estes dois
-          // botões deixam a mesma cena servir de provador da gaveta, sem abrir
-          // microfone nem depender de outra pessoa conectada.
-          const definirChat = (aberto) => {
-            sala.classList.toggle("sala--chat-aberto", aberto);
-            $("botao-chat-da-sala").setAttribute("aria-pressed", String(aberto));
-            $("botao-chat-da-sala").setAttribute("aria-expanded", String(aberto));
-          };
-          $("botao-chat-da-sala").addEventListener("click", (evento) => {
-            evento.stopImmediatePropagation();
-            definirChat(!sala.classList.contains("sala--chat-aberto"));
-          }, { capture: true });
-          $("botao-fechar-chat-da-sala").addEventListener("click", () => definirChat(false));
+          const par = new WebSocket(servidor);
+          await new Promise((ok) => par.addEventListener("open", ok, { once: true }));
+          const vozId = await new Promise((ok) => {
+            par.addEventListener("message", function ouvir(e) {
+              const msg = JSON.parse(e.data);
+              if (msg.tipo !== "bem-vindo") return;
+              par.removeEventListener("message", ouvir);
+              const voz = msg.grupo.categorias.flatMap((c) => c.canais).find((c) => c.tipo === "voz");
+              ok(voz.id);
+            });
+            par.send(
+              JSON.stringify({
+                tipo: "entrar",
+                codigo,
+                apelido: "Bruna",
+                usuario: "bruna-cena",
+                avatar: "raposa",
+                bio: "Front-end de dia, Valorant de noite.",
+                foto: FOTO_EXEMPLO,
+              })
+            );
+          });
+          par.send(JSON.stringify({ tipo: "entrar-voz", canal: vozId, transportes: ["malha"] }));
+          await esperar(250);
+          // Sem `mudo`, o campo cai no padrão do servidor — declarado aqui só
+          // para deixar explícito que ela está com o microfone aberto.
+          par.send(JSON.stringify({ tipo: "estado", mudo: false, atividade: "Visual Studio Code" }));
+
+          // Eu entro na voz de verdade, pelo canal real — mesmo microfone
+          // falso que o resto da suíte usa (`--use-fake-device-for-media-stream`).
+          doc.querySelector('.canal[data-tipo="voz"] .canal__alvo').click();
+          await aguardar(() => $("palco-grade").children.length === 2, 10000);
+
+          if (cena === "voz-chat") {
+            $("botao-chat-da-sala").click();
+            await esperar(200);
+            const campo = $("campo-mensagem");
+            campo.textContent = "Chego em cinco minutos, olha o roteiro: http://exemplo.com/roteiro-da-call.";
+            $("redator").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+            await esperar(300);
+          }
+
+          // Muta o próprio microfone por último — é a troca de desenho do
+          // ícone (e não só de cor) que este selo prova.
+          $("botao-microfone").click();
+          await esperar(150);
         }
 
         if (cena === "cartao") {

@@ -847,6 +847,7 @@ export function iniciarOnboarding(atual) {
 export function mostrarCartao({
   apelido,
   avatar,
+  foto,
   bio,
   atividade,
   atividadeIcone,
@@ -857,7 +858,7 @@ export function mostrarCartao({
   const cortina = $("cartao-dialogo");
   const mascote = acharAvatar(avatar);
 
-  pintarAvatar($("cartao-avatar"), { avatar, apelido });
+  pintarAvatar($("cartao-avatar"), { avatar, apelido, foto });
   $("cartao-nome").textContent = apelido;
 
   // A capa toma a cor do mascote. É o único lugar do aplicativo onde a cor

@@ -51,6 +51,23 @@ struct RespostaDoResumo {
     title: String,
     extract: String,
     thumbnail: Option<Miniatura>,
+    /// "standard" para um artigo de verdade, "disambiguation" para uma
+    /// página que só lista outros artigos com o mesmo título — "Word" vira
+    /// uma lista com o Microsoft Word, o verbete de linguística, uma banda...
+    /// Chamado `type` na resposta da Wikipédia; `tipo` aqui porque `type` é
+    /// palavra reservada em Rust.
+    #[serde(rename = "type")]
+    tipo: Option<String>,
+}
+
+/// Uma página de desambiguação não fala do programa — é uma lista de
+/// artigos que dividem o mesmo título. Mostrá-la seria pior que "sem
+/// informação": pareceria resposta, e não é. Medido ao vivo contra a
+/// Wikipédia: a busca de texto (`titulo_mais_proximo`) já resolve a maioria
+/// dos nomes de programa comuns para o artigo certo, mas um nome genérico
+/// ainda pode escapar disso e cair aqui.
+fn e_desambiguacao(resposta: &RespostaDoResumo) -> bool {
+    resposta.tipo.as_deref() == Some("disambiguation")
 }
 
 async fn titulo_mais_proximo(cliente: &reqwest::Client, host: &str, nome: &str) -> Option<String> {
@@ -129,7 +146,7 @@ async fn baixar_foto_como_dados(cliente: &reqwest::Client, url: &str) -> Option<
 async fn buscar_em(cliente: &reqwest::Client, host: &str, nome: &str) -> Option<Resumo> {
     let titulo = titulo_mais_proximo(cliente, host, nome).await?;
     let achado = resumo_do_titulo(cliente, host, &titulo).await?;
-    if achado.extract.trim().is_empty() {
+    if achado.extract.trim().is_empty() || e_desambiguacao(&achado) {
         return None;
     }
 
@@ -166,4 +183,41 @@ pub async fn resumo_de_atividade(nome: String) -> Option<Resumo> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    // Fixtures literais, e não uma chamada de rede: o comportamento a provar
+    // é "o campo `type` vira a decisão certa", não "a Wikipédia está no ar" —
+    // e bater o limite de taxa dela ao rodar o teste (como aconteceu ao
+    // investigar este defeito à mão) não pode derrubar a suíte.
+
+    #[test]
+    fn desambiguacao_e_reconhecida() {
+        let resposta: RespostaDoResumo = serde_json::from_str(
+            r#"{"type":"disambiguation","title":"Word","extract":"Word pode se referir a:"}"#,
+        )
+        .unwrap();
+        assert!(e_desambiguacao(&resposta));
+    }
+
+    #[test]
+    fn artigo_padrao_nao_e_desambiguacao() {
+        let resposta: RespostaDoResumo = serde_json::from_str(
+            r#"{"type":"standard","title":"Microsoft Word","extract":"processador de texto"}"#,
+        )
+        .unwrap();
+        assert!(!e_desambiguacao(&resposta));
+    }
+
+    #[test]
+    fn resposta_sem_campo_type_nao_e_tratada_como_desambiguacao() {
+        // Uma variação do endpoint que não manda o campo não pode ser lida
+        // como "é desambiguação" — `Option<String>` cobre exatamente isso.
+        let resposta: RespostaDoResumo =
+            serde_json::from_str(r#"{"title":"Roblox","extract":"jogo eletrônico"}"#).unwrap();
+        assert!(!e_desambiguacao(&resposta));
+    }
 }

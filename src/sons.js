@@ -83,18 +83,22 @@ const QUEDA_PESO = 0.22;
 const LARGURA = 0.28;
 
 /**
- * As quatro leituras do mesmo motivo.
+ * As seis leituras do mesmo motivo.
  *
  * `peso` é o grave que sustenta a nota Lá♭ — presente só quando o evento é
  * seu. É o que faz a própria entrada ter corpo e a dos outros ser um aviso.
+ * Mutar e desmutar são sempre seus — não existe versão "de outra pessoa",
+ * então as duas leituras têm peso, como `entrei` e `sai`.
  *
- * Os ganhos não são estimados: saíram da medição em `testes/sons.html`. Vale
- * anotar por quê, porque o valor "óbvio" está errado por 13 dB. Quatro
- * parciais e duas notas se somam construtivamente, e um ganho de 1,0 leva o
- * pico a −1,1 dBFS — à beira do corte, e alto o bastante para assustar quem
- * está de fone. Os números abaixo põem cada som no alvo medido:
+ * Os ganhos de `entrei`/`entrou`/`sai`/`saiu` não são estimados: saíram da
+ * medição em `testes/sons.html`. Vale anotar por quê, porque o valor "óbvio"
+ * está errado por 13 dB. Quatro parciais e duas notas se somam
+ * construtivamente, e um ganho de 1,0 leva o pico a −1,1 dBFS — à beira do
+ * corte, e alto o bastante para assustar quem está de fone. Os números abaixo
+ * põem cada som no alvo medido:
  *
  *   entrei −14 dBFS   entrou −19 dBFS   sai −15 dBFS   saiu −20 dBFS
+ *   mudo −16 dBFS     desmudo −16 dBFS (medidos: −15,7 e −15,6)
  *
  * e ainda passam pelo volume dos avisos, que por padrão tira outros 3 dB.
  * Mexer em `PARCIAIS` muda esses picos: o teste é que diz para onde.
@@ -110,6 +114,10 @@ export const RECEITAS = {
   saiu: { subindo: false, ganho: 0.12, peso: 0 },
   /** Mensagem nova de outra pessoa. Curto, agudo e um pouco mais presente. */
   mensagem: { subindo: true, ganho: 0.2, peso: 0 },
+  /** Você mutou o microfone. Desce, como sair — a voz deixa de chegar. */
+  mudo: { subindo: false, ganho: 0.19, peso: 0.16 },
+  /** Você desmutou o microfone. Sobe, como entrar — a voz volta a valer. */
+  desmudo: { subindo: true, ganho: 0.19, peso: 0.16 },
 };
 
 /* ── Construção ───────────────────────────────────────────────────── */

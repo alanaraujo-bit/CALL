@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-set-fullscreen",
     {
       "identifier": "shell:allow-spawn",
       "allow": [{ "name": "binaries/sinalizacao", "sidecar": true, "args": true }]

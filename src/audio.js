@@ -650,6 +650,14 @@ export class MotorDeAudio {
     return true;
   }
 
+  /** Igual a `tocarAviso`, para o clique de mutar/desmutar — mesmas guardas
+   *  (som ligado, contexto aberto, teto anti-abuso), o motivo sonoro próprio
+   *  de `mudo`/`desmudo` em `sons.js`. `aberto` é o estado *depois* do clique:
+   *  `true` toca `desmudo`, `false` toca `mudo`. */
+  tocarMudo(aberto) {
+    return this.tocarAviso(aberto ? "desmudo" : "mudo");
+  }
+
   /** Igual ao anterior, mas abre o contexto se ainda não houver um. É o
    *  caminho do painel de ajustes, onde se ouve o som sem estar na voz. */
   async ouvirAviso(nome) {

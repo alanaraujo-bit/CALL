@@ -251,15 +251,30 @@
         );
         $("cartao-fechar").click();
 
-        // ── Clicar em si mesmo abre o editor, não um cartão ──────────
+        // ── Clicar em si mesmo abre o cartão, com "Editar perfil" como ação ──
+        // Não mais um editor direto: o cartão sempre mostra quem a pessoa é
+        // para o grupo, de si mesma inclusive, e "Editar perfil" é só mais
+        // uma das ações da lista — mesmo espírito do Discord.
         [...$("lista-participantes").children]
           .find((l) => l.textContent.includes("(você)"))
           .click();
         await esperar(200);
         conferir(
+          !$("cartao-dialogo").classList.contains("oculto") &&
+            $("perfil-dialogo").classList.contains("oculto"),
+          "clicar em si mesmo abre o cartão, não o editor direto"
+        );
+
+        const editarPerfil = [...$("cartao-acoes").children].find(
+          (b) => b.textContent === "Editar perfil"
+        );
+        conferir(Boolean(editarPerfil), "o cartão de si mesmo oferece Editar perfil");
+        editarPerfil.click();
+        await esperar(200);
+        conferir(
           !$("perfil-dialogo").classList.contains("oculto") &&
             $("cartao-dialogo").classList.contains("oculto"),
-          "clicar em si mesmo abre o editor"
+          "e clicar na ação abre o editor, fechando o cartão"
         );
         $("perfil-fechar").click();
 

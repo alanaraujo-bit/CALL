@@ -1287,6 +1287,14 @@ function prepararAplicacao() {
   });
 
   document.addEventListener("keydown", (evento) => {
+    if (evento.key === "F11") {
+      // Sem chrome de navegador, o WebView2 não faz nada com F11 sozinho —
+      // diferente de um Chrome/Edge de verdade, aqui é o app que precisa
+      // pedir a tela cheia nativa à janela do Tauri.
+      evento.preventDefault();
+      alternarTelaCheia();
+      return;
+    }
     if (evento.key !== "Escape") return;
     // O perfil e o cartão fecham a si mesmos. Sem esta saída, o Escape deles
     // seguiria adiante e desmaximizaria uma transmissão atrás da cortina.
@@ -1302,6 +1310,8 @@ function prepararAplicacao() {
       fecharAjustes();
     } else if (telaMaximizada) {
       alternarMaximizarTela(telaMaximizada);
+    } else if (janelaEstaEmTelaCheia) {
+      alternarTelaCheia();
     }
   });
 
@@ -1584,6 +1594,7 @@ function abrirCartaoDe(membro) {
   mostrarCartao({
     apelido: membro.apelido,
     avatar: membro.avatar,
+    foto: membro.foto,
     bio: membro.bio,
     atividade: membro.atividade,
     atividadeIcone: membro.atividadeIcone,
@@ -3031,11 +3042,64 @@ function blocoDeMensagem(mensagem) {
   return bloco;
 }
 
+/** Uma URL nua dentro do texto — começa em `http(s)://` ou `www.`, e nunca
+ *  pega pontuação de fim de frase colada no fim (o `.` de "veja o site.",
+ *  não o do domínio). O prefixo obrigatório é o que mantém isto seguro: o
+ *  `href` monta só a partir do que casou aqui, então um texto como
+ *  "javascript:alert(1)" nunca vira link — não começa com nenhum dos dois. */
+const TOKEN_LINK = /\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+\.[^\s<>"']+/gi;
+const PONTUACAO_FINAL_DE_LINK = /[.,!?;:)\]]+$/;
+
+/**
+ * Acrescenta texto puro a `elemento`, virando link clicável qualquer URL nua
+ * que apareça nele. Igual ao resto desta tela, o texto ao redor do link
+ * continua indo por `elemento.append(string)` — nó de texto, nunca marcação.
+ */
+function acrescentarTextoComLinks(elemento, texto) {
+  TOKEN_LINK.lastIndex = 0;
+  let ultimo = 0;
+  let m;
+  while ((m = TOKEN_LINK.exec(texto))) {
+    if (m.index > ultimo) elemento.append(texto.slice(ultimo, m.index));
+
+    let url = m[0];
+    let sobra = "";
+    const pontuacao = url.match(PONTUACAO_FINAL_DE_LINK);
+    if (pontuacao) {
+      sobra = pontuacao[0];
+      url = url.slice(0, -sobra.length);
+    }
+    // "(veja http://x.com)" — o fechamento é da frase, não do endereço, mas
+    // só quando não há abertura correspondente dentro do próprio link.
+    if (url.endsWith(")") && !url.includes("(")) {
+      sobra = `)${sobra}`;
+      url = url.slice(0, -1);
+    }
+
+    if (url) {
+      const link = document.createElement("a");
+      link.href = url.startsWith("www.") ? `https://${url}` : url;
+      link.textContent = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      elemento.append(link);
+    } else {
+      elemento.append(m[0]);
+      sobra = "";
+    }
+    if (sobra) elemento.append(sobra);
+
+    ultimo = TOKEN_LINK.lastIndex;
+  }
+  if (ultimo < texto.length) elemento.append(texto.slice(ultimo));
+}
+
 /**
  * Troca todo `:id:` de um emoji válido pelo desenho dele, e deixa o resto
- * como texto puro. `elemento.append` com uma string cria nó de texto — nunca
- * `innerHTML` — então o que a outra pessoa escreveu nunca vira marcação,
- * mesmo intercalado com os emoji.
+ * como texto puro — exceto pelas URLs nuas nesse resto, que
+ * `acrescentarTextoComLinks` vira link. `elemento.append` com uma string cria
+ * nó de texto — nunca `innerHTML` — então o que a outra pessoa escreveu nunca
+ * vira marcação, mesmo intercalado com os emoji e os links.
  */
 function preencherTextoComEmoji(elemento, texto) {
   elemento.textContent = "";
@@ -3043,11 +3107,11 @@ function preencherTextoComEmoji(elemento, texto) {
   let ultimo = 0;
   let m;
   while ((m = TOKEN_EMOJI.exec(texto))) {
-    if (m.index > ultimo) elemento.append(texto.slice(ultimo, m.index));
+    if (m.index > ultimo) acrescentarTextoComLinks(elemento, texto.slice(ultimo, m.index));
     elemento.append(elementoDeEmoji(m[1], "emoji emoji--linha"));
     ultimo = TOKEN_EMOJI.lastIndex;
   }
-  if (ultimo < texto.length) elemento.append(texto.slice(ultimo));
+  if (ultimo < texto.length) acrescentarTextoComLinks(elemento, texto.slice(ultimo));
 }
 
 /**
@@ -4401,6 +4465,16 @@ function prepararCadastroDeAtividade() {
 
 /* ═══ Microfone ═════════════════════════════════════════════════ */
 
+/** Os dois desenhos do ícone do botão — trocam de forma, e não só de cor: a
+ *  cor sozinha some no hover (ver `.controle[data-mudo="sim"]:hover` em
+ *  `estilo.css`), e quem olha rápido não pode depender só dela. O traçado de
+ *  "mudo" é o mesmo `SVG_MUDO` já usado na lista de participantes — um glifo
+ *  só, lido em dois lugares. */
+const ICONE_MICROFONE_ABERTO =
+  '<path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>';
+const ICONE_MICROFONE_MUDO =
+  '<path d="M4 4l16 16"/><path d="M9 5a3 3 0 0 1 6 1v5m-1.5 3.5A3 3 0 0 1 9 12v-2"/><path d="M5 11a7 7 0 0 0 10.6 6M19 11a6.9 6.9 0 0 1-.4 2.3"/>';
+
 function alternarMicrofone() {
   if (!estado.fluxoMicrofone) return;
   estado.mudo = !estado.mudo;
@@ -4410,6 +4484,7 @@ function alternarMicrofone() {
   if (eu) eu.mudo = estado.mudo;
 
   atualizarBotaoMicrofone();
+  motor.tocarMudo(!estado.mudo);
   redesenhar();
   anunciarEstado();
 }
@@ -4417,6 +4492,7 @@ function alternarMicrofone() {
 function atualizarBotaoMicrofone() {
   const botao = $("botao-microfone");
   botao.dataset.mudo = estado.mudo ? "sim" : "nao";
+  $("icone-microfone").innerHTML = estado.mudo ? ICONE_MICROFONE_MUDO : ICONE_MICROFONE_ABERTO;
   const rotulo = estado.mudo ? "Microfone mudo — clique para falar" : "Microfone aberto";
   botao.title = rotulo;
   botao.setAttribute("aria-label", rotulo);
@@ -4960,6 +5036,29 @@ function alternarMaximizarTela(id) {
   atualizarPalco();
 }
 
+/* ═══ Tela cheia (F11) ══════════════════════════════════════════ */
+
+/** Espelha o estado real da janela, para o `Escape` saber se há uma tela
+ *  cheia para desfazer sem precisar perguntar ao Tauri toda hora. */
+let janelaEstaEmTelaCheia = false;
+
+/**
+ * Tela cheia nativa da janela — sem chrome de navegador aqui dentro, o
+ * WebView2 não faz nada sozinho com F11, diferente de um Chrome de verdade.
+ * A tela cheia do Windows já tira título e bordas por conta própria; não é
+ * preciso mexer em `decorations` à parte.
+ *
+ * Só existe dentro do aplicativo instalado — na bancada de navegador e no
+ * celular `window.__TAURI__` não existe, e o atalho não faz nada em vez de
+ * quebrar (mesmo padrão do resto do app, ex. o atalho global de mudo).
+ */
+async function alternarTelaCheia() {
+  const janela = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (!janela) return;
+  janelaEstaEmTelaCheia = !(await janela.isFullscreen());
+  await janela.setFullscreen(janelaEstaEmTelaCheia);
+}
+
 /**
  * A sala de voz inteira é o contexto principal, haja transmissão ou apenas
  * avatares. O chat não disputa altura embaixo: abre na lateral quando pedido.
@@ -5052,6 +5151,20 @@ function criarQuadroDeVoz(membro) {
 
   const etiqueta = document.createElement("span");
   etiqueta.className = "presenca__etiqueta";
+  const nome = document.createElement("span");
+  nome.className = "presenca__nome";
+  etiqueta.append(nome);
+  // Segunda linha do selo, só quando há atividade — o mesmo par ícone+nome
+  // da lista lateral (`preencherIconeDeAtividade`), aqui no lugar mais
+  // visível do app, que até agora não mostrava atividade nenhuma.
+  const atividade = document.createElement("span");
+  atividade.className = "presenca__atividade oculto";
+  const icone = document.createElement("span");
+  atividade.append(icone);
+  const rotulo = document.createElement("span");
+  rotulo.className = "presenca__atividade-rotulo";
+  atividade.append(rotulo);
+  etiqueta.append(atividade);
   quadro.append(etiqueta);
 
   const mudo = document.createElement("span");
@@ -5065,9 +5178,20 @@ function criarQuadroDeVoz(membro) {
 
 function atualizarQuadroDeVoz(quadro, membro) {
   pintarAvatar(quadro.querySelector(".avatar"), membro);
-  quadro.querySelector(".presenca__etiqueta").textContent =
+  quadro.querySelector(".presenca__nome").textContent =
     membro.id === estado.meuId ? `${membro.apelido} (você)` : membro.apelido;
   quadro.querySelector(".presenca__mudo").classList.toggle("oculto", !membro.mudo);
+
+  const atividade = quadro.querySelector(".presenca__atividade");
+  atividade.classList.toggle("oculto", !membro.atividade);
+  if (membro.atividade) {
+    // `preencherIconeDeAtividade` reescreve o `className` do elemento, então
+    // é o primeiro filho por posição — e não uma classe, que muda a cada
+    // chamada — que continua identificando o ícone com segurança.
+    preencherIconeDeAtividade(atividade.firstElementChild, membro, "presenca__atividade-icone");
+    atividade.querySelector(".presenca__atividade-rotulo").textContent = membro.atividade;
+    atividade.title = membro.atividade;
+  }
 }
 
 /** A estatística real de vídeo por trás de um quadro do palco — o que está

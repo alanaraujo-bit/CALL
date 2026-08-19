@@ -1706,6 +1706,129 @@ que interessa.
 
 ---
 
+## Iteração 22 — Três defeitos relatados, dois acabamentos e um som (1.0.1)
+
+**Motivo:** três relatos diretos de quem usa o CALL — o botão de mudo não
+mostra que está mudo até passar o cursor por cima, o selo de atividade não
+aparecia na sala de voz (só na lista lateral) e a informação por trás dele às
+vezes vinha errada, e a foto de perfil de outra pessoa continuava caindo no
+mascote mesmo quando ela tinha uma de verdade. Mais dois acabamentos pedidos
+(F11 para tela cheia, link clicável no chat) e um som para mutar/desmutar.
+
+**O que já estava pela metade quando a sessão começou:** o ícone do botão de
+mudo trocando de forma (`ICONE_MICROFONE_ABERTO`/`ICONE_MICROFONE_MUDO` em
+`app.js`) e a regra de hover que devolvia a cor neutra por ter mais
+especificidade que o estado — os dois já resolvidos numa sessão anterior, sem
+commit ainda. A verificação real desta iteração foi confirmar que essas partes
+prontas realmente funcionavam juntas com o resto, e não presumir que sim.
+
+**1. O selo de atividade que faltava.** `criarQuadroDeVoz`/`atualizarQuadroDeVoz`
+ganharam a mesma segunda linha ícone+nome que a lista de participantes já
+tinha (`preencherIconeDeAtividade`, de `plataformas.js`) — antes disso, o
+quadro grande da sala de voz, que é o lugar mais visível do aplicativo, não
+mostrava atividade nenhuma. A "informação ruim" tinha uma segunda causa,
+inteiramente do lado do Rust: a busca de resumo na Wikipédia
+(`src-tauri/src/resumo.rs`) não distinguia um artigo de verdade de uma página
+de desambiguação — "Word" é um artigo que só lista outros artigos ("Microsoft
+Word", o verbete de linguística, uma banda...), e o CALL mostrava aquele texto
+como se fosse a descrição do programa. `e_desambiguacao` lê o campo `type` que
+a Wikipédia já manda e descarta esses casos, com três testes de unidade
+cobrindo desambiguação, artigo padrão e resposta sem o campo.
+
+**2. A foto que virava mascote.** O servidor já repassava `foto` na presença
+de qualquer pessoa do grupo (`Conexao::resumo`, em `servidor/src/main.rs`) —
+quem faltava era o cartão de perfil: `abrirCartaoDe` nunca repassava
+`membro.foto` para `mostrarCartao`, então clicar em alguém sempre caía no
+mascote, mesmo com a foto dela já disponível. Um campo a mais em duas funções
+(`app.js`, `perfil.js`) fechou o caminho que já existia.
+
+**3. F11.** `alternarTelaCheia` pede tela cheia nativa da janela via
+`window.__TAURI__.window` — sem chrome de navegador aqui dentro, o WebView2
+não faz nada sozinho com F11, diferente de um Chrome de verdade. Só existe
+dentro do aplicativo instalado; no navegador e no celular o atalho não faz
+nada em vez de quebrar, mesmo padrão do resto do CALL. Precisou da permissão
+`core:window:allow-set-fullscreen` em `src-tauri/capabilities/default.json` —
+sem ela o Tauri recusa o comando em silêncio.
+
+**4. Link clicável no chat.** `acrescentarTextoComLinks`, em `app.js`, reconhece
+URLs nuas (`http(s)://` ou `www.`) dentro do texto de uma mensagem e as troca
+por um `<a>` de verdade, preservando o resto como nó de texto — nunca
+`innerHTML` a partir do que alguém escreveu, mesmo caminho de segurança que já
+protegia os emoji. O prefixo obrigatório no reconhecimento é o que garante que
+um texto como "javascript:alert(1)" nunca vira link: não começa com nenhum dos
+dois padrões aceitos.
+
+**5. Som de mutar e desmutar.** Duas leituras novas do mesmo motivo sonoro de
+`sons.js` — grave e descendente ao mutar, agudo e ascendente ao desmutar,
+com peso, porque o evento é sempre seu (nunca existe "fulano mutou" para
+quem ouve). `MotorDeAudio.tocarMudo` reusa as mesmas guardas de
+`tocarAviso` — teto anti-abuso incluído, então mutar/desmutar em sequência
+rápida não vira um sino sem fim. Medido: mudo e desmudo em −15,7 e −15,6 dBFS,
+dentro da faixa alvo, com a mesma direção provada por Goertzel que os quatro
+sons antigos já exigiam.
+
+### O defeito que a própria verificação visual causou, e a lição
+
+Para ver as três correções funcionando de verdade — e não só confiar que os
+testes automatizados as cobrem — `testes/cena.html` ganhou cenas "voz" e
+"voz-chat": uma segunda pessoa real, pelo mesmo WebSocket cru que
+`rodar-perfil.ps1` já usa, entra na sala de voz com foto e atividade, para o
+quadro real desenhar os dois. Isso expôs dois defeitos na própria cena, e não
+no produto:
+
+* **A cena "grupo" estava completamente quebrada** desde que a criação de
+  grupo passou a abrir por um menu (`.grupo--novo` → item "Criar grupo") em
+  vez do extinto `#botao-novo-grupo` que ela ainda tentava clicar — um
+  `.click()` num elemento inexistente, lançando em silêncio e travando o
+  resto do roteiro. Corrigida para o fluxo real, com o código do convite lido
+  das preferências salvas (`prefs().atalhos[0].codigo`) em vez de um elemento
+  de tela que não existe mais.
+
+* **A cena inteira, corrigida, criava grupos de verdade no servidor de
+  produção.** O endereço do servidor saiu da tela de entrada e virou
+  preferência havia duas iterações (a 20), mas `cena.html` continuava
+  escrevendo num campo que já não fica ali — a semeadura nunca tinha efeito, e
+  o aplicativo caía no padrão de produção. Três grupos "Estúdio" reais
+  ficaram no servidor hospedado antes de o defeito ser encontrado (via um
+  monkey-patch temporário em `WebSocket` para ver as mensagens de verdade
+  chegando — o servidor respondia "Convite inválido ou grupo removido" para o
+  código exato que o próprio aplicativo tinha acabado de criar, o que só faz
+  sentido se os dois lados falam com servidores diferentes). Corrigido
+  semeando `localStorage` antes do `<iframe>` carregar, do mesmo jeito que
+  `testes/perfil.html` já fazia — e documentado em `BLOCKERS.md`, porque não é
+  algo que o código possa desfazer sozinho.
+
+**Lição registrada:** a cena existia para *ver* o produto funcionando, e quase
+serviu para mascarar exatamente o oposto — quase todas as vezes que ela rodou
+antes de hoje, silenciosamente contra produção. Uma ferramenta de verificação
+que aponta para o alvo errado é pior do que nenhuma: ela devolve uma captura
+de tela que parece prova.
+
+### Verificado
+
+| O quê | Como |
+| --- | --- |
+| Resumo de atividade (Rust) | `cargo test --lib resumo`: 3 novos testes de desambiguação, mais os 16 já existentes — todos passam |
+| Resumo de atividade (política) | `node testes/resumo.test.mjs`: 13 verificações, sem regressão |
+| Sons | `powershell -File testes/rodar-sons.ps1`: 51 medições (17 a mais que antes), cobrindo `mudo`/`desmudo` nas mesmas 6 provas dos sons antigos |
+| Painel de ajustes | `powershell -File testes/rodar-interface.ps1`: 22 verificações, sem regressão |
+| Perfil | `powershell -File testes/rodar-perfil.ps1`: 41 verificações — uma delas reescrita (ver abaixo) |
+| Malha WebRTC e mídia | `powershell -File testes/rodar-malha.ps1`: 44 verificações, sem regressão |
+| Protocolo de sinalização | `node testes/sinalizacao.test.mjs`: 112 verificações, sem regressão |
+| Atividade e tempo em call | `node testes/atividade.test.mjs`, `node testes/tempo.test.mjs`: sem regressão |
+| Compilação Rust | `cargo build` no workspace inteiro, sem erro |
+| Aplicação real, visualmente | `testes/capturar-desktop.ps1`, cenas entrada/login/grupo/cartão/voz/voz-chat: capturas reais mostrando o ícone de mudo trocado, o selo "Visual Studio Code" no quadro de voz, a foto (não o mascote) de uma segunda pessoa real, e o link clicável dentro de uma mensagem enviada pelo redator de verdade |
+
+**Um teste reescrito, não quebrado pela sessão:** `testes/perfil.html` esperava
+que clicar em si mesmo na lista abrisse o editor direto — mas o código, desde
+antes desta sessão, já mostra o cartão de si mesmo com "Editar perfil" como
+ação (comentário no próprio `abrirCartaoDe`: "é como o Discord também faz").
+O teste nunca tinha sido atualizado depois dessa mudança de design. Reescrito
+para conferir o comportamento atual: cartão abre, oferece "Editar perfil", e
+só clicar na ação abre o editor.
+
+---
+
 ## Testes automatizados
 
 | Suíte | Comando | Cobertura |
@@ -1717,8 +1840,8 @@ que interessa.
 | Malha WebRTC e mídia | `powershell -File testes/rodar-malha.ps1` | 44 verificações no próprio motor Chromium: entrada no canal de voz, conexão nos dois lados, áudio com bytes recebidos, vídeo com quadros decodificados, renegociação ao encerrar a tela, limpeza de elos — e, desde a iteração 13, o SDP do Opus, o tráfego de áudio medido nos dois extremos de qualidade, o perfil e o codec da tela efetivamente negociado, o som que acompanha a transmissão, e a porta de ruído renderizada em `OfflineAudioContext` |
 | Painel de ajustes | `powershell -File testes/rodar-interface.ps1` | 22 verificações conduzindo a aplicação real dentro de um quadro: controles refletindo o estado, medidor recebendo nível da porta de ruído, dispositivos enumerados com nome, abas, persistência das escolhas — e os erros de execução da própria aplicação, recolhidos |
 | Convite por link | `powershell -File testes/convite.ps1` | 8 verificações na janela real: o esquema `call://` registrado, o link com o aplicativo aberto trocando de grupo sem abrir segunda instância, e o link com o aplicativo fechado abrindo o CALL e esperando a tela de entrada — os dois provados pelo canal em que a mensagem escrita depois caiu |
-| Perfil | `powershell -File testes/rodar-perfil.ps1` | 40 verificações conduzindo a aplicação real: a fita de mascotes da tela de entrada, o painel com prévia ao vivo e contador de bio, cancelar que não grava, e — com uma segunda pessoa entrando no grupo por um WebSocket cru — o cartão dela e a troca de perfil chegando de fora |
-| Sons de entrada e saída | `powershell -File testes/rodar-sons.ps1` | 33 medições nas amostras renderizadas em `OfflineAudioContext`: pico dentro da faixa alvo, ausência de degrau no ataque, começo e fim em silêncio real, duração abaixo de 700 ms, e — via Goertzel nas duas notas — que o gesto sobe ao entrar e desce ao sair, que o evento próprio tem grave e o dos outros não, e que o intervalo continua sendo uma quinta justa |
+| Perfil | `powershell -File testes/rodar-perfil.ps1` | 41 verificações conduzindo a aplicação real: a fita de mascotes da tela de entrada, o painel com prévia ao vivo e contador de bio, cancelar que não grava, o cartão de si mesmo oferecendo "Editar perfil" em vez de abrir o editor direto, e — com uma segunda pessoa entrando no grupo por um WebSocket cru — o cartão dela e a troca de perfil chegando de fora |
+| Sons, incluindo mutar/desmutar | `powershell -File testes/rodar-sons.ps1` | 51 medições nas amostras renderizadas em `OfflineAudioContext`: pico dentro da faixa alvo, ausência de degrau no ataque, começo e fim em silêncio real, duração abaixo de 700 ms, e — via Goertzel nas duas notas — que o gesto sobe ao entrar/desmutar e desce ao sair/mutar, que o evento próprio tem grave e o dos outros não, e que o intervalo continua sendo uma quinta justa |
 | Tempo em call | `node testes/tempo.test.mjs` | 31 verificações com relógio injetado: formatação do cronômetro nas viradas de minuto e de hora, truncamento em vez de arredondamento, tempo negativo de relógio que anda para trás, e o histórico — somar quem sai e volta numa linha só, a contaminação do "pelo menos" quando uma passagem tem começo desconhecido, saída sem entrada que não cria linha, e a limpeza ao trocar de call |
 | Atividade | `node testes/atividade.test.mjs` | 28 verificações da política: a área de trabalho e as cascas do Windows que não viram atividade, caracteres de controle e nomes absurdos que não estragam a coluna, a exigência de duas leituras seguidas antes de anunciar, a saída imediata, a leitura que falha sem apagar o que estava no ar, e o desligamento que limpa a linha dos outros em vez de congelá-la |
 
@@ -1729,7 +1852,11 @@ Todas passam integralmente na última execução.
 Duas páginas servem ao desenho, e não à verificação: `testes/avatares.html` é
 a prova de contato dos mascotes em quatro tamanhos, e `testes/cena.html` leva a
 aplicação a um estado e para ali, para a captura — é o que permite olhar o
-resultado em vez de deduzi-lo da marcação.
+resultado em vez de deduzi-lo da marcação. `testes/capturar-desktop.ps1`
+fotografa cada cena de `cena.html` no aplicativo de desktop (o equivalente,
+para o desktop, do que `capturar-movel.ps1` já fazia para o celular), com o
+mesmo `--use-fake-device-for-media-stream` que o resto da suíte usa para as
+cenas "voz"/"voz-chat" entrarem numa sala de voz de verdade.
 
 `testes/duas-instancias.ps1` deixou de ser um roteiro de captura e virou
 suíte: sobe duas janelas reais do build de release contra um servidor local e

@@ -389,11 +389,18 @@ export function pintarMarcaDeGrupo(elemento, { nome, foto } = {}) {
  * `textContent`. Em nenhum caminho um texto de outra pessoa vira marcação.
  */
 /**
- * `foto` é sempre local — a conta de outra pessoa nunca traz esse campo,
- * porque o servidor não guarda foto nenhuma ainda, só o mascote. Por isso ela
- * só aparece pintada em avatares que representam a própria pessoa usando o
- * CALL neste computador — o rodapé, a linha dela na lista e as mensagens que
- * ela mesma escreveu —, nunca em quem está do outro lado do grupo.
+ * `foto` viaja pela rede como presença efêmera (ver a nota em `saneado`, em
+ * `perfil.js`): o servidor repassa a foto de qualquer pessoa do grupo
+ * enquanto ela está conectada, e não guarda nada depois que ela sai. Por
+ * isso todo lugar que já recebe o `membro` de outra pessoa — lista de
+ * presentes, quadro de voz, cartão de perfil — pode pintar a foto dela
+ * normalmente, bastando repassar o campo para cá.
+ *
+ * A única exceção continua sendo as mensagens de texto: `foto` nunca é
+ * gravada numa mensagem nem trafega com ela (ver a nota em `app.js`, onde as
+ * mensagens são desenhadas), então uma mensagem antiga de alguém só pinta a
+ * foto quando é da própria pessoa lendo agora — para qualquer outro autor,
+ * cai no mascote.
  */
 export function pintarAvatar(elemento, { avatar, apelido, foto } = {}) {
   elemento.classList.toggle("avatar--foto", Boolean(foto));
