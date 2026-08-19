@@ -612,22 +612,48 @@ export function perguntar({
 
 /* ═══ Teclado ═══════════════════════════════════════════════════ */
 
+/** Tipos de `<input>` que não chamam teclado nenhum na tela. */
+const TIPOS_SEM_TECLADO = new Set(["checkbox", "radio", "button", "submit", "range", "color", "file"]);
+
+/** Se o elemento em foco é o tipo de campo que abre teclado (ou seletor). */
+export function chamaTeclado(alvo) {
+  if (!alvo) return false;
+  if (alvo.tagName === "TEXTAREA" || alvo.tagName === "SELECT" || alvo.isContentEditable) return true;
+  return alvo.tagName === "INPUT" && !TIPOS_SEM_TECLADO.has(alvo.type);
+}
+
 /**
- * Quanto da tela o teclado está ocupando, publicado como `--teclado`.
+ * Quanto da tela o teclado está ocupando, a partir das três medidas da
+ * `visualViewport` — pura, sem tocar em `window`, pra caber num teste.
  *
  * A `visualViewport` é a única fonte honesta disso: no iOS a janela não
  * encolhe quando o teclado sobe, ela só rola por baixo — e um app que confia
  * em `window.innerHeight` acaba com o campo de texto escondido atrás do
  * teclado, que é o defeito clássico de PWA no iPhone.
+ *
+ * Mas a mesma conta também dá positivo quando quem sumiu foi a barra do
+ * Safari, não o teclado — rolar a tela basta. Sem essa guarda, o rodapé
+ * (`.app`, `.folha`, `.portal`) sobe achando que há teclado, e sobra um vão
+ * embaixo onde a barra costumava estar. Só confiamos na medida com um campo
+ * de fato em foco — daí o `temFoco`.
  */
+export function medirTeclado({ innerHeight, alturaVisivel, topoVisivel, temFoco }) {
+  if (!temFoco) return 0;
+  return Math.max(0, Math.round(innerHeight - alturaVisivel - topoVisivel));
+}
+
 export function acompanharTeclado(aoMudar = null) {
   const vv = window.visualViewport;
   if (!vv) return;
 
   let ultimo = -1;
   const medir = () => {
-    const escondido = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-    const valor = Math.round(escondido);
+    const valor = medirTeclado({
+      innerHeight: window.innerHeight,
+      alturaVisivel: vv.height,
+      topoVisivel: vv.offsetTop,
+      temFoco: chamaTeclado(document.activeElement),
+    });
     if (Math.abs(valor - ultimo) < 2) return;
     ultimo = valor;
     document.documentElement.style.setProperty("--teclado", `${valor}px`);
@@ -637,6 +663,8 @@ export function acompanharTeclado(aoMudar = null) {
 
   vv.addEventListener("resize", medir);
   vv.addEventListener("scroll", medir);
+  document.addEventListener("focusin", medir);
+  document.addEventListener("focusout", medir);
   medir();
 }
 
