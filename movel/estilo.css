@@ -62,6 +62,8 @@
   --alt-tira: 56px;
 
   --seguro-topo: env(safe-area-inset-top, 0px);
+  /* Quanto do topo a barra de status ocupa quando o sistema não sabe dizer. */
+  --piso-do-topo: 26px;
   --seguro-base: env(safe-area-inset-bottom, 0px);
   --seguro-esq: env(safe-area-inset-left, 0px);
   --seguro-dir: env(safe-area-inset-right, 0px);
@@ -78,6 +80,10 @@
   margin: 0;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
+  /* Num aplicativo, a rolagem se mostra pelo movimento do conteúdo — não por
+     uma barra parada na borda. Ver a nota em `::-webkit-scrollbar`. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 html,
@@ -151,9 +157,13 @@ img {
   display: none !important;
 }
 
+/* O irmão de `scrollbar-width: none` para os motores WebKit antigos. Nos
+   novos, a barra do Android é *overlay* e só a propriedade padrão a alcança —
+   por isso as duas declarações existem, e não é redundância. */
 ::-webkit-scrollbar {
   width: 0;
   height: 0;
+  display: none;
 }
 
 :focus-visible {
@@ -167,6 +177,12 @@ img {
 .compositor__campo {
   user-select: text;
   -webkit-user-select: text;
+}
+
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  :root {
+    --seguro-topo: max(env(safe-area-inset-top, 0px), var(--piso-do-topo));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1471,6 +1487,19 @@ img {
   filter: blur(20px);
   pointer-events: none;
 }
+/* A faixa que guarda a barra de status enquanto o portal rola. */
+.portal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--seguro-topo) + 10px);
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--fundo) 55%, transparent);
+}
+
 .portal__corpo {
   position: relative;
   flex: 1;

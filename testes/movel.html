@@ -351,6 +351,18 @@
       const corpo = janela.getComputedStyle(documento.body);
       conferir(corpo.overflow === "hidden", "o corpo não rola — quem rola são as telas");
 
+      // Barra de rolagem visível na borda entrega o site por trás do
+      // aplicativo. No Android ela é *overlay* e só `scrollbar-width` a
+      // desliga — `::-webkit-scrollbar` sozinho não alcança.
+      const comBarra = [...documento.querySelectorAll(".corpo, .conversa, .call__palco, .folha__corpo")]
+        .filter((no) => janela.getComputedStyle(no).scrollbarWidth !== "none")
+        .map((no) => no.className);
+      conferir(
+        comBarra.length === 0,
+        "nenhuma área rolável mostra barra de rolagem",
+        comBarra.join(" | ")
+      );
+
       /* ══ 6. Instalável ═══════════════════════════════════════════ */
 
       const manifesto = await fetch("/movel/manifest.webmanifest").then((r) => r.json());
