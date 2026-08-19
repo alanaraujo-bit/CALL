@@ -712,10 +712,15 @@ async fn atender_conta(tipo: &str, v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
         "retomar" => retomar(v, fila, cofre).await,
         "sair-conta" => sair_conta(v, fila, cofre).await,
         "google-config" => {
+            // Dois identificadores, um por casca: o CALL de Windows volta numa
+            // porta local (cliente de computador) e o de celular volta na
+            // propria pagina (cliente Web). Cada um pega o seu; ver a nota em
+            // `google.rs` sobre por que nao da para ser um so.
             let _ = fila.send(texto_json(&json!({
                 "tipo": "google",
                 "disponivel": google::disponivel(),
-                "clienteId": google::cliente_id().unwrap_or_default()
+                "clienteId": google::cliente_id().unwrap_or_default(),
+                "clienteIdWeb": google::cliente_id_web().unwrap_or_default()
             })));
         }
         "google-entrar" => google_entrar(v, fila, cofre).await,

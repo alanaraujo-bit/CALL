@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+
+    <!-- `viewport-fit=cover` põe a página embaixo da barra de status e da
+         barra de gestos; as faixas seguras voltam pelo `env(safe-area-inset-*)`
+         no CSS. Sem isto o app fica com duas tarjas pretas no iPhone e nunca
+         parece nativo. O zoom continua liberado (acessibilidade); o que mata o
+         zoom-por-toque-duplo é `touch-action: manipulation`, no CSS. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <title>CALL</title>
+    <meta name="description" content="Grupos com canais, chat de texto, chat de voz e transmissão de tela — no celular." />
+
+    <!-- Instalável: o Android lê o manifesto; o iOS ainda lê estas metas. -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#0e0f11" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="CALL" />
+    <!-- `black-translucent`: a barra de status do iOS fica por cima do app, e
+         quem paga o espaço dela é o `safe-area-inset-top`. É o que permite o
+         degradê do cabeçalho subir até o topo da tela. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="icones/toque-180.png" />
+    <link rel="icon" href="icones/icone.svg" type="image/svg+xml" />
+    <link rel="icon" href="icones/icone-192.png" sizes="192x192" />
+
+    <link rel="stylesheet" href="estilo.css" />
+  </head>
+
+  <body>
+    <!-- ══ Abertura ═════════════════════════════════════════════════
+         Cobre a tela do primeiro pixel até a sessão guardada ser conferida.
+         Sem ela, o portal de login pisca por um quadro antes de o aplicativo
+         descobrir que já sabia quem estava usando. -->
+    <div class="abertura" id="abertura">
+      <div class="abertura__mancha" aria-hidden="true"></div>
+      <div class="abertura__marca">
+        <span class="glifo glifo--grande" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="abertura__nome">CALL</span>
+      </div>
+    </div>
+
+    <!-- ══ Aplicativo ═══════════════════════════════════════════════ -->
+    <div class="app" id="app" hidden>
+      <!-- Uma pilha de telas por aba, como em qualquer app nativo: trocar de
+           aba não joga fora onde você estava na anterior. -->
+      <main class="pilha" id="pilha"></main>
+
+      <!-- A call que continua acontecendo enquanto você navega por fora dela.
+           Toque para voltar à sala inteira. -->
+      <div class="tira-call" id="tira-call" hidden></div>
+
+      <nav class="abas" id="abas" role="tablist" aria-label="Seções do CALL"></nav>
+    </div>
+
+    <!-- Folhas, diálogos, menus e avisos. Fora do `.app` de propósito: nada do
+         que aparece aqui deve herdar o deslocamento das telas empilhadas. -->
+    <div class="camadas" id="camadas"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1446,3 +1446,221 @@ code {
     transform: none;
   }
 }
+
+/* ─── Escolha de plataforma ────────────────────────────────────── */
+
+/* O botão de baixar deixou de decidir por quem clica. Existem duas casas do
+   CALL — o instalador do Windows e o aplicativo no navegador —, e a única
+   pergunta honesta a fazer no clique é onde a pessoa vai usar. */
+
+.escolha {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.escolha[hidden] {
+  display: none;
+}
+
+.escolha__cortina {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 5, 7, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: escolha-cortina 220ms ease forwards;
+}
+
+@keyframes escolha-cortina {
+  from { opacity: 0; }
+}
+
+.escolha__caixa {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  padding: 30px 28px 26px;
+  border-radius: var(--raio-gg);
+  background: linear-gradient(180deg, var(--superficie-2), var(--superficie-1));
+  border: 1px solid var(--borda-forte);
+  box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.9);
+  animation: escolha-caixa 320ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes escolha-caixa {
+  from { opacity: 0; transform: translateY(18px) scale(0.97); }
+}
+
+.escolha__fechar {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--texto-3);
+  cursor: pointer;
+  transition: background var(--transicao), color var(--transicao);
+}
+
+.escolha__fechar:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--texto);
+}
+
+.escolha__fechar svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.escolha__titulo {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  padding-right: 36px;
+}
+
+.escolha__lead {
+  margin-top: 8px;
+  font-size: 15px;
+  color: var(--texto-2);
+  line-height: 1.55;
+}
+
+.escolha__opcoes {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.opcao {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px;
+  border-radius: var(--raio-g);
+  background: var(--superficie-1);
+  border: 1px solid var(--borda);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color var(--transicao), background var(--transicao),
+    transform var(--transicao);
+}
+
+.opcao:hover {
+  border-color: var(--acento);
+  background: var(--superficie-3);
+  transform: translateY(-2px);
+}
+
+/* A plataforma em que a pessoa já está aparece marcada — sem esconder a
+   outra, porque quem abre no computador às vezes quer justamente o link do
+   celular para mandar a si mesmo. */
+.opcao[data-recomendada] {
+  border-color: rgba(95, 106, 217, 0.55);
+  background: linear-gradient(140deg, rgba(95, 106, 217, 0.14), transparent 70%);
+}
+
+.opcao__glifo {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--acento-suave);
+  color: var(--acento-claro);
+}
+
+.opcao__glifo svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.opcao__dizeres {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.opcao__dizeres strong {
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.opcao__dizeres em {
+  font-style: normal;
+  font-size: 12.5px;
+  color: var(--acento-claro);
+  font-variant-numeric: tabular-nums;
+}
+
+.opcao__dizeres small {
+  margin-top: 5px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--texto-2);
+}
+
+.opcao__dizeres small b {
+  color: var(--texto);
+  font-weight: 600;
+}
+
+.opcao__seta {
+  flex: none;
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--texto-3);
+}
+
+.escolha__nota {
+  margin-top: 18px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--texto-3);
+  text-align: center;
+}
+
+@media (max-width: 560px) {
+  .escolha__caixa {
+    padding: 26px 20px 22px;
+  }
+  .escolha__titulo {
+    font-size: 21px;
+  }
+  .opcao {
+    padding: 15px;
+    gap: 13px;
+  }
+  .opcao__glifo {
+    width: 40px;
+    height: 40px;
+  }
+}

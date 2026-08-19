@@ -148,14 +148,23 @@ export const sair = (servidor, token) =>
  *  resposta "não tem" é uma resposta, e o botão simplesmente não aparece. */
 export async function configuracaoDoGoogle(servidor) {
   try {
-    const { disponivel, clienteId } = await transacao(
+    const { disponivel, clienteId, clienteIdWeb } = await transacao(
       servidor,
       { tipo: "google-config" },
       ["google"]
     );
-    return { disponivel: Boolean(disponivel) && Boolean(clienteId), clienteId };
+    // `clienteIdWeb` é o cliente OAuth do tipo "aplicativo da Web", que só o
+    // CALL de celular usa — ele volta na própria página, e um cliente de
+    // computador não aceita esse endereço de retorno. Servidor antigo não
+    // manda o campo, e o celular então não oferece o botão: prometer e falhar
+    // é pior do que não oferecer.
+    return {
+      disponivel: Boolean(disponivel) && Boolean(clienteId),
+      clienteId,
+      clienteIdWeb: clienteIdWeb ?? "",
+    };
   } catch {
-    return { disponivel: false, clienteId: "" };
+    return { disponivel: false, clienteId: "", clienteIdWeb: "" };
   }
 }
 

@@ -27,3 +27,7 @@
 
 .vercel
 .env*
+
+# O aplicativo de celular publicado: gerado por `npm run montar:pwa` a partir
+# de `movel/` + os módulos de `src/`. A Vercel reconstrói a cada publicação.
+/docs/app/

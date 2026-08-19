@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Teste do CALL no celular</title>
+  </head>
+  <body style="margin: 0; background: #111">
+    <!--
+      Conduz o aplicativo de celular dentro do motor Chromium, num quadro do
+      tamanho de um iPhone 14, contra um servidor de sinalização de verdade.
+
+      O que se prova aqui não é que os elementos existem — é que a tela decide
+      certo e que o gesto chega ao fim: o portal aparece para quem nunca
+      entrou e some para quem já entrou; criar grupo devolve um grupo com
+      canais; escrever no canal publica a mensagem e ela volta desenhada;
+      voltar desempilha; e nada disso deixa erro no console.
+
+      As três conferências do fim são as que separam "funciona" de "funciona
+      no celular": nenhum alvo de toque abaixo de 44 px, nenhuma tela mais
+      larga que o aparelho, e o manifesto instalável.
+    -->
+    <iframe
+      id="app"
+      style="width: 390px; height: 844px; border: 0; display: block"
+      allow="microphone; autoplay"
+    ></iframe>
+
+    <script type="module">
+      const entregar = (dados) =>
+        fetch("http://127.0.0.1:8123/resultado", {
+          method: "POST",
+          body: JSON.stringify(dados, null, 2),
+        }).catch(() => {});
+
+      const relatorio = [];
+      let falhas = 0;
+      const conferir = (condicao, descricao, detalhe = "") => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: !!condicao, descricao, ...(detalhe ? { detalhe } : {}) });
+      };
+
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+      const aguardar = async (teste, limite = 8000, passo = 100) => {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          try {
+            const valor = await teste();
+            if (valor) return valor;
+          } catch {
+            /* ainda montando */
+          }
+          await esperar(passo);
+        }
+        return null;
+      };
+
+      const SERVIDOR = "ws://127.0.0.1:8899";
+      const quadro = document.getElementById("app");
+
+      /* Uma suíte que morre no meio não pode sumir em silêncio: o relatório
+         parcial diz exatamente em que passo ela parou, que é a informação que
+         falta quando um roteiro headless simplesmente não devolve nada. */
+      let entregue = false;
+      async function fechar(motivo = "") {
+        if (entregue) return;
+        entregue = true;
+        if (motivo) {
+          falhas++;
+          relatorio.push({ ok: false, descricao: "a suíte foi até o fim", detalhe: motivo });
+        }
+        await entregar({ falhas, total: relatorio.length, relatorio });
+        document.title = falhas ? `${falhas} FALHAS` : "tudo passou";
+      }
+
+      const relogioDeSeguranca = setTimeout(
+        () => fechar(`tempo esgotado depois de ${relatorio.length} conferências`),
+        95000
+      );
+      window.addEventListener("error", (e) => fechar(`erro no roteiro: ${e.message}`));
+
+      /* ── Console do quadro ─────────────────────────────────────── */
+
+      const errosDoConsole = [];
+
+      function vigiarConsole(janela) {
+        const original = janela.console.error;
+        janela.console.error = (...args) => {
+          errosDoConsole.push(args.map(String).join(" "));
+          original.apply(janela.console, args);
+        };
+        janela.addEventListener("error", (evento) =>
+          errosDoConsole.push(`${evento.message} (${evento.filename}:${evento.lineno})`)
+        );
+        janela.addEventListener("unhandledrejection", (evento) =>
+          errosDoConsole.push(`promessa recusada: ${evento.reason?.message ?? evento.reason}`)
+        );
+      }
+
+      /* ── Abertura do aplicativo ────────────────────────────────── */
+
+      async function abrirApp({ limpar = false, preferencias = null, busca = "" } = {}) {
+        if (limpar) {
+          localStorage.clear();
+          sessionStorage.clear();
+        }
+        if (preferencias) {
+          localStorage.setItem(
+            "call.preferencias",
+            JSON.stringify({ servidor: SERVIDOR, ...preferencias })
+          );
+        }
+
+        quadro.src = "about:blank";
+        await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+        quadro.src = `/movel/index.html?servidor=${encodeURIComponent(SERVIDOR)}${busca}`;
+        await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+        vigiarConsole(quadro.contentWindow);
+        await esperar(600);
+        return quadro.contentDocument;
+      }
+
+      const doc = () => quadro.contentDocument;
+      const app = () => quadro.contentWindow.CALL;
+
+      /** Um clique de verdade: `pointerdown` + `pointerup` + `click`. */
+      function tocar(elemento) {
+        if (!elemento) return false;
+        const opcoes = { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true };
+        elemento.dispatchEvent(new quadro.contentWindow.PointerEvent("pointerdown", opcoes));
+        elemento.dispatchEvent(new quadro.contentWindow.PointerEvent("pointerup", opcoes));
+        elemento.click();
+        return true;
+      }
+
+      const porTexto = (seletor, texto, raiz = doc()) =>
+        [...raiz.querySelectorAll(seletor)].find((no) =>
+          no.textContent.toLowerCase().includes(texto.toLowerCase())
+        ) ?? null;
+
+      /** A tela que está de fato na frente — as outras seguem no DOM. */
+      const tela = () =>
+        [...doc().querySelectorAll(".tela")].filter((no) => !no.hasAttribute("data-aba-oculta")).pop() ??
+        doc();
+
+      /** Fecha qualquer folha aberta, do jeito que o dedo fecharia. */
+      async function fecharFolhas() {
+        for (let i = 0; i < 4; i++) {
+          const cortina = doc().querySelector(".cortina");
+          if (!cortina) return;
+          tocar(cortina);
+          await esperar(420);
+        }
+      }
+
+      try {
+      /* ══ 1. Portal ═══════════════════════════════════════════════ */
+
+      await abrirApp({ limpar: true });
+
+      const portal = await aguardar(() => doc().getElementById("portal"));
+      conferir(Boolean(portal), "o portal aparece para quem nunca entrou");
+      conferir(
+        Boolean(doc().querySelector(".portal__slogan")),
+        "o portal traz a marca e o slogan"
+      );
+      const mascotes = doc().querySelectorAll(".mascote-opcao").length;
+      conferir(mascotes === 6, "os seis mascotes estão na fita do cadastro", `achei ${mascotes}`);
+
+      // A terceira saída: entrar sem conta.
+      tocar(porTexto(".portal__sem-conta", "sem conta"));
+      const folhaSemConta = await aguardar(() => porTexto(".folha__titulo", "sem conta"));
+      conferir(Boolean(folhaSemConta), "\"entrar sem conta\" abre a folha do apelido");
+
+      const campoApelido = doc().querySelector(".folha .campo__entrada");
+      campoApelido.value = "Teste Movel";
+      campoApelido.dispatchEvent(new quadro.contentWindow.Event("input", { bubbles: true }));
+      tocar(porTexto(".folha__acoes .botao--primario", "entrar"));
+
+      const abas = await aguardar(() => {
+        const barra = doc().getElementById("abas");
+        return barra && barra.children.length === 3 ? barra : null;
+      });
+      conferir(Boolean(abas), "entrar sem conta leva à aplicação, com três abas");
+      conferir(
+        Boolean(await aguardar(() => doc().getElementById("portal") === null, 2000)),
+        "o portal some depois de entrar"
+      );
+
+      /* ══ 2. Grupos ═══════════════════════════════════════════════ */
+
+      conferir(
+        Boolean(porTexto(".vazio__titulo", "nenhum grupo", tela())),
+        "sem grupos, a lista explica o que fazer"
+      );
+
+      tocar(tela().querySelector(".flutuante"));
+      const menuNovo = await aguardar(() => porTexto(".folha__titulo", "novo grupo"));
+      conferir(Boolean(menuNovo), "o botão flutuante abre criar/entrar");
+
+      tocar(porTexto(".menu-item", "criar um grupo"));
+      await aguardar(() => porTexto(".folha__titulo", "criar grupo"));
+      const campoNome = doc().querySelector(".folha .campo__entrada");
+      campoNome.value = "Grupo de Teste";
+      tocar(porTexto(".folha__acoes .botao--primario", "criar"));
+
+      const dentroDoGrupo = await aguardar(() => {
+        const titulo = [...doc().querySelectorAll(".cabecalho__titulo")].find(
+          (no) => no.textContent === "Grupo de Teste"
+        );
+        return titulo && doc().querySelector(".canal") ? titulo : null;
+      }, 12000);
+      conferir(Boolean(dentroDoGrupo), "criar grupo abre a tela dele, com canais");
+
+      const canais = [...tela().querySelectorAll(".canal")];
+      conferir(canais.length >= 2, `o grupo nasce com canais (${canais.length})`);
+      conferir(
+        canais.some((c) => c.textContent.toLowerCase().includes("geral")),
+        "existe um canal de texto padrão"
+      );
+
+      conferir(
+        Boolean(await aguardar(() => porTexto(".folha__titulo", "convite"), 3000)),
+        "criar grupo oferece o convite na hora"
+      );
+      await fecharFolhas();
+
+      conferir(
+        Boolean(app().estado.grupo?.codigo?.length >= 6),
+        "o grupo recebeu um código de convite do servidor"
+      );
+
+      /* ══ 3. Conversa ═════════════════════════════════════════════ */
+
+      const canalTexto =
+        canais.find((c) => c.textContent.toLowerCase().includes("geral")) ?? canais[0];
+      tocar(canalTexto);
+
+      const conversa = await aguardar(() => doc().querySelector(".conversa"));
+      conferir(Boolean(conversa), "tocar num canal de texto abre a conversa");
+      conferir(
+        Boolean(doc().querySelector(".compositor__campo")),
+        "a conversa tem o campo de escrever"
+      );
+
+      const campoMensagem = await aguardar(() => tela().querySelector(".compositor__campo"));
+      campoMensagem.value = "olá do celular";
+      campoMensagem.dispatchEvent(new quadro.contentWindow.Event("input", { bubbles: true }));
+
+      const enviar = tela().querySelector(".compositor__enviar");
+      conferir(
+        !enviar.hasAttribute("data-vazio"),
+        "o botão de enviar acende quando há texto"
+      );
+      tocar(enviar);
+
+      const publicada = await aguardar(() =>
+        porTexto(".mensagem__texto", "olá do celular")
+      );
+      conferir(Boolean(publicada), "a mensagem é publicada e volta desenhada");
+      conferir(
+        tela().querySelector(".compositor__campo").value === "",
+        "o campo se esvazia depois de enviar"
+      );
+
+      // Emoji do CALL vira desenho, e não texto cru.
+      const campo2 = tela().querySelector(".compositor__campo");
+      campo2.value = "boa :feliz:";
+      campo2.dispatchEvent(new quadro.contentWindow.Event("input", { bubbles: true }));
+      tocar(tela().querySelector(".compositor__enviar"));
+      const comEmoji = await aguardar(() => {
+        const linha = [...doc().querySelectorAll(".mensagem__texto")].pop();
+        return linha?.querySelector(".emoji svg") ? linha : null;
+      });
+      conferir(Boolean(comEmoji), "o emoji do CALL vira desenho na mensagem");
+
+      /* ══ 4. Navegação ════════════════════════════════════════════ */
+
+      const antes = app().navegacao().profundidade;
+      quadro.contentWindow.history.back();
+      await esperar(700);
+      const depois = app().navegacao().profundidade;
+      conferir(
+        depois === antes - 1,
+        "voltar desempilha uma tela",
+        `antes ${antes}, depois ${depois}, estado ${JSON.stringify(quadro.contentWindow.history.state)}`
+      );
+
+      tocar(doc().querySelector('[data-aba="amigos"]'));
+      await esperar(300);
+      conferir(app().navegacao().aba === "amigos", "a aba Amigos troca de pilha", `aba = ${app().navegacao().aba}`);
+      conferir(
+        Boolean(porTexto(".vazio__titulo", "conta", tela())),
+        "sem conta, Amigos explica que precisa de uma"
+      );
+
+      tocar(doc().querySelector('[data-aba="voce"]'));
+      await esperar(300);
+      conferir(app().navegacao().aba === "voce", "a aba Você troca de pilha", `aba = ${app().navegacao().aba}`);
+      conferir(
+        Boolean(porTexto(".retrato__nome", "Teste Movel", tela())),
+        "a aba Você mostra o apelido escolhido"
+      );
+
+      tocar(porTexto(".linha__titulo", "voz e microfone", tela())?.closest(".linha"));
+      const ajustesDeVoz = await aguardar(() => porTexto(".cabecalho__titulo", "voz e microfone"));
+      conferir(Boolean(ajustesDeVoz), "os ajustes de voz abrem como tela própria");
+      conferir(
+        tela().querySelectorAll(".chave").length >= 4,
+        "os ajustes de voz trazem as chaves de tratamento"
+      );
+
+      quadro.contentWindow.history.back();
+      await esperar(500);
+      conferir(
+        app().navegacao().profundidade === 1,
+        "voltar dos ajustes devolve a raiz da aba",
+        `profundidade ${app().navegacao().profundidade}`
+      );
+
+      // Trocar de aba preserva onde cada uma estava.
+      tocar(doc().querySelector('[data-aba="grupos"]'));
+      await esperar(300);
+      conferir(
+        app().navegacao().profundidade === 2,
+        "a pilha da aba Grupos foi preservada na troca",
+        `profundidade ${app().navegacao().profundidade}`
+      );
+
+      /* ══ 5. Medidas do celular ═══════════════════════════════════ */
+
+      const janela = quadro.contentWindow;
+      const documento = doc();
+
+      const larguraDaPagina = documento.documentElement.scrollWidth;
+      conferir(
+        larguraDaPagina <= 390,
+        "nada estoura a largura da tela",
+        `scrollWidth = ${larguraDaPagina}`
+      );
+
+      const pequenos = [...documento.querySelectorAll(".aba, .acao, .controle, .flutuante, .botao")]
+        .filter((no) => no.offsetParent !== null)
+        .map((no) => ({ no, caixa: no.getBoundingClientRect() }))
+        .filter(({ caixa }) => caixa.height > 0 && (caixa.height < 44 || caixa.width < 44));
+      conferir(
+        pequenos.length === 0,
+        "nenhum alvo de toque fica abaixo de 44 px",
+        pequenos.map(({ no, caixa }) => `${no.className}: ${Math.round(caixa.width)}x${Math.round(caixa.height)}`).join(" | ")
+      );
+
+      const corpo = janela.getComputedStyle(documento.body);
+      conferir(corpo.overflow === "hidden", "o corpo não rola — quem rola são as telas");
+
+      /* ══ 6. Instalável ═══════════════════════════════════════════ */
+
+      const manifesto = await fetch("/movel/manifest.webmanifest").then((r) => r.json());
+      conferir(manifesto.display === "standalone", "o manifesto pede tela cheia");
+      conferir(
+        manifesto.icons.some((i) => i.purpose === "maskable"),
+        "o manifesto traz ícone recortável para o Android"
+      );
+      conferir(
+        manifesto.icons.some((i) => i.sizes === "512x512" && i.type === "image/png"),
+        "o manifesto traz o ícone de 512 px"
+      );
+      conferir(Boolean(manifesto.theme_color && manifesto.background_color), "o manifesto tem cores");
+
+      const cabeca = documento.head.innerHTML;
+      conferir(
+        cabeca.includes("apple-mobile-web-app-capable"),
+        "o iOS reconhece o aplicativo como instalável"
+      );
+      conferir(cabeca.includes("viewport-fit=cover"), "a tela usa a área inteira do aparelho");
+      conferir(
+        Boolean(documento.querySelector('link[rel="apple-touch-icon"]')),
+        "há ícone para a tela de início do iPhone"
+      );
+
+      const sw = await fetch("/movel/sw.js").then((r) => r.text());
+      conferir(sw.includes("addEventListener(\"fetch\""), "o Service Worker atende requisições");
+      conferir(sw.includes("addEventListener(\"install\""), "o Service Worker guarda a casca");
+
+      /* ══ 7. Segunda abertura ═════════════════════════════════════ */
+
+      await abrirApp();
+      const semPortal = await aguardar(() => doc().getElementById("abas")?.children.length === 3);
+      conferir(Boolean(semPortal), "na segunda abertura o portal não volta");
+      conferir(
+        Boolean(await aguardar(() => porTexto(".cartao-grupo__nome", "Grupo de Teste", tela()))),
+        "o grupo criado continua na lista depois de reabrir"
+      );
+
+      /* ══ 8. Console limpo ════════════════════════════════════════ */
+
+      const ruido = errosDoConsole.filter(
+        (linha) =>
+          // Sem microfone de verdade no headless, a captura recusa — e isso é
+          // o comportamento correto, não um defeito da tela.
+          !/microfone|getUserMedia|NotAllowedError|NotFoundError|Permission/i.test(linha) &&
+          !/favicon/i.test(linha)
+      );
+      conferir(ruido.length === 0, "nenhum erro no console", ruido.slice(0, 4).join(" || "));
+      } catch (erro) {
+        clearTimeout(relogioDeSeguranca);
+        await fechar(
+          `parou depois de ${relatorio.length} conferências: ${erro?.message ?? erro}` +
+            (errosDoConsole.length ? ` | console: ${errosDoConsole.slice(0, 3).join(" || ")}` : "")
+        );
+      }
+
+      clearTimeout(relogioDeSeguranca);
+      await fechar();
+    </script>
+  </body>
+</html>

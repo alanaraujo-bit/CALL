@@ -1,11 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "",
-  "buildCommand": "",
+  "installCommand": "npm install --omit=dev",
+  "buildCommand": "npm run montar:pwa",
   "outputDirectory": "docs",
   "cleanUrls": true,
-  "trailingSlash": false,
   "headers": [
     {
       "source": "/(.*)",
@@ -13,6 +12,26 @@
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
       ]
+    },
+    {
+      "source": "/app/sw.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache" },
+        { "key": "Service-Worker-Allowed", "value": "/app/" }
+      ]
+    },
+    {
+      "source": "/app/(.*)",
+      "headers": [
+        {
+          "key": "Permissions-Policy",
+          "value": "microphone=(self), camera=(), display-capture=(self), geolocation=()"
+        }
+      ]
+    },
+    {
+      "source": "/app/nucleo/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=604800, must-revalidate" }]
     }
   ]
 }

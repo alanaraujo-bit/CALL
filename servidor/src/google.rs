@@ -32,6 +32,23 @@
 //! da nuvem liga. Sem ela o servidor continua compilando e rodando igual, e a
 //! interface simplesmente nao oferece o botao — ver `disponivel`.
 
+//! ## Dois clientes OAuth, e nao um
+//!
+//! O Google separa tipos de cliente, e o CALL usa os dois:
+//!
+//! * **Aplicativo para computador**, para o CALL de Windows. Ele volta em
+//!   `http://127.0.0.1:{porta}` com uma porta *sorteada* a cada login, e so
+//!   esse tipo de cliente aceita loopback com porta livre.
+//! * **Aplicativo da Web**, para o CALL de celular. Ele volta na propria
+//!   pagina, `https://call.aionixdev.com/app/`, e esse endereco so pode ser
+//!   cadastrado num cliente Web.
+//!
+//! Nao da para atender os dois com um cliente so: um cliente de computador
+//! recusa URI `https`, e um cliente Web exige porta fixa no loopback. Por
+//! isso ha dois pares de variaveis, e `trocar_codigo` escolhe o par pelo
+//! formato do endereco de retorno — que e a unica coisa que distingue, de
+//! fora, de qual casca veio o codigo.
+
 /// Quem a pessoa e, na versao do Google.
 pub struct Identidade {
     pub sub: String,
@@ -39,8 +56,8 @@ pub struct Identidade {
     pub nome: String,
 }
 
-/// Identificador publico do aplicativo, que o cliente precisa conhecer para
-/// montar a URL de autorizacao. Publico mesmo: ele aparece na barra de
+/// Identificador publico do cliente de computador, que o CALL de Windows usa
+/// para montar a URL de autorizacao. Publico mesmo: ele aparece na barra de
 /// endereco do navegador de quem entra.
 pub fn cliente_id() -> Option<String> {
     std::env::var("GOOGLE_CLIENT_ID").ok().filter(|s| !s.is_empty())
@@ -50,6 +67,50 @@ fn segredo() -> Option<String> {
     std::env::var("GOOGLE_CLIENT_SECRET")
         .ok()
         .filter(|s| !s.is_empty())
+}
+
+/// Identificador publico do cliente Web, usado pelo CALL de celular.
+///
+/// Sem `GOOGLE_CLIENT_ID_WEB` no ambiente isto devolve `None`, e o celular
+/// simplesmente nao oferece o botao do Google — a mesma regra de `disponivel`,
+/// pela mesma razao: prometer o botao e falhar depois e pior do que nao o
+/// oferecer. Quem hospeda com um unico cliente Web (sem o app de Windows)
+/// pode apontar as duas variaveis para ele.
+pub fn cliente_id_web() -> Option<String> {
+    std::env::var("GOOGLE_CLIENT_ID_WEB")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+#[cfg(feature = "google")]
+fn segredo_web() -> Option<String> {
+    std::env::var("GOOGLE_CLIENT_SECRET_WEB")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+/// Verdadeiro quando o retorno e a porta local que o aplicativo instalado
+/// abre. E o unico sinal disponivel de qual casca pediu o login: o codigo de
+/// autorizacao em si nao carrega essa informacao.
+#[cfg(feature = "google")]
+fn e_retorno_de_computador(redirecionamento: &str) -> bool {
+    redirecionamento.starts_with("http://127.0.0.1")
+        || redirecionamento.starts_with("http://localhost")
+        || redirecionamento.starts_with("http://[::1]")
+}
+
+/// O par de credenciais que corresponde ao endereco de retorno.
+#[cfg(feature = "google")]
+fn credenciais(redirecionamento: &str) -> Option<(String, String)> {
+    if e_retorno_de_computador(redirecionamento) {
+        return Some((cliente_id()?, segredo()?));
+    }
+    // Sem par Web configurado, cai para o de computador: um servidor que use
+    // um cliente Web unico funciona sem variavel nova nenhuma.
+    match (cliente_id_web(), segredo_web()) {
+        (Some(id), Some(chave)) => Some((id, chave)),
+        _ => Some((cliente_id()?, segredo()?)),
+    }
 }
 
 /// Verdadeiro so quando o botao pode existir: binario compilado com a opcao
@@ -74,7 +135,10 @@ pub async fn trocar_codigo(
     verificador: &str,
     redirecionamento: &str,
 ) -> Result<Identidade, String> {
-    let (Some(id), Some(segredo)) = (cliente_id(), segredo()) else {
+    // Qual cliente OAuth atende este login sai do endereco de retorno: a
+    // porta local e o aplicativo instalado, o resto e o celular. Trocar o
+    // codigo com o par errado e recusa certa do Google.
+    let Some((id, segredo)) = credenciais(redirecionamento) else {
         return Err("Este servidor não está configurado para o login do Google.".into());
     };
 

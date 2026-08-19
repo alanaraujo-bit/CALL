@@ -76,6 +76,9 @@
         <button class="botao botao--primario botao--grande" type="button" id="botao-abrir">
           <span>Abrir no CALL</span>
         </button>
+        <a class="botao botao--sutil botao--grande" id="botao-web" href="../app/">
+          <span>Abrir no navegador</span>
+        </a>
         <a class="botao botao--sutil botao--grande" id="botao-baixar" href="../">
           <span>Baixar o CALL para Windows</span>
         </a>
@@ -151,6 +154,42 @@
 
       function avisar(texto) {
         $("aviso").textContent = texto;
+      }
+
+      /*
+        No celular, "Abrir no CALL" é uma promessa que não dá para cumprir: o
+        protocolo `call://` pertence a um aplicativo de Windows, e o instalador
+        que a página oferece embaixo é um `.exe`. Quem chega pelo link do
+        WhatsApp está quase sempre no telefone, então ali a ordem se inverte —
+        o aplicativo no navegador vira o botão principal, e ele já entra no
+        grupo sozinho, com o código no endereço.
+      */
+      const noCelular =
+        /android|iphone|ipad|ipod|windows phone/i.test(navigator.userAgent) ||
+        (navigator.maxTouchPoints > 1 && !/windows nt/i.test(navigator.userAgent));
+
+      const linkDoApp = (() => {
+        const destino = new URL("../app/", location.href);
+        if (codigo) destino.searchParams.set("convite", codigo);
+        return destino.toString();
+      })();
+
+      $("botao-web").href = linkDoApp;
+
+      if (noCelular && codigo) {
+        const principal = $("botao-abrir");
+        const web = $("botao-web");
+
+        // O que era secundário vira o botão de verdade — e vira um link, não
+        // um botão com roteiro: tocar tem de navegar, mesmo que algo falhe.
+        web.className = "botao botao--primario botao--grande";
+        web.querySelector("span").textContent = "Entrar no grupo pelo navegador";
+        principal.parentElement.prepend(web);
+
+        principal.className = "botao botao--sutil botao--grande";
+        principal.querySelector("span").textContent = "Já tenho o CALL no computador";
+
+        $("botao-baixar").hidden = true;
       }
 
       $("botao-copiar")?.addEventListener("click", async () => {

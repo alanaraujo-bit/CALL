@@ -37,13 +37,98 @@ async function prepararDownload() {
     }
 
     const mb = (instalador.size / 1048576).toFixed(2).replace(".", ",");
-    const texto = `${versao.tag_name} · ${mb} MB · Windows x64`;
-    for (const meta of $$("#meta-download, #meta-download-2")) {
-      meta.textContent = texto;
-    }
+    const meta = $("#opcao-windows-meta");
+    if (meta) meta.textContent = `Instalador · ${versao.tag_name} · ${mb} MB`;
   } catch {
     // Sem rede ou limite da API atingido: o link de reserva já está no HTML.
   }
+}
+
+/* ═══ Escolha de plataforma ═════════════════════════════════════ */
+
+/**
+ * "Baixar" deixou de ser um verbo com uma resposta só.
+ *
+ * O CALL mora em dois lugares agora: o instalador do Windows, que faz tudo
+ * (inclusive transmitir a tela), e o aplicativo no navegador, que abre em
+ * qualquer celular e se instala na tela de início. Decidir por quem clica
+ * seria errar metade das vezes — quem chega por um link do WhatsApp está no
+ * telefone, e um `.exe` ali é um arquivo que não abre.
+ *
+ * A escolha é um acréscimo, e não uma dependência: sem JavaScript, os botões
+ * continuam sendo o link direto do instalador que sempre foram.
+ */
+function prepararEscolhaDePlataforma() {
+  const escolha = $("#escolha");
+  if (!escolha) return;
+
+  const noCelular =
+    /android|iphone|ipad|ipod|windows phone/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && !/windows nt/i.test(navigator.userAgent));
+
+  // A plataforma em que a pessoa já está fica marcada, e é a primeira da
+  // lista: no celular, ninguém quer rolar até a segunda opção.
+  const opcaoWeb = $("#opcao-web");
+  const opcaoWindows = $("#opcao-windows");
+  const lista = $(".escolha__opcoes");
+  if (noCelular && lista && opcaoWeb) {
+    lista.prepend(opcaoWeb);
+    opcaoWeb.dataset.recomendada = "";
+    $("#escolha-nota").textContent =
+      "Você está num celular: o instalador do Windows não roda aqui. O aplicativo no navegador, sim.";
+  } else {
+    if (opcaoWindows) opcaoWindows.dataset.recomendada = "";
+    $("#escolha-nota").textContent =
+      "O aplicativo no navegador também abre no computador — útil para experimentar antes de instalar.";
+  }
+
+  let devolverFoco = null;
+
+  function abrir(origem) {
+    devolverFoco = origem ?? null;
+    escolha.hidden = false;
+    document.body.style.overflow = "hidden";
+    // Foco no primeiro cartão: quem navega por teclado cai dentro do diálogo,
+    // e não continua na página atrás dele.
+    escolha.querySelector(".opcao")?.focus();
+  }
+
+  function fechar() {
+    escolha.hidden = true;
+    document.body.style.overflow = "";
+    devolverFoco?.focus();
+    devolverFoco = null;
+  }
+
+  for (const botao of $$("[data-baixar]")) {
+    // O cartão do Windows dentro do diálogo também é `[data-baixar]` (é ele
+    // que recebe a URL do instalador): ali o clique tem de baixar, não
+    // reabrir o diálogo.
+    if (botao.closest("#escolha")) continue;
+    botao.addEventListener("click", (evento) => {
+      evento.preventDefault();
+      abrir(botao);
+    });
+  }
+
+  for (const alvo of $$("[data-fechar-escolha]")) {
+    alvo.addEventListener("click", fechar);
+  }
+  document.addEventListener("keydown", (evento) => {
+    if (evento.key === "Escape" && !escolha.hidden) fechar();
+  });
+  // Escolheu: o diálogo já cumpriu o papel dele e sai da frente.
+  for (const opcao of $$(".opcao")) {
+    opcao.addEventListener("click", () => setTimeout(fechar, 120));
+  }
+
+  // `call.aionixdev.com/#baixar` cai direto na escolha — é o link que se manda
+  // para alguém quando a conversa já era sobre instalar.
+  const abrirPeloEndereco = () => {
+    if (location.hash === "#baixar") abrir(null);
+  };
+  window.addEventListener("hashchange", abrirPeloEndereco);
+  abrirPeloEndereco();
 }
 
 /* ═══ Halo do ponteiro e cabeçalho ══════════════════════════════ */
@@ -371,3 +456,4 @@ prepararInclinacao();
 prepararMalha();
 prepararMaquete();
 prepararDownload();
+prepararEscolhaDePlataforma();

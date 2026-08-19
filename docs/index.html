@@ -85,8 +85,8 @@
               <path d="M5 19h14" />
             </svg>
             <span>
-              Baixar para Windows
-              <em class="botao__meta" id="meta-download">versão mais recente</em>
+              Baixar o CALL
+              <em class="botao__meta" id="meta-download">Windows ou navegador</em>
             </span>
           </a>
           <a class="botao botao--sutil botao--grande" href="https://github.com/alanaraujo-bit/CALL" target="_blank" rel="noopener">
@@ -481,12 +481,60 @@
             <path d="M5 19h14" />
           </svg>
           <span>
-            Baixar para Windows
-            <em class="botao__meta" id="meta-download-2">versão mais recente</em>
+            Baixar o CALL
+            <em class="botao__meta" id="meta-download-2">Windows ou navegador</em>
           </span>
         </a>
       </div>
     </section>
+
+
+    <!-- ══ Escolha de plataforma ════════════════════════════════════
+         Aparece ao tocar em qualquer botão de baixar. Sem JavaScript o
+         botão continua sendo um link direto para o instalador — a escolha
+         é um acréscimo, não uma dependência. -->
+    <div class="escolha" id="escolha" hidden>
+      <div class="escolha__cortina" data-fechar-escolha></div>
+      <div class="escolha__caixa" role="dialog" aria-modal="true" aria-labelledby="escolha-titulo">
+        <button class="escolha__fechar" type="button" aria-label="Fechar" data-fechar-escolha>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+
+        <h2 class="escolha__titulo" id="escolha-titulo">Onde você vai usar o CALL?</h2>
+        <p class="escolha__lead">
+          São o mesmo CALL, na mesma conta, nos mesmos grupos. Muda só a casca.
+        </p>
+
+        <div class="escolha__opcoes">
+          <a class="opcao" id="opcao-windows" data-baixar
+             href="https://github.com/alanaraujo-bit/CALL/releases/latest/download/CALL-setup.exe">
+            <span class="opcao__glifo" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M3.5 6.2l7.2-1v6.3H3.5zM12.2 5l8.3-1.2v7.7h-8.3zM3.5 12.5h7.2v6.3l-7.2-1zM12.2 12.5h8.3v7.7l-8.3-1.2z" /></svg>
+            </span>
+            <span class="opcao__dizeres">
+              <strong>Windows</strong>
+              <em id="opcao-windows-meta">Instalador · versão mais recente</em>
+              <small>Tudo: voz, texto e <b>transmissão de tela</b>. Instala por usuário, sem senha de administrador.</small>
+            </span>
+            <svg class="opcao__seta" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+          </a>
+
+          <a class="opcao" id="opcao-web" href="/app/">
+            <span class="opcao__glifo" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3" /><path d="M10.5 5.5h3" /><path d="M10.5 18.5h3" /></svg>
+            </span>
+            <span class="opcao__dizeres">
+              <strong>Celular e navegador</strong>
+              <em>Android e iPhone · nada para instalar</em>
+              <small>Abre e funciona. Dá para <b>adicionar à tela de início</b> e ele vira um aplicativo de verdade.</small>
+            </span>
+            <svg class="opcao__seta" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+          </a>
+        </div>
+
+        <p class="escolha__nota" id="escolha-nota"></p>
+      </div>
+    </div>
 
     <footer class="rodape">
       <span>CALL · código aberto</span>

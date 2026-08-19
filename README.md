@@ -1,12 +1,18 @@
 # CALL
 
-Aplicativo de comunicação para Windows: **grupos com canais**, **chat de
-texto**, **chat de voz** e **transmissão de tela**. Interface inteiramente em
-português do Brasil.
+Aplicativo de comunicação: **grupos com canais**, **chat de texto**, **chat de
+voz** e **transmissão de tela**. Interface inteiramente em português do Brasil.
 
-Construído em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
-Electron. O cliente de mídia é materializado no `frontendDist` durante o
-build, sem depender de CDN em tempo de execução.
+Ele mora em duas cascas, e as duas são o mesmo CALL — a mesma conta, os mesmos
+grupos, o mesmo protocolo:
+
+* **Windows**, em Tauri — Rust no back-end, HTML/CSS/JS puro no front-end, sem
+  Electron. O cliente de mídia é materializado no `frontendDist` durante o
+  build, sem depender de CDN em tempo de execução.
+* **Celular**, em PWA — abre no navegador do Android e do iPhone, e se instala
+  na tela de início. Vive em `movel/` e reaproveita os módulos de núcleo de
+  `src/` sem cópia: protocolo, mídia, áudio, conta, mascotes e emojis são
+  literalmente os mesmos arquivos. Ver **[No celular](#no-celular)**.
 
 O aplicativo se atualiza sozinho: quando sai uma versão nova, ele avisa e
 instala com um clique, sem sair da tela. Quem responder "Depois" continua
@@ -28,6 +34,48 @@ O único requisito é o **WebView2**, presente por padrão no Windows 10 e 11.
 
 Quem já tem o CALL instalado não precisa baixar nada: o próprio aplicativo
 detecta a versão nova e oferece a atualização.
+
+O botão **Baixar** do site não decide por quem clica: ele pergunta onde o CALL
+vai ser usado, e oferece o instalador do Windows ou o aplicativo no navegador.
+Quem abre o site do celular vê a opção do navegador primeiro — um `.exe` ali é
+um arquivo que não abre.
+
+---
+
+## No celular
+
+**[call.aionixdev.com/app/](https://call.aionixdev.com/app/)** — abre e
+funciona, sem baixar nada. Android e iPhone.
+
+Dá para **adicionar à tela de início**: no Android o próprio navegador
+oferece; no iPhone é Compartilhar → "Adicionar à Tela de Início", no Safari, e
+o aplicativo ensina o caminho com o desenho do botão. Instalado, ele abre em
+tela cheia, com ícone próprio, sem barra de endereço, e continua funcionando
+com a rede caindo.
+
+O que existe aqui: grupos, canais de texto e de voz, conversa com emoji,
+reação, edição e exclusão, amigos e mensagem privada, soundboard do grupo,
+perfil com mascote e foto, e a tela de quem está transmitindo do computador —
+com um toque para ver em tela cheia e pinça para ampliar.
+
+O que **não** existe, e por quê:
+
+| Recurso | Motivo |
+| --- | --- |
+| Transmitir a sua tela | `getDisplayMedia` não existe em navegador de celular. Assistir à de outra pessoa, sim. |
+| Mostrar o programa em uso | Depende de ler a janela em primeiro plano do sistema — é comando nativo, não web. |
+| Filtro neural de ruído | São 6 MB de modelo para um aparelho que provavelmente está no 4G. O supressor do sistema atende. |
+| Escolher a saída de som | Quem escolhe é o próprio celular, e faz isso melhor do que nós. |
+
+A voz de cada participante toca num `<audio playsinline>` próprio, e não no
+grafo de áudio como no computador: mandar fluxo remoto para dentro do Web
+Audio é o caminho conhecido de áudio mudo no Safari do iOS, e o elemento
+resolve as duas coisas — toca em qualquer aparelho e ainda dá volume por
+pessoa. A captura do microfone continua passando pelo mesmo motor de áudio do
+CALL de mesa, com a porta de ruído e o soundboard.
+
+A call não some quando você navega: ela vira uma tira no rodapé com o canal, o
+tempo, o mudo e o desligar, e um toque a traz de volta inteira.
 
 ---
 
@@ -227,6 +275,28 @@ LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
 ```
 
+O login do Google usa **dois clientes OAuth**, e não um — porque o Google
+separa por tipo e o CALL precisa dos dois:
+
+```text
+GOOGLE_CLIENT_ID=...            # cliente "Aplicativo para computador"
+GOOGLE_CLIENT_SECRET=...        # → o CALL de Windows, que volta em http://127.0.0.1:{porta}
+GOOGLE_CLIENT_ID_WEB=...        # cliente "Aplicativo da Web"
+GOOGLE_CLIENT_SECRET_WEB=...    # → o CALL de celular, que volta em /app/
+```
+
+Não dá para atender os dois com um cliente só: o de computador recusa URI
+`https`, e o Web exige porta fixa no loopback — e a porta do aplicativo
+instalado é sorteada a cada login. `servidor/src/google.rs` escolhe o par
+pelo formato do endereço de retorno, que é a única coisa que distingue, de
+fora, de qual casca veio o código.
+
+Sem o par `_WEB`, tudo continua funcionando e o celular simplesmente **não
+oferece o botão do Google** — entrar por e-mail e senha, e entrar sem conta,
+seguem inteiros. No cliente Web, cadastre em *URIs de redirecionamento
+autorizados* as duas formas do endereço, com e sem a barra final:
+`https://call.aionixdev.com/app/` e `https://call.aionixdev.com/app`.
+
 Se uma variável faltar ou a URL for inválida, o servidor registra o motivo sem
 imprimir nenhum segredo e continua disponível em P2P. A imagem da nuvem compila
 com `--features google,banco,livekit`; o sidecar não inclui essas dependências.
@@ -294,15 +364,49 @@ dependências do servidor não viajam no sidecar do aplicativo.
 | `servidor/migracoes/` | Schema das contas, migrado automaticamente no boot |
 | `servidor/src/google.rs` | Troca do código de autorização com o Google |
 
+E a casca de celular, que reaproveita o núcleo acima sem copiá-lo:
+
+| Arquivo | Responsabilidade |
+| --- | --- |
+| `movel/index.html` | Casca: abertura, pilha de telas, tira da call e abas |
+| `movel/estilo.css` | Folha do celular — área segura, alvo de 44 px, teclado |
+| `movel/app.js` | Partida: sessão, abas, tira da call, convite, Service Worker |
+| `movel/nucleo.js` | Estado, protocolo, conta e voz — não desenha nada |
+| `movel/navegacao.js` | Pilha de telas por aba e o gesto de voltar |
+| `movel/interacao.js` | DOM, háptico, folhas, menus, avisos, teclado e o "voltar" do sistema |
+| `movel/visual.js` | Retratos, texto com emoji, seletor de emoji e reações |
+| `movel/foto.js` | Escolher e enquadrar foto com arrasto e pinça |
+| `movel/telas/` | Portal, grupos, conversa, call, amigos, você, pessoas, soundboard, instalar |
+| `movel/sw.js` | Service Worker: abre instantâneo e abre sem rede |
+| `movel/manifest.webmanifest` | O que torna o aplicativo instalável |
+| `scripts/montar-pwa.mjs` | Monta `docs/app/` a partir de `movel/` + os módulos de `src/` |
+| `scripts/gerar-icones-pwa.mjs` | Rasteriza os ícones do PWA a partir do glifo do CALL |
+| `scripts/servir-movel.mjs` | Bancada do celular, com recarga ao salvar |
+
 ---
 
 ## Desenvolvimento
 
 ```powershell
 npm install
-npm run dev      # desenvolvimento com recarga
-npm run build    # gera o instalador
+npm run dev        # aplicativo de Windows, com recarga
+npm run build      # gera o instalador
+
+npm run dev:movel  # o celular em http://127.0.0.1:8125/movel/, com recarga
+npm run montar:pwa # monta docs/app/, que é o que a Vercel publica
+npm run icones:pwa # regera os ícones do PWA
 ```
+
+A bancada do celular serve a raiz do repositório, e não uma cópia montada:
+`movel/` importa `../src/` de verdade, então corrigir o protocolo corrige nos
+dois clientes sem passo de build. Duas ressalvas ao abrir pelo IP da rede
+local: `getUserMedia` exige contexto seguro (o IP não conta — use o
+encaminhamento de porta do DevTools ou uma URL https), e o Service Worker só
+se registra em `localhost` com `?sw=1`.
+
+O site publicado é `docs/`, e `docs/app/` é **gerado** — está no
+`.gitignore` e a Vercel o reconstrói a cada publicação, pelo `buildCommand`
+do `vercel.json`.
 
 O sidecar é um binário compilado e não é versionado. Gere-o antes do primeiro
 `npm run build`, e de novo sempre que `servidor/src/main.rs` mudar:
@@ -329,6 +433,9 @@ powershell -File testes/rodar-interface.ps1  # painel de ajustes na aplicação 
 powershell -File testes/rodar-motor-audio.ps1 # captura, filtros, porta e trilha enviada
 powershell -File testes/rodar-livekit-nuvem.ps1 # SFU e falantes ativos na infraestrutura real
 powershell -File testes/rodar-sons.ps1       # o sino, medido na amostra renderizada
+powershell -File testes/rodar-movel.ps1      # o aplicativo de celular, num quadro de iPhone
+powershell -File testes/capturar-movel.ps1   # fotografa cada tela do celular
+powershell -File testes/capturar-site.ps1    # fotografa o seletor de plataforma do site
 powershell -File testes/duas-instancias.ps1  # duas janelas reais no mesmo grupo
 powershell -File testes/convite.ps1          # o link call:// abrindo o grupo
 ```
@@ -375,6 +482,19 @@ o schema crescer.
   vinculada ao Google significa criar outra — não existe envio de e-mail em
   lugar nenhum do projeto, e inventar um servidor de e-mail para isto custaria
   mais do que todo o resto do servidor junto.
-- O login do Google só funciona no Windows: ele abre o navegador por
-  `ShellExecuteW`. É a mesma fronteira já declarada da atividade em primeiro
-  plano, e o CALL só é distribuído para Windows.
+- O aplicativo de Windows abre o Google por `ShellExecuteW`, e por isso o
+  login do Google ali só funciona no Windows. No celular o fluxo é o padrão da
+  web (PKCE, ida ao `accounts.google.com` e volta para a própria página), o
+  que exige um **segundo cliente OAuth, do tipo "Aplicativo da Web"** — ver
+  `GOOGLE_CLIENT_ID_WEB` em "Arquitetura". Enquanto ele não existir no
+  ambiente, o botão do Google não aparece no celular em vez de aparecer e
+  falhar; entrar por e-mail e senha, e entrar sem conta, seguem inteiros.
+- **Transmitir a própria tela não existe no celular.** `getDisplayMedia` não
+  é implementado em navegador de celular — nem no Chrome do Android, nem no
+  Safari do iOS. Assistir à tela de quem transmite do computador funciona, e o
+  botão de transmitir simplesmente não aparece em vez de aparecer e falhar.
+- No celular o CALL é uma página, e uma página só continua com o microfone
+  aberto enquanto o navegador a mantém viva. Trocar de aplicativo por muito
+  tempo, ou o sistema decidir economizar bateria, derruba a call — e é por isso
+  que a tira do rodapé existe: sair da tela da call *dentro* do CALL não
+  derruba nada, e ela deixa isso visível.

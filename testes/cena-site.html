@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cena do site</title>
+    <style>
+      html, body { margin: 0; background: #000; }
+      iframe { width: 390px; height: 844px; border: 0; display: block; }
+      #freio { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <!-- O site dentro de um quadro do tamanho de um celular. Fotografar a
+         janela do Chromium headless direto não serve: ele ignora a meta
+         viewport, e a página sai com o layout de desktop recortado. -->
+    <iframe id="q" src="/docs/index.html#baixar"></iframe>
+    <img id="freio" src="/segurar?ms=4000" alt="" />
+  </body>
+</html>

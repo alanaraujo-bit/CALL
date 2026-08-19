@@ -1631,6 +1631,81 @@ portal mantêm o recuo animado de sempre.
 
 ---
 
+## Iteração 21 — O CALL no celular (PWA 1.0.0)
+
+**Construído:** uma segunda casca, em `movel/`, que abre no navegador do
+Android e do iPhone e se instala na tela de início. Ela **não é um port**: os
+módulos de núcleo — protocolo (`sinal.js`), os dois transportes de mídia
+(`livekit.js`, `rtc.js`), o motor de áudio com a porta de ruído
+(`audio.js`), a conta (`conta.js`), os mascotes, os emojis e o cronômetro —
+são **os mesmos arquivos** que o aplicativo de Windows carrega. O que se
+escreveu de novo foi a casca: navegação em pilha por aba, gesto de voltar,
+folhas, teclado, e as telas.
+
+**Três decisões medidas contra a alternativa óbvia:**
+
+1. **A voz dos outros toca em `<audio playsinline>`, e não no grafo de
+   áudio.** No computador cada participante entra num `GainNode` para haver
+   volume por pessoa e escolha de saída. No celular não há escolha de saída, e
+   mandar fluxo remoto para dentro do Web Audio é o caminho conhecido de áudio
+   mudo no Safari do iOS. O elemento entrega as duas coisas — toca em qualquer
+   aparelho e ainda dá volume por pessoa, pelo `.volume`.
+
+2. **O histórico do navegador guarda um degrau só, e não um por tela.** A
+   primeira versão empurrava uma entrada por folha e por tela, contando para
+   desfazer. Não funcionou: fechar folha pede `history.back()`, que é
+   assíncrono, e no intervalo entre pedir e o `popstate` chegar já houve
+   tempo de empilhar outra tela — o `back` atrasado derrubava a errada. O
+   sintoma foi a suíte reprovar "voltar desempilha uma tela" com a pilha
+   intacta. A correção foi inverter o papel: a pilha é do aplicativo, e o
+   `history` é só a campainha do botão do sistema.
+
+3. **O filtro neural de ruído não é carregado.** São 6 MB de modelo para um
+   aparelho que provavelmente está no 4G. `Supressao` já sabia cair para o
+   supressor do sistema quando a licença é negada, então bastou injetar um
+   carregador que recusa — nenhum código novo, só uma porta fechada.
+
+**Medido na montagem real:**
+
+| Métrica | Valor |
+| --- | --- |
+| `docs/app/` inteiro | 1,81 MB em 44 arquivos |
+| Dentro disso, o cliente LiveKit | 1,25 MB, carregado **só** quando a call começa |
+| Casca que a primeira tela precisa | 24 arquivos, pré-guardados pelo Service Worker |
+| Suíte do celular | 43 verificações, todas passando |
+
+**O que a suíte prova**, num quadro de 390×844 conduzido pelo motor Chromium
+contra um servidor de sinalização de verdade: o portal aparece para quem nunca
+entrou e some para quem já entrou; criar grupo devolve um grupo com canais e
+oferece o convite; escrever no canal publica a mensagem e ela volta desenhada,
+com o emoji do CALL virando desenho; voltar desempilha; trocar de aba preserva
+a pilha de cada uma; o manifesto é instalável e o Service Worker atende. E
+três medidas que separam "funciona" de "funciona no celular": **nenhum alvo de
+toque abaixo de 44 px**, **nenhuma tela mais larga que o aparelho**, e
+**nenhum erro no console** em nenhuma etapa.
+
+**Três defeitos reais que a suíte e as capturas pegaram**, e que estariam no
+ar sem elas:
+
+* Tocar num canal de voz **entrava na call e não abria a tela dela**.
+  `entrarNaVoz` resolvia assim que a mensagem saía pelo socket, e quem chamava
+  abria a call num instante em que `estado.canalVoz` ainda era `null`. A
+  promessa passou a esperar a resposta do servidor.
+* O botão de mascote e o SVG do mascote usavam **a mesma classe** — cada bicho
+  ganhava um anel cinza de fundo em volta do desenho. Achado contando
+  elementos: a suíte esperava 6 e encontrou 13.
+* Título e legenda de cada linha de ajuste **corriam na mesma linha**: são dois
+  `<span>`, e sem coluna explícita o navegador os põe lado a lado. Invisível
+  com legenda curta, óbvio na primeira legenda comprida. Achado na captura, não
+  no teste.
+
+**Veredito:** *aprovado.* Ressalva registrada e declarada na interface:
+transmitir a própria tela não existe no celular porque `getDisplayMedia` não
+existe em navegador de celular — assistir à de outra pessoa, sim, e é o caso
+que interessa.
+
+---
+
 ## Testes automatizados
 
 | Suíte | Comando | Cobertura |
@@ -1646,6 +1721,8 @@ portal mantêm o recuo animado de sempre.
 | Sons de entrada e saída | `powershell -File testes/rodar-sons.ps1` | 33 medições nas amostras renderizadas em `OfflineAudioContext`: pico dentro da faixa alvo, ausência de degrau no ataque, começo e fim em silêncio real, duração abaixo de 700 ms, e — via Goertzel nas duas notas — que o gesto sobe ao entrar e desce ao sair, que o evento próprio tem grave e o dos outros não, e que o intervalo continua sendo uma quinta justa |
 | Tempo em call | `node testes/tempo.test.mjs` | 31 verificações com relógio injetado: formatação do cronômetro nas viradas de minuto e de hora, truncamento em vez de arredondamento, tempo negativo de relógio que anda para trás, e o histórico — somar quem sai e volta numa linha só, a contaminação do "pelo menos" quando uma passagem tem começo desconhecido, saída sem entrada que não cria linha, e a limpeza ao trocar de call |
 | Atividade | `node testes/atividade.test.mjs` | 28 verificações da política: a área de trabalho e as cascas do Windows que não viram atividade, caracteres de controle e nomes absurdos que não estragam a coluna, a exigência de duas leituras seguidas antes de anunciar, a saída imediata, a leitura que falha sem apagar o que estava no ar, e o desligamento que limpa a linha dos outros em vez de congelá-la |
+
+| CALL no celular | `powershell -File testes/rodar-movel.ps1` | 43 verificações conduzindo o aplicativo de celular num quadro de 390×844 contra um servidor de verdade: portal, criação de grupo, conversa com emoji, navegação em pilha por aba, o manifesto instalável e o Service Worker — mais as três medidas de celular (alvo de toque, largura da tela, console limpo) |
 
 Todas passam integralmente na última execução.
 

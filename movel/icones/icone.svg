@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CALL">
+  <defs>
+    <linearGradient id="fundo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22262c" />
+      <stop offset="1" stop-color="#0d0e10" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="114" fill="url(#fundo)" />
+  <g fill="none" stroke-linecap="round" stroke-width="34">
+    <path d="M136 232v48" stroke="#6a7079" />
+    <path d="M196 192v128" stroke="#9ba1a9" />
+    <path d="M256 146v220" stroke="#e9ebee" />
+    <path d="M316 192v128" stroke="#9ba1a9" />
+    <path d="M376 232v48" stroke="#6a7079" />
+  </g>
+</svg>

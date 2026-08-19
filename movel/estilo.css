@@ -1,0 +1,2777 @@
+/* ═══════════════════════════════════════════════════════════════
+   CALL — folha do aplicativo de celular.
+
+   A paleta e o vocabulário visual são os mesmos do CALL de mesa: grafite
+   escuro, contraste sutil, um acento roxo usado com parcimônia. O que muda
+   aqui é a física: nada é apontado com um mouse, tudo é tocado com o polegar.
+   Por isso as regras abaixo assumem, o tempo todo, três coisas que a folha do
+   desktop não precisa assumir:
+
+   1. **O dedo tem 9 mm.** Nenhum alvo de toque fica abaixo de 44 px.
+   2. **A tela tem entalhes.** Cabeçalho, abas e folhas pagam
+      `env(safe-area-inset-*)`, senão o app fica embaixo da câmera do iPhone.
+   3. **O teclado engole metade da tela.** Alturas usam `100dvh` e o compositor
+      de mensagem escuta a `visualViewport` (ver `interacao.js`).
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Superfícies, do fundo para a frente */
+  --fundo: #0e0f11;
+  --superficie-1: #141619;
+  --superficie-2: #191c20;
+  --superficie-3: #1f2328;
+  --superficie-4: #262b31;
+
+  /* Traços */
+  --borda: rgba(255, 255, 255, 0.06);
+  --borda-forte: rgba(255, 255, 255, 0.1);
+
+  /* Texto */
+  --texto: #e9ebee;
+  --texto-2: #9ba1a9;
+  --texto-3: #6a7079;
+
+  /* Acentos */
+  --acento: #5f6ad9;
+  --acento-claro: #8790ea;
+  --acento-suave: rgba(95, 106, 217, 0.16);
+  --vivo: #4fc98c;
+  --perigo: #e2645d;
+  --perigo-suave: rgba(226, 100, 93, 0.12);
+  --atencao: #d9a441;
+
+  /* Raios maiores que os do desktop: superfície tocada pede canto mais macio,
+     e a tela do celular é toda feita de retângulos grandes. */
+  --raio-p: 10px;
+  --raio-m: 14px;
+  --raio-g: 20px;
+  --raio-gg: 28px;
+
+  /* Movimento. `--mola` é a curva de empurrar tela: acelera rápido e
+     desacelera longo, que é como o iOS e o Android desenham navegação. */
+  --mola: cubic-bezier(0.32, 0.72, 0, 1);
+  --suave: cubic-bezier(0.4, 0, 0.2, 1);
+  --rapido: 140ms var(--suave);
+  --tempo-tela: 340ms;
+  --tempo-folha: 320ms;
+
+  /* Alturas do cromo. Ficam em variável porque a conversa, a call e as listas
+     precisam saber quanto espaço sobra sem medir nada em JavaScript. */
+  --alt-cabecalho: 52px;
+  --alt-abas: 58px;
+  --alt-tira: 56px;
+
+  --seguro-topo: env(safe-area-inset-top, 0px);
+  --seguro-base: env(safe-area-inset-bottom, 0px);
+  --seguro-esq: env(safe-area-inset-left, 0px);
+  --seguro-dir: env(safe-area-inset-right, 0px);
+
+  /* A fonte do sistema em cada plataforma. Um app instalado que traz fonte
+     própria demora a pintar o primeiro texto e nunca parece daquele aparelho. */
+  --fonte: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
+    "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--fundo);
+  color: var(--texto);
+  font-family: var(--fonte);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  /* Mata o atraso de 300 ms e o zoom por toque duplo sem tirar o zoom por
+     pinça de quem precisa dele. */
+  touch-action: manipulation;
+  position: fixed;
+  inset: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  outline: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* 16 px é o limiar abaixo do qual o Safari do iOS dá zoom ao focar um campo —
+   e uma tela que salta de escala ao tocar num campo não parece um aplicativo. */
+input,
+textarea {
+  font-size: 16px;
+}
+
+button {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.oculto {
+  display: none !important;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--acento);
+  outline-offset: 2px;
+}
+
+/* Texto que a pessoa escreveu existe para ser copiado; o resto é interface. */
+.selecionavel,
+.mensagem__texto,
+.compositor__campo {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ─── A marca ──────────────────────────────────────────────────── */
+
+.glifo {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+}
+.glifo i {
+  width: 3px;
+  border-radius: 999px;
+  background: var(--texto-3);
+}
+.glifo i:nth-child(1),
+.glifo i:nth-child(5) {
+  height: 8px;
+}
+.glifo i:nth-child(2),
+.glifo i:nth-child(4) {
+  height: 14px;
+  background: var(--texto-2);
+}
+.glifo i:nth-child(3) {
+  height: 21px;
+  background: var(--texto);
+}
+
+.glifo--grande {
+  height: 44px;
+  gap: 6px;
+}
+.glifo--grande i {
+  width: 6px;
+}
+.glifo--grande i:nth-child(1),
+.glifo--grande i:nth-child(5) {
+  height: 16px;
+  background: #4a5170;
+}
+.glifo--grande i:nth-child(2),
+.glifo--grande i:nth-child(4) {
+  height: 28px;
+  background: var(--acento-claro);
+}
+.glifo--grande i:nth-child(3) {
+  height: 43px;
+  background: var(--acento);
+}
+
+/* ─── Abertura ─────────────────────────────────────────────────── */
+
+.abertura {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: var(--fundo);
+  transition: opacity 300ms var(--suave);
+}
+.abertura[data-saindo] {
+  opacity: 0;
+  pointer-events: none;
+}
+.abertura__mancha {
+  position: absolute;
+  width: 480px;
+  height: 480px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(95, 106, 217, 0.22), transparent 68%);
+  filter: blur(30px);
+  animation: respirar 3.2s ease-in-out infinite;
+}
+.abertura__marca {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.abertura__nome {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em;
+  color: var(--texto-2);
+}
+.abertura .glifo i {
+  animation: pulsar 1.5s ease-in-out infinite;
+}
+.abertura .glifo i:nth-child(1) { animation-delay: 0ms; }
+.abertura .glifo i:nth-child(2) { animation-delay: 110ms; }
+.abertura .glifo i:nth-child(3) { animation-delay: 220ms; }
+.abertura .glifo i:nth-child(4) { animation-delay: 330ms; }
+.abertura .glifo i:nth-child(5) { animation-delay: 440ms; }
+
+@keyframes pulsar {
+  0%, 100% { transform: scaleY(0.5); opacity: 0.5; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+@keyframes respirar {
+  0%, 100% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.05); opacity: 1; }
+}
+
+/* ═══ Esqueleto ═════════════════════════════════════════════════ */
+
+/* `bottom: var(--teclado)` é o que salva o compositor de mensagem no iPhone.
+   Lá o teclado não encolhe a janela: ele sobe por cima dela, e um rodapé
+   preso em `bottom: 0` fica atrás do teclado. `--teclado` vem da
+   `visualViewport` (ver `acompanharTeclado`), e no Android — onde a janela
+   encolhe sozinha — o valor é zero e nada muda. */
+.app {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: var(--teclado, 0px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: bottom 180ms var(--suave);
+}
+
+.pilha {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── Telas ────────────────────────────────────────────────────── */
+
+/* Cada tela ocupa a pilha inteira. Empilhar não desmonta a de baixo: ela
+   recua 22 % e escurece, e é isso que dá a profundidade do gesto de voltar —
+   arrastar da borda traz a de cima de volta e devolve a de baixo ao lugar. */
+.tela {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--fundo);
+  will-change: transform;
+  contain: layout paint;
+}
+
+.tela__sombra {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -24px;
+  width: 24px;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, rgba(0, 0, 0, 0.32));
+  opacity: 0;
+}
+
+/* O véu vive na tela de baixo e escurece o que ficou para trás. */
+.tela__veu {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tela[data-animando] {
+  transition: transform var(--tempo-tela) var(--mola);
+}
+.tela[data-animando] .tela__veu,
+.tela[data-animando] .tela__sombra {
+  transition: opacity var(--tempo-tela) var(--mola);
+}
+
+/* Abas trocam por fade curto — não são hierarquia, são lugares diferentes. */
+.tela[data-aba-oculta] {
+  visibility: hidden;
+}
+
+/* ─── Cabeçalho ────────────────────────────────────────────────── */
+
+/* Fora do fluxo de propósito: o conteúdo rola por baixo dele, e é isso que
+   faz o desfoque valer alguma coisa. Quem rola paga o espaço em
+   `padding-top`, e não em `margin` — assim a barra de rolagem continua indo
+   do topo real da tela até o fim. */
+.cabecalho {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: calc(var(--alt-cabecalho) + var(--seguro-topo));
+  padding: var(--seguro-topo) max(6px, var(--seguro-dir)) 0 max(6px, var(--seguro-esq));
+  background: color-mix(in srgb, var(--fundo) 82%, transparent);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  transition: box-shadow 200ms var(--suave), border-color 200ms var(--suave);
+  border-bottom: 1px solid transparent;
+}
+
+/* A borda só aparece quando há conteúdo passando por baixo — é assim que o
+   cabeçalho deixa de ser uma faixa e vira um teto. */
+.cabecalho[data-rolado] {
+  border-bottom-color: var(--borda);
+}
+
+.cabecalho__titulos {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 4px;
+}
+.cabecalho--centrado .cabecalho__titulos {
+  align-items: center;
+  text-align: center;
+}
+.cabecalho__titulo {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cabecalho__legenda {
+  font-size: 12px;
+  color: var(--texto-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: -1px;
+}
+.cabecalho__legenda--viva {
+  color: var(--vivo);
+}
+
+/* Título grande, à la iOS: aparece embaixo do cabeçalho e encolhe ao rolar.
+   É o que dá hierarquia às telas de primeiro nível sem gastar um cabeçalho
+   alto o tempo todo. */
+.titulao {
+  flex: none;
+  padding: 4px 20px 12px;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  transform-origin: left center;
+}
+
+.acao {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--texto);
+  transition: background var(--rapido), transform 120ms var(--suave), opacity var(--rapido);
+}
+.acao svg {
+  width: 22px;
+  height: 22px;
+}
+.acao:active {
+  background: rgba(255, 255, 255, 0.08);
+  transform: scale(0.9);
+}
+.acao[disabled] {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.acao--acento {
+  color: var(--acento-claro);
+}
+.acao--perigo {
+  color: var(--perigo);
+}
+.acao--texto {
+  width: auto;
+  min-width: 44px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ─── Corpo rolável ────────────────────────────────────────────── */
+
+.corpo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-left: var(--seguro-esq);
+  padding-right: var(--seguro-dir);
+  padding-top: calc(var(--alt-cabecalho) + var(--seguro-topo));
+  padding-bottom: 24px;
+}
+
+/* Uma tela sem cabeçalho não deve reservar a faixa dele. */
+.corpo--sem-cabecalho {
+  padding-top: var(--seguro-topo);
+}
+
+/* ─── Abas ─────────────────────────────────────────────────────── */
+
+.abas {
+  position: relative;
+  z-index: 20;
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  height: calc(var(--alt-abas) + var(--seguro-base));
+  padding: 0 max(4px, var(--seguro-dir)) var(--seguro-base) max(4px, var(--seguro-esq));
+  background: color-mix(in srgb, var(--superficie-1) 84%, transparent);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border-top: 1px solid var(--borda);
+  transition: transform 280ms var(--mola);
+}
+
+/* Duas razões independentes para sumir — a tela da frente pediu a área
+   inteira, ou há uma call aberta por cima. Atributos separados porque quem
+   liga cada um é um módulo diferente, e um não pode apagar o outro. */
+.abas[data-recolhida],
+.abas[data-na-call] {
+  transform: translateY(100%);
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+
+.aba {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding-top: 6px;
+  color: var(--texto-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  position: relative;
+  transition: color 180ms var(--suave);
+}
+.aba svg {
+  width: 24px;
+  height: 24px;
+  transition: transform 260ms var(--mola);
+}
+.aba[aria-selected="true"] {
+  color: var(--texto);
+}
+.aba[aria-selected="true"] svg {
+  color: var(--acento-claro);
+  transform: translateY(-1px);
+}
+.aba:active svg {
+  transform: scale(0.88);
+}
+
+.aba__marca {
+  position: absolute;
+  top: 4px;
+  left: calc(50% + 7px);
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--perigo);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  border: 2px solid var(--superficie-1);
+  box-sizing: content-box;
+}
+.aba__marca--ponto {
+  min-width: 9px;
+  height: 9px;
+  padding: 0;
+  font-size: 0;
+}
+
+/* ─── Tira da call ─────────────────────────────────────────────── */
+
+.tira-call {
+  position: relative;
+  z-index: 21;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--alt-tira);
+  margin: 0 max(8px, var(--seguro-esq)) 8px max(8px, var(--seguro-dir));
+  padding: 0 8px 0 12px;
+  border-radius: var(--raio-m);
+  background: linear-gradient(180deg, #23282f, #1b1f24);
+  border: 1px solid var(--borda-forte);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+  animation: tira-entra 320ms var(--mola);
+}
+@keyframes tira-entra {
+  from { transform: translateY(12px) scale(0.97); opacity: 0; }
+}
+.tira-call__toque {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  text-align: left;
+}
+.tira-call__onda {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+  height: 22px;
+  width: 22px;
+  justify-content: center;
+}
+.tira-call__onda i {
+  width: 2.5px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--vivo);
+  animation: onda 900ms ease-in-out infinite;
+}
+.tira-call__onda i:nth-child(2) { animation-delay: 150ms; }
+.tira-call__onda i:nth-child(3) { animation-delay: 300ms; }
+.tira-call__onda i:nth-child(4) { animation-delay: 450ms; }
+@keyframes onda {
+  0%, 100% { height: 5px; }
+  50% { height: 17px; }
+}
+.tira-call[data-mudo] .tira-call__onda i {
+  animation: none;
+  height: 5px;
+  background: var(--texto-3);
+}
+.tira-call__dizeres {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tira-call__canal {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tira-call__estado {
+  font-size: 11.5px;
+  color: var(--texto-2);
+  font-variant-numeric: tabular-nums;
+}
+.tira-call__botao {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--texto);
+  transition: transform 120ms var(--suave), background var(--rapido);
+}
+.tira-call__botao svg {
+  width: 19px;
+  height: 19px;
+}
+.tira-call__botao:active {
+  transform: scale(0.88);
+}
+.tira-call__botao[data-ligado] {
+  background: var(--perigo-suave);
+  color: var(--perigo);
+}
+.tira-call__botao--sair {
+  background: var(--perigo);
+  color: #fff;
+}
+
+/* ═══ Blocos de conteúdo ════════════════════════════════════════ */
+
+.secao {
+  padding: 18px 20px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--texto-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.secao__acao {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--acento-claro);
+  padding: 6px 2px;
+}
+
+/* Grupo de linhas com fundo próprio, como as tabelas agrupadas do iOS. */
+.grupo {
+  margin: 0 max(12px, var(--seguro-esq)) 14px max(12px, var(--seguro-dir));
+  border-radius: var(--raio-m);
+  background: var(--superficie-1);
+  border: 1px solid var(--borda);
+  overflow: hidden;
+}
+
+.linha {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  text-align: left;
+  color: var(--texto);
+  transition: background 90ms linear;
+}
+.linha + .linha::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 0;
+  height: 1px;
+  background: var(--borda);
+}
+.linha--sem-traco + .linha::before,
+.linha + .linha--sem-traco::before {
+  display: none;
+}
+.linha:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+.linha[data-inerte] {
+  pointer-events: none;
+}
+.linha[aria-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.linha__icone {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--texto-2);
+}
+.linha__icone svg {
+  width: 20px;
+  height: 20px;
+}
+.linha__icone--tinta {
+  background: var(--acento-suave);
+  color: var(--acento-claro);
+}
+.linha__icone--perigo {
+  background: var(--perigo-suave);
+  color: var(--perigo);
+}
+
+/* Título em cima, legenda embaixo. Sem a coluna explícita os dois são
+   `<span>` e o navegador os põe lado a lado — o defeito some numa linha com
+   legenda curta e reaparece na primeira legenda comprida. */
+.linha__dizeres {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.linha__titulo {
+  font-size: 15.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.linha__legenda {
+  font-size: 12.5px;
+  color: var(--texto-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.linha__legenda--quebra {
+  white-space: normal;
+}
+.linha__valor {
+  flex: none;
+  font-size: 14px;
+  color: var(--texto-2);
+  max-width: 46%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.linha__seta {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--texto-3);
+}
+.linha--perigo .linha__titulo {
+  color: var(--perigo);
+}
+
+/* ─── Estados vazios ───────────────────────────────────────────── */
+
+.vazio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 54px 34px;
+  text-align: center;
+  color: var(--texto-2);
+}
+.vazio__selo {
+  width: 62px;
+  height: 62px;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  color: var(--texto-3);
+  margin-bottom: 4px;
+}
+.vazio__selo svg {
+  width: 28px;
+  height: 28px;
+}
+.vazio__titulo {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--texto);
+}
+.vazio__texto {
+  font-size: 14px;
+  max-width: 30ch;
+  line-height: 1.5;
+}
+
+/* ─── Avatares ─────────────────────────────────────────────────── */
+
+.avatar {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--superficie-3);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--texto-2);
+  user-select: none;
+}
+.avatar svg,
+.avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* As três classes abaixo são postas por `avatares.js` — o mesmo arquivo que
+   desenha os mascotes no CALL de mesa. Com mascote ou com foto, a arte é o
+   disco inteiro: o fundo cinza do avatar de iniciais sobraria como um anel
+   em volta do desenho. */
+.avatar--mascote,
+.avatar--foto,
+.marca-grupo.retrato-de-foto {
+  background: none;
+  overflow: hidden;
+  position: relative;
+}
+
+/* O SVG do mascote. A folha global declara `svg { stroke: currentColor }`, e
+   as formas do desenho herdariam esse traço como um contorno claro por cima
+   de tudo — zerar aqui basta, porque quem precisa de traço declara o seu no
+   próprio elemento, e atributo vence herança. */
+.mascote {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: none;
+}
+.avatar--g { width: 52px; height: 52px; font-size: 18px; }
+.avatar--gg { width: 76px; height: 76px; font-size: 26px; }
+.avatar--enorme { width: 104px; height: 104px; font-size: 36px; }
+.avatar--p { width: 32px; height: 32px; font-size: 12px; }
+
+/* Marca de grupo: quadrada de canto macio, para não competir com as pessoas. */
+.marca-grupo {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 15px;
+  overflow: hidden;
+  background: var(--superficie-3);
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+}
+.marca-grupo svg,
+.marca-grupo img {
+  width: 100%;
+  height: 100%;
+}
+.marca-grupo--g {
+  width: 68px;
+  height: 68px;
+  border-radius: 22px;
+  font-size: 24px;
+}
+
+.presenca {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2.5px solid var(--fundo);
+  background: var(--texto-3);
+}
+.presenca[data-estado="online"] { background: var(--vivo); }
+.presenca[data-estado="voz"] { background: var(--acento); }
+
+/* ─── Botões ───────────────────────────────────────────────────── */
+
+.botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  padding: 0 20px;
+  border-radius: var(--raio-m);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  background: var(--superficie-3);
+  color: var(--texto);
+  transition: transform 120ms var(--suave), background var(--rapido), opacity var(--rapido);
+}
+.botao svg {
+  width: 20px;
+  height: 20px;
+}
+.botao:active {
+  transform: scale(0.975);
+}
+.botao[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.botao--largo {
+  width: 100%;
+}
+.botao--primario {
+  background: var(--acento);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(95, 106, 217, 0.28);
+}
+.botao--primario:active {
+  background: #5560c8;
+}
+.botao--fantasma {
+  background: transparent;
+  border: 1px solid var(--borda-forte);
+}
+.botao--perigo {
+  background: var(--perigo-suave);
+  color: var(--perigo);
+}
+.botao--baixo {
+  min-height: 44px;
+  font-size: 14.5px;
+  padding: 0 16px;
+  border-radius: var(--raio-p);
+}
+.botao__carga {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-top-color: #fff;
+  animation: girar 700ms linear infinite;
+}
+@keyframes girar {
+  to { transform: rotate(360deg); }
+}
+
+/* Botão flutuante — a ação principal de uma lista. */
+.flutuante {
+  position: absolute;
+  right: calc(18px + var(--seguro-dir));
+  bottom: calc(18px + var(--reserva-base, 0px));
+  z-index: 8;
+  width: 56px;
+  height: 56px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  background: var(--acento);
+  color: #fff;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(95, 106, 217, 0.35);
+  transition: transform 200ms var(--mola);
+}
+.flutuante svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 2;
+}
+.flutuante:active {
+  transform: scale(0.9);
+}
+
+/* ─── Campos ───────────────────────────────────────────────────── */
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.campo__rotulo {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--texto-2);
+  letter-spacing: 0.01em;
+  padding-left: 2px;
+}
+.campo__caixa {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 14px;
+  border-radius: var(--raio-m);
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  transition: border-color var(--rapido), background var(--rapido);
+}
+.campo__caixa:focus-within {
+  border-color: var(--acento);
+  background: var(--superficie-1);
+}
+.campo__entrada {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  color: var(--texto);
+}
+/* A caixa inteira já acende ao receber foco; o contorno do navegador por
+   cima disso vira um anel duplo. */
+.campo__caixa .campo__entrada:focus-visible,
+.campo__area:focus-visible,
+.compositor__campo:focus-visible {
+  outline: none;
+}
+.campo__entrada::placeholder {
+  color: var(--texto-3);
+}
+.campo__botao {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--texto-3);
+}
+.campo__botao svg {
+  width: 19px;
+  height: 19px;
+}
+.campo__erro {
+  font-size: 12.5px;
+  color: var(--perigo);
+  padding-left: 2px;
+  min-height: 0;
+}
+.campo--erro .campo__caixa {
+  border-color: var(--perigo);
+}
+.campo__contador {
+  font-size: 12px;
+  color: var(--texto-3);
+  font-variant-numeric: tabular-nums;
+}
+.campo__area {
+  width: 100%;
+  min-height: 84px;
+  padding: 14px;
+  border-radius: var(--raio-m);
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  color: var(--texto);
+  resize: none;
+  line-height: 1.5;
+}
+.campo__area:focus {
+  border-color: var(--acento);
+}
+
+/* Medidor de senha: as mesmas cinco barras da marca. */
+.forca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 2px;
+}
+.forca__barras {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+.forca__barras i {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--superficie-4);
+  transition: background 220ms var(--suave);
+}
+.forca__texto {
+  font-size: 12px;
+  color: var(--texto-2);
+  min-width: 6ch;
+  text-align: right;
+}
+
+/* ─── Chaves e escolhas ────────────────────────────────────────── */
+
+.chave {
+  flex: none;
+  position: relative;
+  width: 50px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--superficie-4);
+  transition: background 220ms var(--suave);
+}
+.chave::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 240ms var(--mola);
+}
+.chave[aria-checked="true"] {
+  background: var(--vivo);
+}
+.chave[aria-checked="true"]::after {
+  transform: translateX(20px);
+}
+
+.segmentado {
+  position: relative;
+  display: flex;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+}
+.segmentado__pilula {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 999px;
+  background: var(--superficie-4);
+  transition: transform 320ms var(--mola), width 320ms var(--mola);
+}
+.segmentado__aba {
+  position: relative;
+  flex: 1;
+  min-height: 38px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--texto-2);
+  transition: color 200ms var(--suave);
+}
+.segmentado__aba[aria-selected="true"] {
+  color: var(--texto);
+}
+
+.escala {
+  width: 100%;
+  height: 30px;
+  background: none;
+  touch-action: pan-y;
+}
+.escala::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--acento) 0 var(--preenchido, 50%),
+    var(--superficie-4) var(--preenchido, 50%) 100%
+  );
+}
+.escala::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  margin-top: -9.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.escala::-moz-range-track {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--superficie-4);
+}
+.escala::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}
+
+/* ═══ Camadas: folhas, diálogos e avisos ════════════════════════ */
+
+.camadas {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+.camadas > * {
+  pointer-events: auto;
+}
+
+.cortina {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  opacity: 0;
+  transition: opacity var(--tempo-folha) var(--suave);
+}
+.cortina[data-visivel] {
+  opacity: 1;
+}
+
+/* Folha inferior: a caixa de diálogo do celular. Arrasta para baixo e some. */
+.folha {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--teclado, 0px);
+  z-index: 2;
+  max-height: 88dvh;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--raio-gg) var(--raio-gg) 0 0;
+  background: var(--superficie-1);
+  border-top: 1px solid var(--borda-forte);
+  box-shadow: 0 -18px 50px rgba(0, 0, 0, 0.5);
+  /* O arrasto do dedo entra por variável, e não sobrescrevendo `transform`:
+     em tela larga a folha também é centralizada por `translateX(-50%)`, e um
+     `style.transform` cru jogaria a folha para o canto no primeiro toque. */
+  transform: translateY(calc(100% + var(--arrasto, 0px)));
+  will-change: transform;
+  padding-bottom: var(--seguro-base);
+}
+.folha[data-animando] {
+  transition: transform var(--tempo-folha) var(--mola);
+}
+.folha[data-aberta] {
+  transform: translateY(var(--arrasto, 0px));
+}
+.folha__punho {
+  flex: none;
+  display: grid;
+  place-items: center;
+  height: 26px;
+  touch-action: none;
+}
+.folha__punho::before {
+  content: "";
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--superficie-4);
+}
+.folha__cabecalho {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 20px 12px;
+}
+.folha__titulo {
+  flex: 1;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.folha__texto {
+  padding: 0 20px 14px;
+  font-size: 14.5px;
+  color: var(--texto-2);
+  line-height: 1.5;
+}
+.folha__corpo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 20px calc(14px + var(--seguro-base));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.folha__corpo--liso {
+  padding-left: 0;
+  padding-right: 0;
+  gap: 0;
+}
+.folha__acoes {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px calc(18px + var(--seguro-base));
+}
+.folha__acoes--par {
+  flex-direction: row;
+}
+.folha__acoes--par .botao {
+  flex: 1;
+}
+
+/* Item de menu dentro de uma folha. */
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 20px;
+  text-align: left;
+  font-size: 16px;
+  color: var(--texto);
+}
+.menu-item:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+.menu-item svg {
+  width: 21px;
+  height: 21px;
+  color: var(--texto-2);
+}
+.menu-item--perigo,
+.menu-item--perigo svg {
+  color: var(--perigo);
+}
+.menu-item__dizeres {
+  flex: 1;
+  min-width: 0;
+}
+.menu-item__legenda {
+  display: block;
+  font-size: 12.5px;
+  color: var(--texto-3);
+}
+
+/* Aviso curto — o toast. Nasce embaixo do cabeçalho, não em cima do polegar. */
+.avisos {
+  position: fixed;
+  top: calc(var(--seguro-topo) + 8px);
+  left: 0;
+  right: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  pointer-events: none;
+}
+.aviso {
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 16px;
+  border-radius: 999px;
+  background: rgba(38, 43, 49, 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--borda-forte);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--texto);
+  animation: aviso-entra 320ms var(--mola);
+}
+.aviso[data-saindo] {
+  animation: aviso-sai 220ms var(--suave) forwards;
+}
+.aviso svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.aviso--erro {
+  border-color: rgba(226, 100, 93, 0.4);
+}
+.aviso--erro svg {
+  color: var(--perigo);
+}
+.aviso--bom svg {
+  color: var(--vivo);
+}
+@keyframes aviso-entra {
+  from { transform: translateY(-18px) scale(0.95); opacity: 0; }
+}
+@keyframes aviso-sai {
+  to { transform: translateY(-12px); opacity: 0; }
+}
+
+/* ═══ Portal ════════════════════════════════════════════════════ */
+
+.portal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: var(--teclado, 0px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--fundo);
+  overflow: hidden;
+}
+.portal__mancha {
+  position: absolute;
+  top: -160px;
+  left: 50%;
+  width: 620px;
+  height: 620px;
+  margin-left: -310px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(95, 106, 217, 0.2), transparent 65%);
+  filter: blur(20px);
+  pointer-events: none;
+}
+.portal__corpo {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: calc(var(--seguro-topo) + 34px) 24px calc(var(--seguro-base) + 28px);
+  display: flex;
+  flex-direction: column;
+}
+.portal__marca {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.portal__nome {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.32em;
+  text-indent: 0.32em;
+}
+.portal__slogan {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+}
+.portal__lead {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 14.5px;
+  color: var(--texto-2);
+  line-height: 1.5;
+}
+.portal__previa {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 26px;
+  padding: 14px;
+  border-radius: var(--raio-m);
+  background: var(--superficie-1);
+  border: 1px solid var(--borda);
+}
+.portal__previa-dizeres {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.portal__previa-titulo {
+  font-size: 15.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.portal__previa-legenda {
+  font-size: 12.5px;
+  color: var(--texto-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.portal__abas {
+  margin-top: 20px;
+}
+.portal__palco {
+  position: relative;
+  margin-top: 18px;
+}
+.portal__folha {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.portal__folha[hidden] {
+  display: none;
+}
+.portal__rodape {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+.portal__separador {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  color: var(--texto-3);
+  font-size: 12px;
+}
+.portal__separador::before,
+.portal__separador::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--borda);
+}
+.portal__sem-conta {
+  padding: 12px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--texto-2);
+}
+.portal__nota {
+  font-size: 12px;
+  color: var(--texto-3);
+  text-align: center;
+  line-height: 1.5;
+  max-width: 34ch;
+}
+
+/* Fita de mascotes do cadastro. */
+.mascotes {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px 8px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+/* `.mascote-opcao` é o botão; `.mascote` é o SVG que `avatares.js` desenha
+   dentro dele. Os dois nomes vêm do CALL de mesa, e é de propósito que sejam
+   diferentes: já custou um anel cinza em volta de cada bicho o dia em que
+   foram o mesmo. */
+.mascote-opcao {
+  flex: none;
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  padding: 3px;
+  background: var(--superficie-2);
+  border: 2px solid transparent;
+  scroll-snap-align: center;
+  transition: border-color 200ms var(--suave), transform 200ms var(--mola);
+}
+.mascote-opcao .avatar {
+  width: 100%;
+  height: 100%;
+}
+.mascote-opcao[aria-pressed="true"] {
+  border-color: var(--acento);
+  transform: scale(1.06);
+}
+
+/* ═══ Grupos ════════════════════════════════════════════════════ */
+
+.cartao-grupo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+}
+.cartao-grupo:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+.cartao-grupo__dizeres {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cartao-grupo__nome {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cartao-grupo__linha {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--texto-2);
+  margin-top: 2px;
+}
+.cartao-grupo__ponto {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vivo);
+  flex: none;
+}
+
+/* ─── Árvore de canais ─────────────────────────────────────────── */
+
+.canal {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 16px;
+  text-align: left;
+  color: var(--texto-2);
+  border-radius: var(--raio-p);
+}
+.canal:active {
+  background: rgba(255, 255, 255, 0.05);
+}
+.canal svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  color: var(--texto-3);
+}
+.canal__nome {
+  flex: 1;
+  min-width: 0;
+  font-size: 15.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canal[data-ativo] {
+  color: var(--texto);
+  background: var(--acento-suave);
+}
+.canal[data-ativo] svg {
+  color: var(--acento-claro);
+}
+.canal__marca {
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--perigo);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+.canal__contagem {
+  flex: none;
+  font-size: 12px;
+  color: var(--texto-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Quem já está dentro de um canal de voz, listado embaixo dele. */
+.na-voz {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 16px 5px 44px;
+  font-size: 13.5px;
+  color: var(--texto-2);
+}
+.na-voz__avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  box-shadow: 0 0 0 0 rgba(79, 201, 140, 0);
+  transition: box-shadow 160ms var(--suave);
+}
+.na-voz[data-falando] .na-voz__avatar {
+  box-shadow: 0 0 0 2px var(--vivo);
+}
+.na-voz__nome {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.na-voz__selos {
+  display: flex;
+  gap: 5px;
+  color: var(--texto-3);
+}
+.na-voz__selos svg {
+  width: 15px;
+  height: 15px;
+}
+.na-voz__selos .perigo {
+  color: var(--perigo);
+}
+.na-voz__selos .vivo {
+  color: var(--vivo);
+}
+
+/* ═══ Conversa ══════════════════════════════════════════════════ */
+
+.conversa {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: calc(var(--alt-cabecalho) + var(--seguro-topo) + 10px) max(12px, var(--seguro-dir)) 12px
+    max(12px, var(--seguro-esq));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Um espaçador que só existe enquanto sobra tela: empurra as primeiras
+   mensagens para baixo, para a conversa começar perto do campo de escrever em
+   vez de flutuar no alto. Quando o histórico enche, ele vira zero sozinho —
+   é o que `flex-grow` faz quando não há espaço livre. */
+.conversa::before {
+  content: "";
+  flex: 1 0 0;
+}
+
+.marco-dia {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 4px 10px;
+  color: var(--texto-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.marco-dia::before,
+.marco-dia::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--borda);
+}
+
+.mensagem {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 3px 4px;
+  border-radius: var(--raio-p);
+  transition: background 200ms var(--suave);
+}
+.mensagem[data-realce] {
+  background: var(--acento-suave);
+}
+.mensagem--seguida {
+  margin-top: -1px;
+}
+.mensagem__avatar {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  margin-top: 2px;
+}
+.mensagem--seguida .mensagem__avatar {
+  visibility: hidden;
+  height: 0;
+  margin: 0;
+}
+.mensagem__corpo {
+  flex: 1;
+  min-width: 0;
+}
+.mensagem__cabecalho {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 1px;
+}
+.mensagem__autor {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--texto);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
+.mensagem__hora {
+  font-size: 11px;
+  color: var(--texto-3);
+  flex: none;
+}
+.mensagem__texto {
+  font-size: 15px;
+  line-height: 1.45;
+  color: #dfe3e8;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.mensagem__texto a {
+  color: var(--acento-claro);
+}
+.mensagem__editada {
+  font-size: 11px;
+  color: var(--texto-3);
+  margin-left: 5px;
+}
+.mensagem__excluida {
+  font-size: 14px;
+  font-style: italic;
+  color: var(--texto-3);
+}
+.mensagem__enviando {
+  opacity: 0.55;
+}
+
+.emoji {
+  display: inline-block;
+  width: 1.35em;
+  height: 1.35em;
+  vertical-align: -0.32em;
+}
+.emoji--so {
+  width: 2.6em;
+  height: 2.6em;
+  vertical-align: -0.5em;
+}
+
+/* Emoji do sistema é texto, e texto não tem largura fixa: forçar caixa nele
+   corta a metade de baixo em qualquer fonte de emoji. */
+.emoji--nativo {
+  width: auto;
+  height: auto;
+  font-size: 1.15em;
+  line-height: 1;
+  vertical-align: -0.14em;
+}
+.emoji--so.emoji--nativo {
+  font-size: 2.4em;
+  vertical-align: -0.1em;
+}
+
+.reacoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+.reacao {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--texto-2);
+  transition: transform 120ms var(--suave);
+}
+.reacao:active {
+  transform: scale(0.92);
+}
+.reacao[data-minha] {
+  background: var(--acento-suave);
+  border-color: rgba(95, 106, 217, 0.45);
+  color: var(--acento-claro);
+}
+.reacao .emoji {
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+}
+.reacao .emoji--nativo {
+  width: auto;
+  height: auto;
+  font-size: 15px;
+}
+
+/* ─── Compositor ───────────────────────────────────────────────── */
+
+.compositor {
+  flex: none;
+  position: relative;
+  z-index: 7;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px max(10px, var(--seguro-dir)) calc(8px + var(--reserva-base, 0px)) max(10px, var(--seguro-esq));
+  background: color-mix(in srgb, var(--fundo) 88%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--borda);
+}
+.compositor__caixa {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 5px 6px 5px 14px;
+  border-radius: 22px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  transition: border-color var(--rapido);
+}
+.compositor__caixa:focus-within {
+  border-color: var(--borda-forte);
+}
+/* Um `<textarea>`, e não um `contenteditable`.
+   O campo do CALL de mesa é editável porque desenha o emoji do CALL dentro
+   da linha. No celular, quem digita é o teclado do sistema — com correção,
+   digitação por deslize e composição de IME —, e `contenteditable` briga com
+   os três em Android. O emoji próprio entra como `:nome:` e vira desenho na
+   mensagem publicada; o resto é Unicode, que o teclado já sabe escrever. */
+.compositor__campo {
+  flex: 1;
+  min-width: 0;
+  max-height: 116px;
+  min-height: 24px;
+  height: 24px;
+  overflow-y: auto;
+  padding: 8px 0;
+  font-size: 16px;
+  line-height: 1.35;
+  color: var(--texto);
+  background: none;
+  border: 0;
+  outline: 0;
+  resize: none;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+}
+.compositor__campo::placeholder {
+  color: var(--texto-3);
+}
+.compositor__botao {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--texto-3);
+}
+.compositor__botao svg {
+  width: 21px;
+  height: 21px;
+}
+.compositor__enviar {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--acento);
+  color: #fff;
+  transition: transform 220ms var(--mola), opacity 180ms var(--suave);
+}
+.compositor__enviar svg {
+  width: 21px;
+  height: 21px;
+  stroke-width: 2;
+}
+/* Vazio, o botão continua ocupando o lugar dele — encolher e sumir faria a
+   caixa de texto crescer e encolher a cada letra digitada e apagada. Ele só
+   perde a cor e para de responder. */
+.compositor__enviar[data-vazio] {
+  background: var(--superficie-3);
+  color: var(--texto-3);
+  pointer-events: none;
+}
+.compositor__enviar:active {
+  transform: scale(0.88);
+}
+
+/* Barra de contexto acima do compositor: editando, respondendo. */
+.contexto-compositor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--superficie-2);
+  border-top: 1px solid var(--borda);
+  font-size: 13px;
+  color: var(--texto-2);
+}
+.contexto-compositor strong {
+  color: var(--texto);
+  font-weight: 600;
+}
+
+/* Seletor de emoji, em fita horizontal por categoria. */
+.emojis {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.emojis__categorias {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.emojis__categoria {
+  flex: none;
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: var(--superficie-2);
+  font-size: 13px;
+  color: var(--texto-2);
+  white-space: nowrap;
+}
+.emojis__categoria[aria-selected="true"] {
+  background: var(--acento-suave);
+  color: var(--acento-claro);
+}
+.emojis__grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+  gap: 4px;
+  padding: 0 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  max-height: 46dvh;
+}
+.emojis__item {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: var(--raio-p);
+  font-size: 26px;
+  line-height: 1;
+  transition: background 90ms linear, transform 120ms var(--suave);
+}
+.emojis__item:active {
+  background: var(--superficie-3);
+  transform: scale(0.9);
+}
+.emojis__item .emoji {
+  width: 28px;
+  height: 28px;
+}
+.emojis__item .emoji--nativo {
+  width: auto;
+  height: auto;
+  font-size: 26px;
+}
+
+/* ═══ Call ══════════════════════════════════════════════════════ */
+
+/* Apresentada por cima de tudo, e não empilhada: a call não é "mais fundo" na
+   navegação, é outro contexto. Sai arrastando para baixo, virando a tira. */
+.call {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: #0b0c0e;
+  transform: translateY(calc(100% + var(--arrasto, 0px)));
+  will-change: transform;
+  overflow: hidden;
+}
+.call[data-animando] {
+  transition: transform 380ms var(--mola);
+}
+.call[data-aberta] {
+  transform: translateY(var(--arrasto, 0px));
+}
+.call__fundo {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(90% 55% at 50% 0%, rgba(95, 106, 217, 0.14), transparent 70%),
+    radial-gradient(70% 45% at 50% 100%, rgba(79, 201, 140, 0.07), transparent 70%);
+  pointer-events: none;
+}
+.call__cabecalho {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: calc(var(--alt-cabecalho) + var(--seguro-topo));
+  padding: var(--seguro-topo) max(6px, var(--seguro-dir)) 0 max(6px, var(--seguro-esq));
+}
+.call__palco {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--alt-cabecalho) + var(--seguro-topo) + 6px) max(12px, var(--seguro-esq)) 10px
+    max(12px, var(--seguro-dir));
+}
+
+/* Grade de participantes. O número de colunas acompanha a quantidade de
+   gente, como qualquer app de chamada: duas pessoas ganham cartões grandes,
+   oito ganham cartões pequenos, e ninguém fica com sobra de tela vazia. */
+.grade-voz {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, 1fr);
+  /* Com duas pessoas a grade fica no meio da tela; com dez, ela encosta no
+     topo e rola. Margem automática em flex faz as duas coisas sem media
+     query nem medição em JavaScript. */
+  margin: auto 0;
+}
+.grade-voz[data-quantos="1"] {
+  grid-template-columns: 1fr;
+}
+.grade-voz[data-quantos="2"] {
+  grid-template-columns: 1fr;
+}
+.grade-voz[data-muitos] {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.quadro {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  aspect-ratio: 1;
+  border-radius: var(--raio-m);
+  background: var(--superficie-1);
+  border: 1px solid var(--borda);
+  overflow: hidden;
+  transition: border-color 160ms var(--suave), box-shadow 160ms var(--suave);
+}
+.quadro[data-falando] {
+  border-color: rgba(79, 201, 140, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(79, 201, 140, 0.45);
+}
+.grade-voz[data-quantos="2"] .quadro,
+.grade-voz[data-quantos="1"] .quadro {
+  aspect-ratio: 16 / 10;
+}
+.quadro__nome {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--texto);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+.quadro__nome span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quadro__nome svg {
+  width: 15px;
+  height: 15px;
+}
+.quadro__mudo {
+  color: var(--perigo);
+}
+.quadro__atividade {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--texto-2);
+  overflow: hidden;
+}
+.quadro__atividade span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quadro__atividade img,
+.quadro__atividade svg {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+}
+
+/* Uma transmissão de tela ocupa o palco inteiro e empurra a grade para baixo. */
+.tela-transmitida {
+  position: relative;
+  width: 100%;
+  border-radius: var(--raio-m);
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--borda);
+  margin-bottom: 8px;
+}
+.tela-transmitida video {
+  width: 100%;
+  display: block;
+  background: #000;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+.tela-transmitida__faixa {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 10px 8px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), transparent);
+  font-size: 12.5px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.tela-transmitida__faixa span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tela-transmitida__botao {
+  pointer-events: auto;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+}
+.tela-transmitida__botao svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* Tela cheia de uma transmissão: sai do fluxo e vira o app inteiro. */
+.holofote {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: holofote-entra 240ms var(--mola);
+}
+@keyframes holofote-entra {
+  from { opacity: 0; transform: scale(0.96); }
+}
+.holofote video {
+  max-width: 100%;
+  max-height: 100%;
+  touch-action: none;
+  will-change: transform;
+}
+.holofote__sair {
+  position: absolute;
+  top: calc(var(--seguro-topo) + 10px);
+  right: calc(var(--seguro-dir) + 10px);
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  color: #fff;
+}
+.holofote__sair svg {
+  width: 22px;
+  height: 22px;
+}
+.holofote__dica {
+  position: absolute;
+  bottom: calc(var(--seguro-base) + 16px);
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  animation: some 3.2s 1.6s forwards;
+}
+@keyframes some {
+  to { opacity: 0; }
+}
+
+/* Controles da call. */
+.call__controles {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px max(16px, var(--seguro-dir)) calc(16px + var(--seguro-base)) max(16px, var(--seguro-esq));
+}
+.controle {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--superficie-3);
+  color: var(--texto);
+  transition: transform 160ms var(--mola), background 180ms var(--suave), color 180ms var(--suave);
+}
+.controle svg {
+  width: 25px;
+  height: 25px;
+}
+.controle:active {
+  transform: scale(0.9);
+}
+.controle[data-ligado] {
+  background: #fff;
+  color: #111;
+}
+.controle--sair {
+  background: var(--perigo);
+  color: #fff;
+  width: 64px;
+  height: 64px;
+}
+.controle--sair svg {
+  width: 28px;
+  height: 28px;
+}
+.controle__rotulo {
+  position: absolute;
+  bottom: -19px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10.5px;
+  color: var(--texto-3);
+  white-space: nowrap;
+}
+.controle__marca {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--perigo);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  border: 2px solid #0b0c0e;
+  box-sizing: content-box;
+}
+
+/* ─── Soundboard ───────────────────────────────────────────────── */
+
+.sons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+  padding: 0 20px;
+}
+.som {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 84px;
+  padding: 10px 8px;
+  border-radius: var(--raio-m);
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--texto);
+  text-align: center;
+  transition: transform 140ms var(--mola), background 140ms var(--suave);
+}
+.som svg {
+  width: 22px;
+  height: 22px;
+  color: var(--acento-claro);
+}
+.som:active {
+  transform: scale(0.94);
+  background: var(--superficie-3);
+}
+.som__nome {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ═══ Perfil e ajustes ══════════════════════════════════════════ */
+
+.retrato {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px 22px;
+}
+.retrato__nome {
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+.retrato__bio {
+  font-size: 14.5px;
+  color: var(--texto-2);
+  text-align: center;
+  line-height: 1.5;
+  max-width: 34ch;
+}
+.retrato__selo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  font-size: 12.5px;
+  color: var(--texto-2);
+}
+.retrato__selo svg {
+  width: 14px;
+  height: 14px;
+}
+.retrato__editar {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--acento);
+  color: #fff;
+  border: 3px solid var(--fundo);
+}
+.retrato__editar svg {
+  width: 16px;
+  height: 16px;
+}
+.retrato__moldura {
+  position: relative;
+}
+
+/* Medidor de nível do microfone nos ajustes de voz. */
+.medidor {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--superficie-3);
+  overflow: hidden;
+}
+.medidor__barra {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, var(--vivo), #a8d94f 70%, var(--atencao));
+  transition: transform 60ms linear;
+}
+.medidor__limiar {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--texto);
+  opacity: 0.7;
+}
+
+/* Notas de versão, na Central de Novidades. */
+.nota {
+  padding: 16px 20px;
+}
+.nota + .nota {
+  border-top: 1px solid var(--borda);
+}
+.nota__topo {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 8px;
+}
+.nota__versao {
+  font-size: 16px;
+  font-weight: 700;
+}
+.nota__data {
+  font-size: 12px;
+  color: var(--texto-3);
+}
+.nota__selo {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--acento-suave);
+  color: var(--acento-claro);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.nota__titulo {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--texto);
+  margin: 12px 0 5px;
+}
+.nota__itens {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nota__itens li {
+  position: relative;
+  padding-left: 16px;
+  font-size: 14px;
+  color: var(--texto-2);
+  line-height: 1.5;
+}
+.nota__itens li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 9px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--texto-3);
+}
+
+/* ─── Instalação (o convite para adicionar à tela de início) ───── */
+
+.instalar {
+  margin: 0 max(12px, var(--seguro-esq)) 14px max(12px, var(--seguro-dir));
+  padding: 16px;
+  border-radius: var(--raio-m);
+  background: linear-gradient(140deg, rgba(95, 106, 217, 0.2), rgba(95, 106, 217, 0.05));
+  border: 1px solid rgba(95, 106, 217, 0.3);
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.instalar__dizeres {
+  flex: 1;
+  min-width: 0;
+}
+.instalar__titulo {
+  font-size: 15px;
+  font-weight: 600;
+}
+.instalar__texto {
+  font-size: 13px;
+  color: var(--texto-2);
+  line-height: 1.45;
+  margin-top: 2px;
+}
+.instalar__passos {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  counter-reset: passo;
+}
+.instalar__passo {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.instalar__numero {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--acento-suave);
+  color: var(--acento-claro);
+  font-size: 13px;
+  font-weight: 700;
+}
+.instalar__passo p {
+  font-size: 14.5px;
+  color: var(--texto-2);
+  line-height: 1.5;
+}
+.instalar__passo strong {
+  color: var(--texto);
+  font-weight: 600;
+}
+
+/* ─── Carga e esqueleto de lista ───────────────────────────────── */
+
+.esqueleto {
+  border-radius: var(--raio-p);
+  background: linear-gradient(
+    90deg,
+    var(--superficie-2) 25%,
+    var(--superficie-3) 37%,
+    var(--superficie-2) 63%
+  );
+  background-size: 400% 100%;
+  animation: brilhar 1.3s ease-in-out infinite;
+}
+@keyframes brilhar {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+.girando {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--superficie-4);
+  border-top-color: var(--acento-claro);
+  animation: girar 700ms linear infinite;
+}
+
+/* Puxar para atualizar. */
+.puxar {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-left: -17px;
+  border-radius: 50%;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda);
+  color: var(--acento-claro);
+  opacity: 0;
+  pointer-events: none;
+}
+.puxar svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ─── Tablet e telas largas ────────────────────────────────────── */
+
+/* O app continua sendo de celular; num tablet ele só para de esticar linha de
+   texto até 900 px de largura, o que ninguém lê. */
+@media (min-width: 700px) {
+  .grupo,
+  .instalar {
+    max-width: 640px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .conversa {
+    max-width: 760px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .compositor__caixa {
+    max-width: 736px;
+    margin: 0 auto;
+  }
+  .grade-voz {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .grade-voz[data-quantos="1"],
+  .grade-voz[data-quantos="2"] {
+    grid-template-columns: repeat(2, 1fr);
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .folha {
+    left: 50%;
+    right: auto;
+    width: min(560px, 100%);
+    transform: translate(-50%, calc(100% + var(--arrasto, 0px)));
+  }
+  .folha[data-aberta] {
+    transform: translate(-50%, var(--arrasto, 0px));
+  }
+}

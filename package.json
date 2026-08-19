@@ -10,7 +10,11 @@
     "dev:web": "npm run preparar:audio && node testes/ao-vivo.mjs",
     "dev": "tauri dev",
     "build": "tauri build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:movel": "node scripts/servir-movel.mjs",
+    "icones:pwa": "node scripts/gerar-icones-pwa.mjs",
+    "montar:pwa": "node scripts/montar-pwa.mjs",
+    "build:site": "npm run preparar:audio && npm run montar:pwa"
   },
   "dependencies": {
     "@livekit/krisp-noise-filter": "^0.4.4",

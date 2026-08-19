@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cena do CALL no celular</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #000;
+      }
+      iframe {
+        width: 390px;
+        height: 844px;
+        border: 0;
+        display: block;
+      }
+      /* A imagem lenta segura o evento `load` enquanto o roteiro conduz o
+         aplicativo — é o `load` que dispara a captura do Chromium headless. */
+      #freio {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="app" allow="microphone; autoplay"></iframe>
+    <!-- Segura o evento `load` — que é o gatilho da captura do Chromium —
+         por tempo real suficiente para o roteiro conduzir a cena. Precisa
+         estar no HTML desde o início: posto pelo script, o `load` já teria
+         disparado antes, e a foto sairia da tela de abertura. -->
+    <img id="freio" src="/segurar?ms=15000" alt="" />
+
+    <script type="module">
+      /*
+        Leva o aplicativo até um estado e para ali, para o Chromium fotografar.
+
+          .../testes/cena-movel.html?cena=conversa
+
+        Não é teste: é o olho. Existe porque uma suíte que confere altura de
+        botão não vê espaçamento torto, hierarquia fraca nem contraste ruim —
+        e essas três coisas são metade do trabalho numa tela de celular.
+      */
+      const cena = new URLSearchParams(location.search).get("cena") ?? "grupos";
+      const SERVIDOR = "ws://127.0.0.1:8899";
+      const quadro = document.getElementById("app");
+
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+      const aguardar = async (teste, limite = 8000) => {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          try {
+            const v = teste();
+            if (v) return v;
+          } catch {
+            /* montando */
+          }
+          await esperar(80);
+        }
+        return null;
+      };
+
+      const doc = () => quadro.contentDocument;
+      const app = () => quadro.contentWindow.CALL;
+      const telaAtual = () =>
+        [...doc().querySelectorAll(".tela")].filter((n) => !n.hasAttribute("data-aba-oculta")).pop() ??
+        doc();
+      const porTexto = (seletor, texto, raiz = doc()) =>
+        [...raiz.querySelectorAll(seletor)].find((n) =>
+          n.textContent.toLowerCase().includes(texto.toLowerCase())
+        ) ?? null;
+
+      function tocar(elemento) {
+        if (!elemento) return false;
+        const o = { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true };
+        elemento.dispatchEvent(new quadro.contentWindow.PointerEvent("pointerdown", o));
+        elemento.dispatchEvent(new quadro.contentWindow.PointerEvent("pointerup", o));
+        elemento.click();
+        return true;
+      }
+
+      async function fecharFolhas() {
+        for (let i = 0; i < 4; i++) {
+          const cortina = doc().querySelector(".cortina");
+          if (!cortina) return;
+          tocar(cortina);
+          await esperar(400);
+        }
+      }
+
+      async function abrir({ limpar = false } = {}) {
+        if (limpar) localStorage.clear();
+        quadro.src = `/movel/index.html?servidor=${encodeURIComponent(SERVIDOR)}`;
+        await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+        await esperar(700);
+      }
+
+      /** Estado comum a quase todas as cenas: alguém com um grupo e conversa. */
+      async function prepararGrupo() {
+        localStorage.setItem(
+          "call.preferencias",
+          JSON.stringify({
+            servidor: SERVIDOR,
+            apelido: "Alan",
+            avatar: "raposa",
+            bio: "De quem tem a ideia primeiro",
+            usuario: "cena-alan",
+          })
+        );
+        await abrir();
+        await aguardar(() => doc().getElementById("abas")?.children.length === 3);
+
+        tocar(telaAtual().querySelector(".flutuante"));
+        await aguardar(() => porTexto(".menu-item", "criar um grupo"));
+        tocar(porTexto(".menu-item", "criar um grupo"));
+        await aguardar(() => doc().querySelector(".folha .campo__entrada"));
+        doc().querySelector(".folha .campo__entrada").value = "Sexta à noite";
+        tocar(porTexto(".folha__acoes .botao--primario", "criar"));
+        await aguardar(() => telaAtual().querySelector(".canal"), 12000);
+        await fecharFolhas();
+        await esperar(400);
+      }
+
+      async function entrarNaConversa() {
+        const canais = [...telaAtual().querySelectorAll(".canal")];
+        tocar(canais.find((c) => c.textContent.toLowerCase().includes("geral")) ?? canais[0]);
+        const campo = await aguardar(() => telaAtual().querySelector(".compositor__campo"));
+        for (const texto of [
+          "gente, alguém pra jogar hoje?",
+          "eu topo :feliz:",
+          "às 21h no canal de voz então",
+        ]) {
+          campo.value = texto;
+          campo.dispatchEvent(new quadro.contentWindow.Event("input", { bubbles: true }));
+          tocar(telaAtual().querySelector(".compositor__enviar"));
+          await esperar(500);
+        }
+        await esperar(600);
+      }
+
+      const cenas = {
+        async portal() {
+          await abrir({ limpar: true });
+          await aguardar(() => doc().getElementById("portal"));
+          await esperar(500);
+        },
+
+        async grupos() {
+          await prepararGrupo();
+          app().navegacao().voltarAoInicio();
+          await esperar(600);
+        },
+
+        async grupo() {
+          await prepararGrupo();
+        },
+
+        async conversa() {
+          await prepararGrupo();
+          await entrarNaConversa();
+        },
+
+        async voce() {
+          await prepararGrupo();
+          tocar(doc().querySelector('#abas [data-aba="voce"]'));
+          await esperar(600);
+        },
+
+        async voz() {
+          await prepararGrupo();
+          tocar(doc().querySelector('#abas [data-aba="voce"]'));
+          await esperar(400);
+          tocar(porTexto(".linha__titulo", "voz e microfone", telaAtual())?.closest(".linha"));
+          await esperar(700);
+        },
+
+        async convite() {
+          await prepararGrupo();
+          tocar(telaAtual().querySelector(".cabecalho .acao:last-child"));
+          await aguardar(() => porTexto(".menu-item", "compartilhar convite"));
+          tocar(porTexto(".menu-item", "compartilhar convite"));
+          await esperar(700);
+        },
+
+        async perfil() {
+          await prepararGrupo();
+          tocar(doc().querySelector('#abas [data-aba="voce"]'));
+          await esperar(400);
+          tocar(telaAtual().querySelector(".retrato__moldura"));
+          await esperar(800);
+        },
+
+        /* Entra de verdade no canal de voz — o Chromium headless entra com
+           microfone falso, então a call acontece como aconteceria no aparelho,
+           só que com uma pessoa dentro. */
+        async chamada() {
+          await prepararGrupo();
+          const canais = [...telaAtual().querySelectorAll(".canal")];
+          tocar(canais.find((c) => c.textContent.toLowerCase().includes("voz")));
+          await aguardar(() => doc().querySelector(".call[data-aberta]"), 12000);
+          await esperar(1200);
+        },
+
+        /* A mesma call, recolhida: o que se vê é a tira do rodapé. */
+        async tira() {
+          // `cenas.chamada()`, e não `this.chamada()`: o roteiro é chamado
+          // como `(cenas[nome] ?? cenas.grupos)()`, e um valor entre
+          // parênteses perde o receptor — `this` chegaria indefinido aqui.
+          await cenas.chamada();
+          tocar(doc().querySelector(".call__cabecalho .acao"));
+          await esperar(900);
+        },
+
+        async emojis() {
+          await prepararGrupo();
+          await entrarNaConversa();
+          tocar(telaAtual().querySelector(".compositor__botao"));
+          await esperar(700);
+        },
+      };
+
+      await (cenas[cena] ?? cenas.grupos)();
+
+      // A cena está pronta. O `load` chega quando a imagem lenta terminar, e
+      // é ele que dispara a foto.
+    </script>
+  </body>
+</html>
