@@ -18,6 +18,31 @@
  */
 export const NOTAS_DE_VERSAO = [
   {
+    versao: "0.18.0",
+    data: "2026-08-19",
+    titulo: "Agora dá para ver quem está mudo de verdade",
+    resumo:
+      "O botão de mudo deixou de depender do cursor, a foto de perfil aparece onde devia, e a sala de voz mostra o que cada um está usando.",
+    destaques: [
+      {
+        titulo: "Novo",
+        itens: [
+          "F11 põe o CALL em tela cheia, sem as bordas do sistema atrapalhando.",
+          "Links colados no chat viram clicáveis na hora — nada de copiar e colar num navegador à parte.",
+          "Mutar e desmutar ganharam som próprio, no mesmo timbre dos avisos de entrar e sair.",
+        ],
+      },
+      {
+        titulo: "Consertado",
+        itens: [
+          "O ícone do botão de mudo agora troca de desenho — antes só a cor mudava, e ela sumia bem na hora em que o cursor ia conferir.",
+          "A sala de voz passou a mostrar o programa que cada pessoa está usando, com ícone e tudo — antes isso só aparecia na lista lateral.",
+          "O cartão de perfil de outra pessoa mostra a foto real dela quando existe uma, em vez de cair sempre no mascote.",
+        ],
+      },
+    ],
+  },
+  {
     versao: "0.17.0",
     data: "2026-08-18",
     titulo: "O mudo agora cabe no seu celular",
