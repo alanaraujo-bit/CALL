@@ -1,0 +1,5 @@
+# As migracoes ja aplicadas sao conferidas por checksum pelo sqlx na partida.
+# Com core.autocrlf=true, um checkout reescreveria estes arquivos em CRLF, o
+# checksum deixaria de bater, e o servidor subiria sem Postgres -- servindo o
+# arquivo local de contas em silencio. Aconteceu. Estes arquivos sao LF.
+servidor/migracoes/*.sql text eol=lf
