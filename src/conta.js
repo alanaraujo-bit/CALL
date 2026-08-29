@@ -124,25 +124,52 @@ export function esquecerSessao() {
   localStorage.removeItem(CHAVE_SESSAO);
 }
 
+/* ═══ De onde este CALL está falando ════════════════════════════ */
+
+/**
+ * Uma palavra só, para o painel do dono agrupar: `windows`, `movel` ou
+ * `navegador`.
+ *
+ * Isto não identifica ninguém e não muda o que a pessoa pode fazer — é a
+ * resposta a "onde o CALL está sendo usado", que é a pergunta que decide
+ * onde vale a pena gastar o próximo mês de trabalho. O servidor recorta o
+ * texto de novo do lado de lá (`plataforma_de`, em `main.rs`): um cliente
+ * adulterado não inventa categorias novas na legenda do gráfico.
+ *
+ * Não há user-agent, não há resolução de tela, não há impressão digital de
+ * navegador. Três valores possíveis, e nada mais.
+ */
+export function plataforma() {
+  // O aplicativo de Windows é o único que tem a ponte do Tauri.
+  if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) return "windows";
+  if (typeof navigator === "undefined") return "";
+  // O PWA de celular se reconhece pelo toque com tela estreita — o mesmo
+  // critério que `movel/` já usa para existir.
+  const toque = navigator.maxTouchPoints > 0;
+  const estreita = typeof window !== "undefined" && Math.min(window.innerWidth, window.innerHeight) <= 900;
+  return toque && estreita ? "movel" : "navegador";
+}
+
 /* ═══ Pedidos ═══════════════════════════════════════════════════ */
 
 export const cadastrar = (servidor, dados) =>
-  transacao(servidor, { tipo: "cadastrar", ...dados }, ["sessao"]);
+  transacao(servidor, { tipo: "cadastrar", ...dados, plataforma: plataforma() }, ["sessao"]);
 
 export const entrar = (servidor, email, senha) =>
-  transacao(servidor, { tipo: "entrar-conta", email, senha }, ["sessao"]);
+  transacao(servidor, { tipo: "entrar-conta", email, senha, plataforma: plataforma() }, ["sessao"]);
 
 /** Devolve a sessão, ou `null` quando o token venceu ou foi revogado. */
 export async function retomar(servidor, token) {
-  const resposta = await transacao(servidor, { tipo: "retomar", token }, [
-    "sessao",
-    "sem-sessao",
-  ]);
+  const resposta = await transacao(
+    servidor,
+    { tipo: "retomar", token, plataforma: plataforma() },
+    ["sessao", "sem-sessao"]
+  );
   return resposta.tipo === "sessao" ? resposta : null;
 }
 
 export const sair = (servidor, token) =>
-  transacao(servidor, { tipo: "sair-conta", token }, ["sem-sessao"]);
+  transacao(servidor, { tipo: "sair-conta", token, plataforma: plataforma() }, ["sem-sessao"]);
 
 /** O que o servidor sabe oferecer de Google. Nunca rejeita por não ter: a
  *  resposta "não tem" é uma resposta, e o botão simplesmente não aparece. */
@@ -169,7 +196,7 @@ export async function configuracaoDoGoogle(servidor) {
 }
 
 export const entrarComGoogle = (servidor, passagem) =>
-  transacao(servidor, { tipo: "google-entrar", ...passagem }, ["sessao"]);
+  transacao(servidor, { tipo: "google-entrar", ...passagem, plataforma: plataforma() }, ["sessao"]);
 
 /**
  * Grava perfil e lista de grupos na conta.

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cena da central de comando</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #0e0f11;
+      }
+      iframe {
+        display: block;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      Leva a aplicação real até a central de comando aberta numa aba, e para
+      ali para a captura.
+
+      Não é teste — é o que permite *olhar* o painel em vez de deduzi-lo da
+      marcação. Roda contra o servidor semeado por `painel-semente.mjs`, que
+      é o único jeito de a grade de coortes, o mapa de horários e o gráfico
+      de trinta dias terem o que desenhar: num servidor recém-nascido todos
+      eles são retângulos vazios, e um retângulo vazio não mostra se o
+      desenho está certo.
+
+      O login é o login de verdade, pelo portal, com o e-mail do dono. É ele
+      quem faz o servidor devolver `conta.admin`, que é o que revela o ícone
+      — semear `localStorage` não abriria o painel, porque quem decide isso
+      está do outro lado da rede.
+    -->
+    <iframe id="app" width="1400" height="900"></iframe>
+    <img src="/segurar?ms=26000" alt="" style="position: absolute; top: 0; left: 0; opacity: 0" />
+
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const aba = params.get("aba") ?? "geral";
+      const servidor = params.get("servidor") ?? "ws://127.0.0.1:8788";
+      const email = params.get("email") ?? "alanvitoraraujo1a@outlook.com";
+      const senha = params.get("senha") ?? "painel-de-teste-1";
+
+      const quadro = document.getElementById("app");
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      /** O veredito, gravado em testes/resultado.json — uma captura da tela
+       *  não diz se o login falhou, se a conta não é dona ou se o retrato não
+       *  chegou, e é isso que o roteiro que dispara a captura precisa saber. */
+      const relatar = () =>
+        fetch("/resultado", { method: "POST", body: JSON.stringify({ titulo: document.title }) }).catch(
+          () => {}
+        );
+
+      localStorage.setItem("call.preferencias", JSON.stringify({ servidor }));
+      quadro.src = "/src/index.html";
+      await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+
+      const doc = quadro.contentDocument;
+      const jan = quadro.contentWindow;
+      const $ = (id) => doc.getElementById(id);
+
+      // Sem isto a captura pega o painel no meio do surgimento: ela roda em
+      // tempo real, e uma animação em andamento renderiza pela metade.
+      if (params.get("movimento") !== "sim") {
+        const parado = doc.createElement("style");
+        parado.textContent =
+          "*, *::before, *::after { animation: none !important; transition: none !important; }";
+        doc.head.append(parado);
+      }
+
+      const aguardar = async (teste, limite = 12000) => {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          if (teste()) return true;
+          await esperar(100);
+        }
+        return false;
+      };
+      const teclar = (elemento, valor) => {
+        elemento.value = valor;
+        elemento.dispatchEvent(new jan.Event("input"));
+      };
+
+      /* Entrar de verdade, pelo portal. */
+      doc.querySelector('[data-aba="entrar"]').click();
+      await esperar(300);
+      teclar($("entrar-email"), email);
+      teclar($("entrar-senha"), senha);
+      $("form-entrar").dispatchEvent(new jan.Event("submit", { cancelable: true }));
+
+      const entrou = await aguardar(() => !$("tela-aplicacao").classList.contains("oculto"));
+      if (!entrou) {
+        document.title = "FALHOU: não entrou na conta";
+        await relatar();
+        throw new Error("login");
+      }
+
+      // A cena da porta fechada: entra com uma conta que não é a do dono e
+      // prova que o ícone continua escondido. Esconder um botão não é
+      // segurança — a segurança está em `contas::e_admin`, e `painel.test.mjs`
+      // prova que o servidor recusa —, mas oferecer a alguém uma porta que
+      // não abre também é um defeito, e é este que se olha aqui.
+      if (aba === "negado") {
+        const apareceu = await aguardar(
+          () => !$("botao-painel").classList.contains("oculto"),
+          4000
+        );
+        document.title = apareceu
+          ? "FALHOU: o ícone do painel apareceu para quem não é o dono"
+          : "PRONTO";
+        await relatar();
+        throw new Error("fim da cena");
+      }
+
+      const revelado = await aguardar(() => !$("botao-painel").classList.contains("oculto"));
+      if (!revelado) {
+        document.title = "FALHOU: o ícone do painel não apareceu";
+        await relatar();
+        throw new Error("sem ícone");
+      }
+
+      $("botao-painel").click();
+      // O retrato vem do servidor; sem ele, a captura pegaria "Levantando os
+      // números…".
+      const veio = await aguardar(() => doc.querySelector(".pnl-metrica, .pnl-negado"));
+      if (!veio) {
+        document.title = "FALHOU: o retrato não chegou";
+        await relatar();
+        throw new Error("sem retrato");
+      }
+
+      const botao = doc.querySelector(`.pnl__aba[data-aba="${aba}"]`);
+      if (!botao) {
+        document.title = `FALHOU: aba desconhecida (${aba})`;
+        await relatar();
+        throw new Error("aba");
+      }
+      botao.click();
+      await esperar(700);
+
+      // `?provocar=sim` faz alguem aparecer *enquanto* o painel esta aberto,
+      // por um WebSocket cru — cria um grupo, entra na voz e escreve. E a
+      // unica forma de fotografar a promessa central do painel: que ele e ao
+      // vivo, e nao uma tela que so se atualiza quando alguem manda.
+      if (params.get("provocar") === "sim") {
+        const par = new WebSocket(servidor);
+        await new Promise((ok) => par.addEventListener("open", ok, { once: true }));
+        const canalDeVoz = await new Promise((ok) => {
+          par.addEventListener("message", function ouvir(e) {
+            const msg = JSON.parse(e.data);
+            if (msg.tipo !== "bem-vindo") return;
+            par.removeEventListener("message", ouvir);
+            const canais = msg.grupo.categorias.flatMap((c) => c.canais);
+            ok({
+              voz: canais.find((c) => c.tipo === "voz").id,
+              texto: canais.find((c) => c.tipo === "texto").id,
+            });
+          });
+          par.send(
+            JSON.stringify({
+              tipo: "criar-grupo",
+              nome: "Chegando agora",
+              apelido: "Bruna",
+              usuario: "cena-bruna",
+              avatar: "raposa",
+              plataforma: "movel",
+            })
+          );
+        });
+        par.send(JSON.stringify({ tipo: "entrar-voz", canal: canalDeVoz.voz, transportes: [] }));
+        await esperar(300);
+        par.send(JSON.stringify({ tipo: "estado", mudo: false, transmitindo: true }));
+        par.send(JSON.stringify({ tipo: "mensagem", canal: canalDeVoz.texto, texto: "cheguei" }));
+        // Mais do que o intervalo do pulso (5s), para a captura pegar a lista
+        // de presentes ja atualizada por ele, e nao so pelos eventos.
+        await esperar(6500);
+      }
+
+      // `?rolar=fim` fotografa o pe da aba, que numa janela normal fica
+      // abaixo da dobra. E o unico jeito de olhar o mapa de horarios e as
+      // plataformas sem inventar uma segunda tela para eles.
+      if (params.get("rolar") === "fim") {
+        const corpo = doc.querySelector(".pnl__corpo");
+        corpo.scrollTop = corpo.scrollHeight;
+        await esperar(400);
+      }
+
+      // Uma prova mínima de que a aba desenhou algo, gravada no título: a
+      // captura sozinha não reprova nada, mas o roteiro que a dispara sabe
+      // ler isto.
+      const contar = (seletor) => doc.querySelectorAll(seletor).length;
+      const desenhou = {
+        geral: () => contar(".pnl-metrica") >= 6 && contar(".pnl-grafico__linha") >= 1,
+        crescimento: () => contar(".pnl-grafico__svg") >= 3,
+        retencao: () => contar(".pnl-coortes__celula") >= 8,
+        pessoas: () => contar(".pnl-tabela tbody tr") >= 5,
+        grupos: () => contar(".pnl-tabela tbody tr") >= 1,
+        // Dois degraus de LiveKit mais a malha, que a aba desenha sempre —
+        // e a chave do dono embaixo deles.
+        midia: () => contar(".pnl-degrau") >= 3 && contar(".pnl-chave") === 1,
+        vivo: () => contar("[data-vivo]") >= 6,
+        feedback: () => contar(".pnl-relato") >= 1,
+      }[aba];
+
+      document.title = desenhou() ? "PRONTO" : `FALHOU: a aba ${aba} não desenhou`;
+      await relatar();
+    </script>
+  </body>
+</html>

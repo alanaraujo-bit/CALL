@@ -24,6 +24,9 @@
 /testes/dev-*.log
 /testes/render-grupo*.html
 /testes/render-grupo*.png
+# A bancada do painel: trinta dias de historia inventada, gerada por
+# `node testes/painel-semente.mjs`.
+/testes/dados-painel/
 
 .vercel
 .env*

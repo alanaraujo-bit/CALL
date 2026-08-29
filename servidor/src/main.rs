@@ -20,6 +20,7 @@ mod contas;
 mod google;
 mod midia;
 mod modelo;
+mod telemetria;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -35,6 +36,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use contas::Cofre;
 use midia::Midia;
+use telemetria::Evento;
 use modelo::{agora_ms, novo_codigo, novo_id, Acervo, Canal, Categoria, Grupo, TipoCanal};
 
 type Fila = UnboundedSender<Message>;
@@ -100,6 +102,11 @@ struct Cartao {
     foto: String,
     /// Conta a que esta conexao pertence, quando o token da saudacao valeu.
     conta: Option<String>,
+    /// De qual casca do CALL esta conexao veio. Nao autentica nada e nao muda
+    /// o que a pessoa pode fazer — e so o que o painel usa para responder
+    /// "onde o CALL esta sendo usado", que e a pergunta que decide onde vale
+    /// a pena investir tempo.
+    plataforma: String,
 }
 
 impl Cartao {
@@ -132,8 +139,20 @@ impl Cartao {
             bio: texto_de(v, "bio").trim().chars().take(BIO_MAX).collect(),
             foto: foto_serializada_aceita(texto_de(v, "foto"), FOTO_PERFIL_MAX_CARACTERES),
             conta,
+            plataforma: plataforma_de(v),
         }
     }
+}
+
+/// Nome curto e sem surpresa da casca do cliente. Recortado aqui, e nao so
+/// no cliente: o painel agrupa por este texto, e um cliente adulterado nao
+/// deve conseguir inventar mil plataformas para poluir a legenda.
+fn plataforma_de(v: &Value) -> String {
+    texto_de(v, "plataforma")
+        .chars()
+        .filter(|c| c.is_ascii_lowercase())
+        .take(12)
+        .collect()
 }
 
 #[derive(Clone)]
@@ -166,6 +185,11 @@ struct Conexao {
     /// uma imagem para um programa que o CALL nao reconheceu sozinho. So faz
     /// sentido junto de `atividade`; sem nome nao ha o que ilustrar.
     atividade_icone: Option<String>,
+    plataforma: String,
+    /// Quando esta conexao entrou no canal de voz atual. E daqui que sai a
+    /// duracao de uma passagem pela call, anotada na saida — o servidor nao
+    /// tem cronometro proprio, e nao precisa de um.
+    voz_desde: Option<u64>,
 }
 
 impl Conexao {
@@ -204,6 +228,25 @@ struct Estado {
     /// pra alguem que nao esta no mesmo grupo, em grupo nenhum, ou nem
     /// conectado a um grupo — so logado.
     online: HashMap<String, HashMap<u64, Fila>>,
+    /// Conexoes com o painel administrativo aberto agora. Fica separado de
+    /// `online` de proposito: ser administrador nao e uma presenca social, e
+    /// o pulso ao vivo nao deve viajar para as outras abas da mesma conta que
+    /// nao estao olhando o painel.
+    admins: HashMap<u64, Fila>,
+    /// Todo socket aberto, esteja ele em um grupo ou não.
+    ///
+    /// `conexoes` só conhece quem já entrou num grupo — é ela que responde
+    /// "quem está neste canal". Mas o socket social existe antes disso e vive
+    /// sem grupo nenhum: quem abriu o CALL e está olhando a lista de grupos
+    /// está usando o CALL, e um painel que o conta como zero está mentindo
+    /// sobre o presente. Este conjunto é a resposta a "quantas janelas do
+    /// CALL estão abertas agora".
+    sockets: std::collections::HashSet<u64>,
+    /// Por onde os acontecimentos saem para serem gravados. E um canal, e nao
+    /// uma chamada ao cofre, porque quase tudo que vale anotar acontece
+    /// dentro de uma funcao sincrona com a tranca de `Estado` na mao —
+    /// esperar o banco ali pararia o encaminhamento de voz de todo mundo.
+    diario: UnboundedSender<Evento>,
 }
 
 impl Estado {
@@ -254,6 +297,202 @@ impl Estado {
     fn registrar_online(&mut self, conta_id: &str, id: u64, fila: &Fila) {
         self.online.entry(conta_id.to_string()).or_default().insert(id, fila.clone());
     }
+
+    /// Anota um acontecimento. Nunca falha e nunca espera: se o canal
+    /// estiver fechado (o servidor desligando), o evento se perde em
+    /// silencio, que e exatamente o que se quer de telemetria.
+    fn anotar(&self, tipo: &str, conta: Option<String>, alvo: &str, valor: i64, plataforma: &str) {
+        self.anotar_meio(tipo, conta, alvo, valor, plataforma, "", 0);
+    }
+
+    /// A mesma anotacao, dizendo tambem **por onde** a midia passou e quanta
+    /// banda custou. So os acontecimentos de voz tem transporte; para o
+    /// resto, `meio` e vazio e o painel nao inventa um.
+    fn anotar_meio(
+        &self,
+        tipo: &str,
+        conta: Option<String>,
+        alvo: &str,
+        valor: i64,
+        plataforma: &str,
+        meio: &str,
+        bytes: u64,
+    ) {
+        let _ = self.diario.send(Evento {
+            em: agora_ms(),
+            tipo: tipo.to_string(),
+            conta,
+            alvo: alvo.to_string(),
+            valor,
+            plataforma: plataforma.to_string(),
+            meio: meio.to_string(),
+            bytes,
+        });
+    }
+
+    fn avisar_admins(&self, aviso: &Value) {
+        for fila in self.admins.values() {
+            let _ = fila.send(texto_json(aviso));
+        }
+    }
+
+    /// O retrato do instante: o que esta acontecendo agora, sem passar por
+    /// banco nenhum. Sai daqui porque so a memoria deste processo sabe disso
+    /// — nenhuma tabela guarda "quem esta conectado".
+    fn pulso(&self) -> Value {
+        let mut em_voz = 0usize;
+        let mut transmitindo = 0usize;
+        let mut com_conta = 0usize;
+        let mut grupos: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut canais: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+        for c in self.conexoes.values() {
+            if c.canal_voz.is_some() {
+                em_voz += 1;
+            }
+            if c.transmitindo {
+                transmitindo += 1;
+            }
+            if c.conta.is_some() {
+                com_conta += 1;
+            }
+            if let Some(g) = &c.grupo {
+                grupos.insert(g);
+            }
+            if let Some(v) = &c.canal_voz {
+                canais.insert(v);
+            }
+        }
+
+        // Uma janela recém-aberta no portal não é conexão de grupo nem
+        // presença de conta: ela existe, e some do painel se ninguém a
+        // contar. Some-la seria fazer "quem está conectado" contradizer
+        // "quantas janelas estão abertas", que é o pior defeito que um painel
+        // ao vivo pode ter — dois números na mesma tela discordando.
+        let mut identificados: std::collections::HashSet<u64> = self.conexoes.keys().copied().collect();
+        for filas in self.online.values() {
+            identificados.extend(filas.keys().copied());
+        }
+        let sem_identificacao = self.sockets.difference(&identificados).count();
+
+        json!({
+            "em": agora_ms(),
+            "sockets": self.sockets.len(),
+            "semIdentificacao": sem_identificacao,
+            "conexoes": self.conexoes.len(),
+            "contasOnline": self.online.len(),
+            "comConta": com_conta,
+            "semConta": self.conexoes.len().saturating_sub(com_conta),
+            "emVoz": em_voz,
+            "transmitindo": transmitindo,
+            "gruposAtivos": grupos.len(),
+            "canaisDeVozAtivos": canais.len(),
+        })
+    }
+
+    /// Quem esta conectado agora, um por linha, para a aba "Ao vivo". Traz o
+    /// nome do grupo e do canal resolvidos, porque um codigo de dez letras
+    /// nao diz nada a quem esta lendo.
+    fn presentes_para_painel(&self) -> Vec<Value> {
+        let mut lista: Vec<Value> = self
+            .conexoes
+            .values()
+            .map(|c| {
+                let grupo = c.grupo.as_ref().and_then(|g| self.acervo.grupos.get(g));
+                let canal = c.canal_voz.as_ref().and_then(|id| {
+                    self.acervo
+                        .grupos
+                        .values()
+                        .find_map(|g| g.canal(id))
+                        .map(|c| c.nome.clone())
+                });
+                json!({
+                    "id": c.id.to_string(),
+                    "usuario": c.usuario,
+                    "apelido": c.apelido,
+                    "avatar": c.avatar,
+                    "conta": c.conta,
+                    "plataforma": c.plataforma,
+                    "grupo": grupo.map(|g| g.nome.clone()),
+                    "grupoCodigo": c.grupo,
+                    "canalVoz": canal,
+                    "mudo": c.mudo,
+                    "transmitindo": c.transmitindo,
+                    "atividade": c.atividade,
+                    "desdeVoz": c.voz_desde,
+                })
+            })
+            .collect();
+        // Quem está logado sem ter entrado em grupo nenhum. Desta conexao o
+        // servidor so sabe a conta — apelido e mascote nao viajam pelo socket
+        // social —, e por isso a linha vai sem nome: quem o resolve e o
+        // painel, que ja tem a lista de pessoas em maos.
+        let em_grupo: std::collections::HashSet<&str> =
+            self.conexoes.values().filter_map(|c| c.conta.as_deref()).collect();
+        for conta in self.online.keys() {
+            if em_grupo.contains(conta.as_str()) {
+                continue;
+            }
+            lista.push(json!({
+                "id": conta,
+                "conta": conta,
+                "apelido": Value::Null,
+                "avatar": "",
+                "plataforma": "",
+                "grupo": Value::Null,
+                "canalVoz": Value::Null,
+                "mudo": false,
+                "transmitindo": false,
+                "noPortal": true,
+            }));
+        }
+
+        lista.sort_by(|a, b| a["apelido"].as_str().cmp(&b["apelido"].as_str()));
+        lista
+    }
+
+    /// Os grupos que existem, com o que se sabe deles sem sair da memoria: a
+    /// estrutura vem do acervo, a presenca vem das conexoes.
+    fn grupos_para_painel(&self, membros: &HashMap<String, u64>) -> Vec<Value> {
+        let mut lista: Vec<Value> = self
+            .acervo
+            .grupos
+            .values()
+            .map(|g| {
+                let canais = g.ids_de_canal();
+                let mensagens: usize = canais.iter().map(|c| self.acervo.historico(c).len()).sum();
+                let ultima = canais
+                    .iter()
+                    .filter_map(|c| self.acervo.historico(c).last().map(|m| m.em))
+                    .max();
+                json!({
+                    "codigo": g.codigo,
+                    "nome": g.nome,
+                    "descricao": g.descricao,
+                    "dono": g.dono,
+                    "categorias": g.categorias.len(),
+                    "canais": canais.len(),
+                    "canaisDeVoz": g.categorias.iter()
+                        .flat_map(|c| c.canais.iter())
+                        .filter(|c| c.tipo == TipoCanal::Voz)
+                        .count(),
+                    "mensagens": mensagens,
+                    "ultimaMensagemEm": ultima,
+                    "membros": membros.get(&g.codigo).copied().unwrap_or(0),
+                    "online": self.do_grupo(&g.codigo).len(),
+                    "sons": self.acervo.sons_do_grupo(&g.codigo).len(),
+                })
+            })
+            .collect();
+        lista.sort_by(|a, b| {
+            b["online"]
+                .as_u64()
+                .cmp(&a["online"].as_u64())
+                .then_with(|| b["ultimaMensagemEm"].as_u64().cmp(&a["ultimaMensagemEm"].as_u64()))
+                .then_with(|| b["membros"].as_u64().cmp(&a["membros"].as_u64()))
+        });
+        lista
+    }
 }
 
 static PROXIMO_ID: AtomicU64 = AtomicU64::new(1);
@@ -290,12 +529,93 @@ async fn main() {
     // — e segurar `Estado` durante essa espera pararia o encaminhamento de
     // voz de todo mundo por causa de um cadastro de outra pessoa.
     let cofre = Arc::new(Cofre::carregar(pasta.clone()).await);
+
+    // O diario e uma fila, e nao uma chamada direta ao cofre: quem anota um
+    // acontecimento (entrar na voz, mandar uma mensagem) esta quase sempre
+    // com a tranca de `Estado` na mao, e nao pode esperar disco nem rede.
+    let (diario, mut recebidos) = unbounded_channel::<Evento>();
+
     let estado = Arc::new(Mutex::new(Estado {
         conexoes: HashMap::new(),
         acervo: Acervo::carregar(pasta),
         midia: Midia::do_ambiente(),
         online: HashMap::new(),
+        admins: HashMap::new(),
+        sockets: std::collections::HashSet::new(),
+        diario,
     }));
+
+    // O consumo do ciclo, relido do historico.
+    //
+    // A escada de midia conta minutos e banda na memoria deste processo,
+    // porque e ali que a decisao de emitir ou nao um token acontece — mas a
+    // memoria de um processo termina no proximo redeploy, e numa hospedagem
+    // gerenciada isso acontece toda vez que se publica. Sem esta releitura,
+    // o teto que existe para proteger a fatura zeraria varias vezes por mes
+    // e nunca chegaria a proteger nada.
+    {
+        let ciclo_desde = estado.lock().unwrap().midia.ciclo_desde();
+        let passado = cofre.eventos_desde(ciclo_desde).await;
+        let mut e = estado.lock().unwrap();
+        let mut recuperados = 0usize;
+        for evento in &passado {
+            if evento.tipo != telemetria::tipo::VOZ_SAIU || evento.meio.is_empty() {
+                continue;
+            }
+            e.midia.somar_consumo(&evento.meio, evento.valor, evento.bytes);
+            recuperados += 1;
+        }
+        if recuperados > 0 {
+            println!("[midia] consumo do ciclo recuperado de {recuperados} passagens pela call.");
+        }
+    }
+
+    // O escriba: grava cada acontecimento e, so quando ha alguem com o painel
+    // aberto, o repassa ao vivo. Uma tarefa so, em serie de proposito — a
+    // ordem de gravacao e a ordem em que aconteceu.
+    {
+        let cofre = cofre.clone();
+        let estado = estado.clone();
+        tokio::spawn(async move {
+            while let Some(evento) = recebidos.recv().await {
+                let copia = evento.clone();
+                cofre.registrar_evento(evento).await;
+
+                // A tranca so e tomada depois da escrita, nunca durante: um
+                // Postgres lento nao pode parar o resto do servidor.
+                let e = estado.lock().unwrap();
+                if !e.admins.is_empty() {
+                    e.avisar_admins(&json!({
+                        "tipo": "admin-evento",
+                        "evento": copia,
+                        "pulso": e.pulso()
+                    }));
+                }
+            }
+        });
+    }
+
+    // O pulso: o retrato do instante, de cinco em cinco segundos, e so para
+    // quem esta olhando. Sem ninguem no painel, isto e um `if` e um `continue`
+    // a cada cinco segundos — o custo de nao ter que perguntar.
+    {
+        let estado = estado.clone();
+        tokio::spawn(async move {
+            let mut relogio = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                relogio.tick().await;
+                let e = estado.lock().unwrap();
+                if e.admins.is_empty() {
+                    continue;
+                }
+                e.avisar_admins(&json!({
+                    "tipo": "admin-pulso",
+                    "pulso": e.pulso(),
+                    "presentes": e.presentes_para_painel()
+                }));
+            }
+        });
+    }
 
     loop {
         // Um erro de accept costuma ser transitorio (descritor esgotado, par
@@ -479,13 +799,24 @@ fn resposta_json(status: u16, motivo: &str, valor: &Value) -> Vec<u8> {
 /// nem papéis — é uma pessoa só usando. Sem `ADMIN_TOKEN` no ambiente, toda
 /// rota de dado recusa; a comparação byte a byte (e não `==` cedo demais)
 /// evita que o tempo de resposta vaze quantos caracteres já bateram.
-fn admin_autorizado(pedido: &PedidoHttp) -> bool {
+async fn admin_autorizado(pedido: &PedidoHttp, cofre: &Cofre) -> bool {
+    let Some(cabecalho) = pedido.cabecalho("authorization") else { return false };
+    let Some(recebido) = cabecalho.strip_prefix("Bearer ") else { return false };
+
+    // O mesmo token de sessão que o aplicativo já guarda abre a porta, desde
+    // que a conta dele seja a do dono. É o que faz o painel de dentro do CALL
+    // e esta página serem a mesma coisa autenticada do mesmo jeito, em vez de
+    // duas senhas para a mesma sala.
+    if let Some(conta) = cofre.conta_do_token(recebido).await {
+        if contas::e_admin(&conta.email) {
+            return true;
+        }
+    }
+
     let Ok(esperado) = std::env::var("ADMIN_TOKEN") else { return false };
     if esperado.is_empty() {
         return false;
     }
-    let Some(cabecalho) = pedido.cabecalho("authorization") else { return false };
-    let Some(recebido) = cabecalho.strip_prefix("Bearer ") else { return false };
 
     let e = esperado.as_bytes();
     let r = recebido.as_bytes();
@@ -527,7 +858,7 @@ async fn rotear_http(pedido: &PedidoHttp, estado: &Arc<Mutex<Estado>>, cofre: &A
         }
 
         ("GET", "/admin/api/feedback") => {
-            if !admin_autorizado(pedido) {
+            if !admin_autorizado(pedido, cofre).await {
                 return resposta_json(401, "Unauthorized", &json!({ "erro": "token inválido" }));
             }
             let lista = cofre.todos_feedbacks().await;
@@ -535,7 +866,7 @@ async fn rotear_http(pedido: &PedidoHttp, estado: &Arc<Mutex<Estado>>, cofre: &A
         }
 
         ("POST", caminho) if caminho.starts_with("/admin/api/feedback/") && caminho.ends_with("/status") => {
-            if !admin_autorizado(pedido) {
+            if !admin_autorizado(pedido, cofre).await {
                 return resposta_json(401, "Unauthorized", &json!({ "erro": "token inválido" }));
             }
             let id = caminho
@@ -587,6 +918,7 @@ async fn atender(fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Cofre>
     });
 
     let id = PROXIMO_ID.fetch_add(1, Ordering::Relaxed);
+    estado.lock().unwrap().sockets.insert(id);
     let mut janela_inicio = agora_ms();
     let mut enviadas_na_janela = 0u32;
     let mut pedidos_de_conta = 0u32;
@@ -634,7 +966,7 @@ async fn atender(fluxo: TcpStream, estado: Arc<Mutex<Estado>>, cofre: Arc<Cofre>
                 let _ = fila.send(recusa("senha", "Tentativas demais nesta conexão."));
                 continue;
             }
-            atender_conta(tipo, &v, &fila, &cofre).await;
+            atender_conta(tipo, &v, &fila, &estado, &cofre).await;
             continue;
         }
 
@@ -651,7 +983,9 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "criar-grupo" => criar_grupo(v, id, fila, estado, cofre).await,
         "entrar" => entrar(v, id, fila, estado, cofre).await,
         "entrar-voz" => entrar_voz(v, id, fila, estado),
-        "sair-voz" => sair_voz(id, estado),
+        "sair-voz" => sair_voz(v, id, estado),
+        "midia-falhou" => midia_falhou(v, id, fila, estado),
+        "midia-entrou" => midia_entrou(v, id, estado),
         "sinal" => sinal(v, id, estado),
         "estado" => estado_de_midia(v, id, estado),
         "assistindo" => estado_de_assistencia(v, id, estado),
@@ -688,6 +1022,12 @@ async fn tratar(tipo: &str, v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<
         "historico-privado" => historico_privado(v, id, fila, estado, cofre).await,
         "feedback-enviar" => feedback_enviar(v, id, fila, estado, cofre).await,
         "feedback-meu" => feedback_meu(v, id, fila, estado, cofre).await,
+        "admin-painel" => admin_painel(v, id, fila, estado, cofre).await,
+        "admin-largar" => {
+            estado.lock().unwrap().admins.remove(&id);
+        }
+        "admin-feedback" => admin_mudar_feedback(v, fila, estado, cofre).await,
+        "admin-midia" => admin_midia(v, fila, estado, cofre).await,
         _ => {}
     }
 }
@@ -705,12 +1045,18 @@ fn e_pedido_de_conta(tipo: &str) -> bool {
     )
 }
 
-async fn atender_conta(tipo: &str, v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+async fn atender_conta(
+    tipo: &str,
+    v: &Value,
+    fila: &Fila,
+    estado: &Arc<Mutex<Estado>>,
+    cofre: &Arc<Cofre>,
+) {
     match tipo {
-        "cadastrar" => cadastrar(v, fila, cofre).await,
-        "entrar-conta" => entrar_conta(v, fila, cofre).await,
-        "retomar" => retomar(v, fila, cofre).await,
-        "sair-conta" => sair_conta(v, fila, cofre).await,
+        "cadastrar" => cadastrar(v, fila, estado, cofre).await,
+        "entrar-conta" => entrar_conta(v, fila, estado, cofre).await,
+        "retomar" => retomar(v, fila, estado, cofre).await,
+        "sair-conta" => sair_conta(v, fila, estado, cofre).await,
         "google-config" => {
             // Dois identificadores, um por casca: o CALL de Windows volta numa
             // porta local (cliente de computador) e o de celular volta na
@@ -723,7 +1069,7 @@ async fn atender_conta(tipo: &str, v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
                 "clienteIdWeb": google::cliente_id_web().unwrap_or_default()
             })));
         }
-        "google-entrar" => google_entrar(v, fila, cofre).await,
+        "google-entrar" => google_entrar(v, fila, estado, cofre).await,
         _ => {}
     }
 }
@@ -739,7 +1085,7 @@ where
     tokio::task::spawn_blocking(trabalho).await.ok()
 }
 
-async fn cadastrar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+async fn cadastrar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
     let email = match contas::normalizar_email(&texto_de(v, "email")) {
         Ok(e) => e,
         Err(r) => return recusar(fila, r),
@@ -785,12 +1131,23 @@ async fn cadastrar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     let bio: String = texto_de(v, "bio").trim().chars().take(BIO_MAX).collect();
 
     match cofre.cadastrar(email, hash, apelido, avatar, bio).await {
-        Ok(id) => responder_sessao(cofre, &id, fila).await,
+        Ok(id) => {
+            // A conta nasce aqui, e este e o unico evento que so acontece uma
+            // vez por pessoa: e dele que toda coorte de retencao parte.
+            estado.lock().unwrap().anotar(
+                telemetria::tipo::CONTA_CRIADA,
+                Some(id.clone()),
+                "",
+                0,
+                &plataforma_de(v),
+            );
+            responder_sessao(cofre, &id, fila).await;
+        }
         Err(r) => recusar(fila, r),
     }
 }
 
-async fn entrar_conta(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+async fn entrar_conta(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
     // O e-mail e normalizado, mas um erro de forma aqui nao merece a licao de
     // gramatica do cadastro: quem esta entrando ou acerta a conta que tem, ou
     // nao tem conta — e as duas respostas sao a mesma.
@@ -828,12 +1185,19 @@ async fn entrar_conta(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     }
 
     cofre.perdoar(&email);
+    estado.lock().unwrap().anotar(
+        telemetria::tipo::SESSAO_ABERTA,
+        Some(id.clone()),
+        "senha",
+        0,
+        &plataforma_de(v),
+    );
     responder_sessao(cofre, &id, fila).await;
 }
 
 /// Token guardado no computador de quem volta. E o que faz o CALL abrir
 /// direto na lista de grupos em vez de pedir a senha toda manha.
-async fn retomar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+async fn retomar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
     let token = texto_de(v, "token");
 
     let Some(conta) = cofre.conta_do_token(&token).await else {
@@ -842,6 +1206,17 @@ async fn retomar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
         return;
     };
 
+    // O acesso mais fiel que existe: acontece uma vez por abertura do CALL,
+    // e nao depende de a pessoa fazer nada depois. E daqui que sai a curva de
+    // pessoas ativas por dia.
+    estado.lock().unwrap().anotar(
+        telemetria::tipo::SESSAO_RETOMADA,
+        Some(conta.id.clone()),
+        "",
+        0,
+        &plataforma_de(v),
+    );
+
     let _ = fila.send(texto_json(&json!({
         "tipo": "sessao",
         "token": token,
@@ -849,12 +1224,23 @@ async fn retomar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     })));
 }
 
-async fn sair_conta(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
-    cofre.fechar_sessao(&texto_de(v, "token")).await;
+async fn sair_conta(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let token = texto_de(v, "token");
+    let quem = cofre.conta_do_token(&token).await.map(|c| c.id);
+    cofre.fechar_sessao(&token).await;
+    if quem.is_some() {
+        estado.lock().unwrap().anotar(
+            telemetria::tipo::SESSAO_FECHADA,
+            quem,
+            "",
+            0,
+            &plataforma_de(v),
+        );
+    }
     let _ = fila.send(texto_json(&json!({ "tipo": "sem-sessao" })));
 }
 
-async fn google_entrar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
+async fn google_entrar(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
     let identidade = google::trocar_codigo(
         &texto_de(v, "codigo"),
         &texto_de(v, "verificador"),
@@ -886,6 +1272,28 @@ async fn google_entrar(v: &Value, fila: &Fila, cofre: &Arc<Cofre>) {
     let email = contas::normalizar_email(&identidade.email).unwrap_or(identidade.email);
 
     let id = cofre.pelo_google(&identidade.sub, &email, &apelido, "").await;
+
+    // Conta nova ou pessoa voltando? `pelo_google` resolve os dois casos no
+    // mesmo caminho e nao diz qual foi. A idade da conta diz: ela ou nasceu
+    // dentro desta mesma chamada, ou ja existia antes dela. Sem esta
+    // distincao, quem so entra pelo Google nunca apareceria em coorte
+    // nenhuma — e a curva de contas novas mentiria por omissao.
+    let recem_criada = cofre
+        .por_id(&id)
+        .await
+        .is_some_and(|c| agora_ms().saturating_sub(c.criada_em) < 10_000);
+
+    estado.lock().unwrap().anotar(
+        if recem_criada {
+            telemetria::tipo::CONTA_CRIADA
+        } else {
+            telemetria::tipo::SESSAO_ABERTA
+        },
+        Some(id.clone()),
+        "google",
+        0,
+        &plataforma_de(v),
+    );
     responder_sessao(cofre, &id, fila).await;
 }
 
@@ -1032,7 +1440,7 @@ async fn criar_grupo(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>
     e.acervo.grupos.insert(codigo.clone(), grupo);
     e.acervo.salvar_grupos();
 
-    admitir(&mut e, id, cartao, &codigo, fila, conta_resumo);
+    admitir(&mut e, id, cartao, &codigo, fila, conta_resumo, telemetria::tipo::GRUPO_CRIADO);
 }
 
 async fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
@@ -1071,7 +1479,7 @@ async fn entrar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, co
         return;
     }
 
-    admitir(&mut e, id, cartao, &codigo, fila, conta_resumo);
+    admitir(&mut e, id, cartao, &codigo, fila, conta_resumo, telemetria::tipo::GRUPO_ENTROU);
 }
 
 /// Grava o grupo e o perfil atuais na conta (quando ha conta) e devolve o
@@ -1109,7 +1517,15 @@ async fn sincronizar_conta_e_buscar_resumo(
 /// esta funcao roda com a tranca de `Estado` na mao, e o cofre pode precisar
 /// de rede. `conta_resumo` chega ja pronto, buscado por quem chamou antes de
 /// trancar.
-fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, conta_resumo: Option<Value>) {
+fn admitir(
+    e: &mut Estado,
+    id: u64,
+    cartao: Cartao,
+    codigo: &str,
+    fila: &Fila,
+    conta_resumo: Option<Value>,
+    evento: &str,
+) {
     let nova = Conexao {
         id,
         usuario: cartao.usuario,
@@ -1126,6 +1542,8 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, c
         transmitindo: false,
         atividade: None,
         atividade_icone: None,
+        plataforma: cartao.plataforma,
+        voz_desde: None,
     };
 
     // O socket social da mesma conta pode ja estar registrado, ou registrar
@@ -1150,11 +1568,17 @@ fn admitir(e: &mut Estado, id: u64, cartao: Cartao, codigo: &str, fila: &Fila, c
         "sons": sons
     })));
 
+    e.anotar(evento, nova.conta.clone(), codigo, 0, &nova.plataforma);
     e.conexoes.insert(id, nova);
 }
 
 fn despedir(id: u64, estado: &Arc<Mutex<Estado>>) {
     let mut e = estado.lock().unwrap();
+
+    // Fechar a janela e fechar o painel: sem isto, o pulso continuaria sendo
+    // montado para uma fila que ninguem le mais.
+    e.admins.remove(&id);
+    e.sockets.remove(&id);
 
     // Tira esta conexao de qualquer conta que a tenha registrado como
     // presenca — social ou de grupo, tanto faz: nenhuma das duas passa por
@@ -1177,6 +1601,25 @@ fn despedir(id: u64, estado: &Arc<Mutex<Estado>>) {
     // Quem estava na mesma voz precisa desmontar o elo WebRTC; o resto do
     // grupo so precisa parar de ver a pessoa na lista.
     if let Some(canal) = &saindo.canal_voz {
+        // Fechar a janela tambem encerra a passagem pela call: sem isto, toda
+        // sessao de voz que termina por queda ficaria de fora dos minutos.
+        let segundos = saindo
+            .voz_desde
+            .map(|desde| (agora_ms().saturating_sub(desde) / 1000) as i64)
+            .unwrap_or(0);
+        let meio = saindo.provedor_midia.clone().unwrap_or_default();
+        e.anotar_meio(
+            telemetria::tipo::VOZ_SAIU,
+            saindo.conta.clone(),
+            canal,
+            segundos,
+            &saindo.plataforma,
+            &meio,
+            0,
+        );
+        // Uma janela fechada não teve como dizer quantos bytes recebeu; os
+        // minutos, que são o teto que costuma acabar primeiro, contam igual.
+        e.midia.somar_consumo(&meio, segundos, 0);
         for c in e.na_voz(canal) {
             if c.id != id && c.transmitindo {
                 let _ = c.fila.send(texto_json(&json!({
@@ -1199,19 +1642,47 @@ fn despedir(id: u64, estado: &Arc<Mutex<Estado>>) {
 
 // -------------------------------------------------------------------- voz
 
-/// `None` significa que a versão do cliente não consegue entrar com segurança
-/// no transporte já fixado para a sala.
-fn escolher_provedor_midia(
-    provedor_existente: Option<&str>,
+/// Qual degrau da escada atende esta entrada.
+///
+/// Duas regras disputam aqui, e a ordem entre elas é a decisão inteira:
+///
+///   1. **Coesão.** Uma sala com gente dentro não troca de transporte porque
+///      alguém novo chegou — metade no SFU e metade na malha é uma sala em
+///      que as pessoas não se ouvem. Quem chega entra por onde a sala já
+///      está.
+///   2. **Saúde.** Mas se o degrau da sala **caiu**, coesão viraria manter
+///      todo mundo numa porta fechada. Aí a sala inteira desce um degrau, e
+///      quem já estava dentro é avisado para descer junto.
+///
+/// `Err(())` significa que a versão do cliente não consegue entrar com
+/// segurança no transporte fixado para a sala — só acontece com um cliente
+/// antigo demais chegando numa sala de LiveKit.
+fn escolher_degrau_midia(
+    degrau_da_sala: Option<&str>,
     aceita_livekit: bool,
-    livekit_disponivel: bool,
-) -> Option<&'static str> {
-    match provedor_existente {
-        Some("livekit") if aceita_livekit => Some("livekit"),
-        Some("livekit") => None,
-        Some(_) => Some("malha"),
-        None if aceita_livekit && livekit_disponivel => Some("livekit"),
-        None => Some("malha"),
+    melhor_agora: Option<&'static str>,
+    degrau_da_sala_atende: bool,
+) -> Result<&'static str, ()> {
+    match degrau_da_sala {
+        // A sala já está na malha: ninguém sobe de degrau no meio de uma
+        // call, nem que o SFU tenha voltado. Sobe na próxima.
+        Some(midia::degrau::MALHA) => Ok(midia::degrau::MALHA),
+        Some(atual) if midia::e_livekit(atual) => {
+            if !aceita_livekit {
+                return Err(());
+            }
+            if degrau_da_sala_atende {
+                // O `find` devolve o mesmo texto estático que a sala guardou.
+                return Ok(match atual {
+                    midia::degrau::PROPRIO => midia::degrau::PROPRIO,
+                    _ => midia::degrau::NUVEM,
+                });
+            }
+            Ok(melhor_agora.unwrap_or(midia::degrau::MALHA))
+        }
+        // Sala vazia, ou um degrau que esta versão do servidor não conhece.
+        _ if aceita_livekit => Ok(melhor_agora.unwrap_or(midia::degrau::MALHA)),
+        _ => Ok(midia::degrau::MALHA),
     }
 }
 
@@ -1239,20 +1710,35 @@ fn entrar_voz(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
         .and_then(Value::as_array)
         .map(|lista| lista.iter().any(|item| item.as_str() == Some("livekit")))
         .unwrap_or(false);
-    let provedor_existente = e
+    let degrau_da_sala = e
         .na_voz(&canal)
         .iter()
         .find_map(|conexao| conexao.provedor_midia.clone());
-    let Some(provedor) = escolher_provedor_midia(
-        provedor_existente.as_deref(),
+    let melhor_agora = e.midia.degrau_para_sala_nova();
+    let sala_atende = degrau_da_sala
+        .as_deref()
+        .map(|atual| e.midia.degrau_atende(atual))
+        .unwrap_or(false);
+    let Ok(degrau) = escolher_degrau_midia(
+        degrau_da_sala.as_deref(),
         aceita_livekit,
-        e.midia.disponivel(),
+        melhor_agora,
+        sala_atende,
     ) else {
         let _ = fila.send(erro(
             "Esta call usa a nova mídia. Atualize o CALL para entrar.",
         ));
         return;
     };
+
+    // A sala inteira desce junto quando o degrau dela caiu. Sem isto, quem
+    // chegasse depois da queda entraria na malha enquanto os antigos
+    // continuariam esperando um SFU que já não responde — e os dois lados se
+    // veriam na lista sem se ouvir.
+    let migrou = degrau_da_sala
+        .as_deref()
+        .map(|antigo| antigo != degrau)
+        .unwrap_or(false);
 
     // Sair da voz anterior antes de entrar na nova: ninguem fala em duas
     // salas ao mesmo tempo, e o elo antigo precisa ser desfeito dos dois lados.
@@ -1261,22 +1747,42 @@ fn entrar_voz(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     let pares: Vec<Value> = e.na_voz(&canal).iter().map(Conexao::resumo).collect();
     if let Some(c) = e.conexoes.get_mut(&id) {
         c.canal_voz = Some(canal.clone());
-        c.provedor_midia = Some(provedor.to_string());
+        c.provedor_midia = Some(degrau.to_string());
+        c.voz_desde = Some(agora_ms());
     }
 
     let Some(eu) = e.conexoes.get(&id).cloned() else {
         return;
     };
 
-    let midia = if provedor == "livekit" {
+    let midia = if midia::e_livekit(degrau) {
         e.midia
-            .credencial(&codigo, &canal, &id.to_string(), &eu.apelido)
+            .credencial(degrau, &codigo, &canal, &id.to_string(), &eu.apelido)
     } else {
         None
     };
+    // Um degrau de LiveKit que não conseguiu assinar o token não tem por que
+    // ser anunciado ao cliente: sem credencial, "livekit" é uma promessa que
+    // ninguém pode cumprir. A malha assume, aqui mesmo.
+    let degrau = if midia::e_livekit(degrau) && midia.is_none() {
+        e.midia.anotar_falha(degrau, "o servidor não conseguiu assinar o token");
+        if let Some(c) = e.conexoes.get_mut(&id) {
+            c.provedor_midia = Some(midia::degrau::MALHA.to_string());
+        }
+        midia::degrau::MALHA
+    } else {
+        degrau
+    };
+
     let mut resposta = json!({
         "tipo": "voz",
         "canal": canal,
+        "degrau": degrau,
+        // Uma malha num servidor que tem SFU é contingência, e o rodapé de
+        // quem entra precisa dizer isso. Num servidor sem SFU nenhum, a
+        // mesma malha é o funcionamento normal — e anunciá-la como
+        // contingência seria alarme sobre nada.
+        "contingencia": degrau == midia::degrau::MALHA && e.midia.tem_sfu(),
         "pares": pares
     });
     if let Some(midia) = midia {
@@ -1284,16 +1790,187 @@ fn entrar_voz(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     }
     let _ = fila.send(texto_json(&resposta));
 
+    if migrou {
+        migrar_sala(&mut e, &codigo, &canal, degrau, id);
+    }
+
+    e.anotar_meio(
+        telemetria::tipo::VOZ_ENTROU,
+        eu.conta.clone(),
+        &canal,
+        0,
+        &eu.plataforma,
+        degrau,
+        0,
+    );
+
     let aviso = json!({ "tipo": "entrou-voz", "membro": eu.resumo(), "canal": canal });
     e.difundir(&codigo, &aviso, Some(id));
 }
 
-fn sair_voz(id: u64, estado: &Arc<Mutex<Estado>>) {
+/// Desce a sala inteira um degrau, para quem já estava dentro.
+///
+/// Cada pessoa recebe uma credencial própria — um token de LiveKit vale para
+/// uma identidade só, então não há como difundir uma credencial coletiva. Ao
+/// cair para a malha não há credencial nenhuma, e a mensagem é só a ordem de
+/// trocar de transporte.
+fn migrar_sala(e: &mut Estado, codigo: &str, canal: &str, degrau: &str, exceto: u64) {
+    let alvos: Vec<(u64, String, Fila)> = e
+        .na_voz(canal)
+        .into_iter()
+        .filter(|c| c.id != exceto)
+        .map(|c| (c.id, c.apelido.clone(), c.fila.clone()))
+        .collect();
+    if alvos.is_empty() {
+        return;
+    }
+
+    println!(
+        "[midia] sala {canal} de {codigo}: {} pessoas migrando para '{degrau}'",
+        alvos.len()
+    );
+
+    for (id, apelido, fila) in alvos {
+        if let Some(c) = e.conexoes.get_mut(&id) {
+            c.provedor_midia = Some(degrau.to_string());
+        }
+        let mut aviso = json!({ "tipo": "voz-migrar", "canal": canal, "degrau": degrau });
+        if midia::e_livekit(degrau) {
+            match e.midia.credencial(degrau, codigo, canal, &id.to_string(), &apelido) {
+                Some(credencial) => aviso["midia"] = credencial,
+                // Sem token não há para onde migrar a não ser para a malha.
+                None => {
+                    aviso["degrau"] = json!(midia::degrau::MALHA);
+                    if let Some(c) = e.conexoes.get_mut(&id) {
+                        c.provedor_midia = Some(midia::degrau::MALHA.to_string());
+                    }
+                }
+            }
+        }
+        let _ = fila.send(texto_json(&aviso));
+    }
+}
+
+/// O cliente não conseguiu entrar (ou foi derrubado) no degrau que recebeu.
+///
+/// É o relato que fecha o circuito: sem ele o servidor continuaria emitindo
+/// tokens para um SFU morto, porque **o servidor nunca vê essa falha** — ela
+/// acontece entre o navegador e o LiveKit, numa conexão da qual ele não
+/// participa. Quem avisa não precisa provar nada: o disjuntor já exige mais
+/// de uma falha para derrubar um degrau, então um cliente sozinho com rede
+/// ruim não tira o SFU do ar para os outros.
+fn midia_falhou(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
+    let degrau_relatado = texto_de(v, "degrau");
+    if !midia::e_livekit(&degrau_relatado) {
+        return;
+    }
+    let motivo = {
+        let bruto = texto_de(v, "motivo");
+        let recortado: String = bruto.chars().take(160).collect();
+        if recortado.is_empty() {
+            "o cliente não conseguiu entrar".to_string()
+        } else {
+            recortado
+        }
+    };
+
     let mut e = estado.lock().unwrap();
-    largar_voz(&mut e, id);
+
+    // Só quem estava mesmo naquele degrau relata sobre ele. Sem esta guarda,
+    // uma mensagem forjada derrubaria o SFU de todo mundo.
+    let Some(conexao) = e.conexoes.get(&id) else { return };
+    if conexao.provedor_midia.as_deref() != Some(degrau_relatado.as_str()) {
+        return;
+    }
+    let Some(canal) = conexao.canal_voz.clone() else { return };
+    let Some(codigo) = conexao.grupo.clone() else { return };
+    let conta = conexao.conta.clone();
+    let plataforma = conexao.plataforma.clone();
+    let apelido = conexao.apelido.clone();
+
+    let caiu = e.midia.anotar_falha(&degrau_relatado, &motivo);
+    e.anotar_meio(
+        telemetria::tipo::MIDIA_FALHOU,
+        conta,
+        &canal,
+        0,
+        &plataforma,
+        &degrau_relatado,
+        0,
+    );
+
+    // Para onde esta pessoa vai agora. Enquanto o degrau não caiu de vez, o
+    // seguinte da escada já é melhor resposta do que insistir no mesmo.
+    let destino = e
+        .midia
+        .degrau_seguinte(&degrau_relatado)
+        .unwrap_or(midia::degrau::MALHA);
+
+    if let Some(c) = e.conexoes.get_mut(&id) {
+        c.provedor_midia = Some(destino.to_string());
+    }
+
+    let mut resposta = json!({ "tipo": "voz-migrar", "canal": canal, "degrau": destino });
+    if midia::e_livekit(destino) {
+        match e.midia.credencial(destino, &codigo, &canal, &id.to_string(), &apelido) {
+            Some(credencial) => resposta["midia"] = credencial,
+            None => {
+                resposta["degrau"] = json!(midia::degrau::MALHA);
+                if let Some(c) = e.conexoes.get_mut(&id) {
+                    c.provedor_midia = Some(midia::degrau::MALHA.to_string());
+                }
+            }
+        }
+    }
+    let _ = fila.send(texto_json(&resposta));
+
+    // O degrau caiu de vez: os outros da sala estão prestes a descobrir o
+    // mesmo, um a um. Melhor descê-los agora do que esperar cada um falhar.
+    if caiu {
+        let destino_da_sala = resposta["degrau"].as_str().unwrap_or(midia::degrau::MALHA);
+        let destino_da_sala = match destino_da_sala {
+            midia::degrau::NUVEM => midia::degrau::NUVEM,
+            midia::degrau::PROPRIO => midia::degrau::PROPRIO,
+            _ => midia::degrau::MALHA,
+        };
+        migrar_sala(&mut e, &codigo, &canal, destino_da_sala, id);
+        let retrato = e.midia.retrato();
+        e.avisar_admins(&json!({ "tipo": "admin-midia", "midia": retrato }));
+    }
+}
+
+/// O cliente entrou de verdade no degrau — a única prova de que ele funciona.
+fn midia_entrou(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
+    let degrau = texto_de(v, "degrau");
+    if !midia::e_livekit(&degrau) {
+        return;
+    }
+    let mut e = estado.lock().unwrap();
+    if e.conexoes.get(&id).and_then(|c| c.provedor_midia.as_deref()) == Some(degrau.as_str()) {
+        e.midia.anotar_sucesso(&degrau);
+    }
+}
+
+fn sair_voz(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
+    // Os bytes que o cliente mediu ter recebido do SFU. É o número que o
+    // LiveKit cobra como banda, e é o próprio navegador quem o sabe — o
+    // servidor de sinalização não vê um byte de mídia passar.
+    let bytes = v
+        .get("bytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        // Um teto generoso, mas teto: 50 GB numa passagem só seria um cliente
+        // adulterado tentando aposentar um degrau na marra.
+        .min(50_000_000_000);
+    let mut e = estado.lock().unwrap();
+    largar_voz_medido(&mut e, id, bytes);
 }
 
 fn largar_voz(e: &mut Estado, id: u64) {
+    largar_voz_medido(e, id, 0);
+}
+
+fn largar_voz_medido(e: &mut Estado, id: u64, bytes: u64) {
     let Some(anterior) = e.conexoes.get(&id).and_then(|c| c.canal_voz.clone()) else {
         return;
     };
@@ -1307,10 +1984,38 @@ fn largar_voz(e: &mut Estado, id: u64) {
             })));
         }
     }
+    // Anotado na saida, e nao na entrada: e a unica hora em que a duracao
+    // existe. Uma conexao que cai sem avisar tambem passa por aqui, via
+    // `despedir` — nenhuma passagem pela call fica sem fim.
+    let (conta, plataforma, segundos, meio) = match e.conexoes.get(&id) {
+        Some(c) => (
+            c.conta.clone(),
+            c.plataforma.clone(),
+            c.voz_desde
+                .map(|desde| (agora_ms().saturating_sub(desde) / 1000) as i64)
+                .unwrap_or(0),
+            c.provedor_midia.clone().unwrap_or_default(),
+        ),
+        None => (None, String::new(), 0, String::new()),
+    };
+    e.anotar_meio(
+        telemetria::tipo::VOZ_SAIU,
+        conta,
+        &anterior,
+        segundos,
+        &plataforma,
+        &meio,
+        bytes,
+    );
+    // O consumo do ciclo é somado aqui, e não na entrada, pelo mesmo motivo
+    // que a duração: é a saída que sabe quanto durou.
+    e.midia.somar_consumo(&meio, segundos, bytes);
+
     if let Some(c) = e.conexoes.get_mut(&id) {
         c.canal_voz = None;
         c.provedor_midia = None;
         c.transmitindo = false;
+        c.voz_desde = None;
     }
 
     let aviso = json!({ "tipo": "saiu-voz", "id": id.to_string(), "canal": anterior });
@@ -1378,6 +2083,13 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
     let Some(eu) = e.conexoes.get_mut(&id) else {
         return;
     };
+    // Só a borda de subida vira evento. O cliente reanuncia o proprio estado
+    // a cada troca de mudo, e contar isso como "transmitiu" faria uma
+    // transmissao de uma hora virar vinte no painel.
+    let comecou_a_transmitir = transmitindo && !eu.transmitindo;
+    let quem = eu.conta.clone();
+    let de_onde = eu.plataforma.clone();
+    let canal = eu.canal_voz.clone().unwrap_or_default();
     eu.mudo = mudo;
     eu.transmitindo = transmitindo;
     eu.atividade = atividade.clone();
@@ -1385,6 +2097,10 @@ fn estado_de_midia(v: &Value, id: u64, estado: &Arc<Mutex<Estado>>) {
     let Some(codigo) = eu.grupo.clone() else {
         return;
     };
+
+    if comecou_a_transmitir {
+        e.anotar(telemetria::tipo::TRANSMISSAO, quem, &canal, 0, &de_onde);
+    }
 
     let aviso = json!({
         "tipo": "estado",
@@ -1518,6 +2234,7 @@ fn mensagem(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     };
 
     e.acervo.registrar_mensagem(m.clone());
+    e.anotar(telemetria::tipo::MENSAGEM, eu.conta.clone(), &codigo, 0, &eu.plataforma);
 
     // Inclusive de volta para quem escreveu: a mensagem so aparece na tela
     // depois de aceita pelo servidor, entao ninguem ve algo que nao foi
@@ -2270,10 +2987,154 @@ async fn feedback_enviar(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Est
     let descricao = texto_de(v, "descricao");
     match cofre.enviar_feedback(&minha, categoria, titulo, descricao).await {
         Ok(feedback) => {
+            {
+                let e = estado.lock().unwrap();
+                e.anotar(
+                    telemetria::tipo::FEEDBACK,
+                    Some(minha.id.clone()),
+                    &feedback.categoria,
+                    0,
+                    &plataforma_de(v),
+                );
+                // Quem esta com o painel aberto ve o relato chegar sem
+                // recarregar nada — e o mesmo canal do pulso.
+                e.avisar_admins(&json!({ "tipo": "admin-feedback-novo", "feedback": feedback }));
+            }
             let _ = fila.send(texto_json(&json!({ "tipo": "feedback-enviado", "feedback": feedback })));
         }
         Err(motivo) => {
             let _ = fila.send(erro(motivo));
+        }
+    }
+}
+
+// ---------------------------------------------------------------- painel
+//
+// O painel administrativo mora dentro do proprio CALL, e viaja pelo mesmo
+// socket social que amizade, PV e feedback ja usam. Nao ha senha nova, nao ha
+// segunda porta: o token que abre a conta e o mesmo que abre o painel, e o
+// que decide se ele abre e o **e-mail** da conta — ver `contas::e_admin`.
+//
+// Isto e deliberado. Um painel administrativo com uma senha propria e uma
+// senha a mais para vazar, e uma pergunta a mais ("qual era mesmo?") entre o
+// dono e o proprio produto.
+
+/// A conta de quem pediu, se ela for a do dono. `None` em todo o resto —
+/// e a mesma resposta para "token invalido" e para "voce nao e o dono",
+/// porque distinguir os dois so ensinaria quem esta tentando.
+async fn conta_admin(v: &Value, cofre: &Arc<Cofre>) -> Option<contas::Conta> {
+    let conta = cofre.conta_do_token(&texto_de(v, "token")).await?;
+    contas::e_admin(&conta.email).then_some(conta)
+}
+
+fn recusar_painel(fila: &Fila) {
+    let _ = fila.send(texto_json(&json!({
+        "tipo": "admin-negado",
+        "motivo": "Este painel é do dono do serviço."
+    })));
+}
+
+/// Quantos acontecimentos recentes o painel recebe para a lista ao vivo. O
+/// resto da janela ja esta agregado nos numeros; a lista e para *ver*
+/// acontecendo, e uma lista que nao cabe na tela nao serve para isso.
+const ULTIMOS_EVENTOS: usize = 120;
+
+/// Monta o retrato inteiro e devolve numa mensagem so.
+///
+/// Uma resposta grande e um pedido raro, e nao o contrario: quem abre o
+/// painel quer tudo de uma vez, e a alternativa (uma consulta por aba) faria
+/// cada clique custar uma ida ao banco. Depois desta resposta o painel se
+/// mantem vivo sozinho, pelo pulso e pelos eventos empurrados.
+async fn admin_painel(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    let Some(conta) = conta_admin(v, cofre).await else {
+        return recusar_painel(fila);
+    };
+
+    // O fuso vem de quem esta lendo — ver a nota de `telemetria` sobre por
+    // que "hoje" nao pode ser o dia do servidor. O teto de 14 horas cobre o
+    // planeta inteiro e impede que um numero absurdo desloque a serie.
+    let fuso = v.get("fuso").and_then(Value::as_i64).unwrap_or(0).clamp(-840, 840);
+
+    let desde = agora_ms().saturating_sub(contas::EVENTOS_DIAS * 24 * 60 * 60 * 1000);
+    let eventos = cofre.eventos_desde(desde).await;
+    let pessoas = cofre.contas_para_painel().await;
+    let sessoes = cofre.sessoes_vivas().await;
+    let feedback = cofre.todos_feedbacks().await;
+    let membros = cofre.membros_por_grupo().await;
+
+    let mut painel = telemetria::montar(&eventos, &pessoas, agora_ms(), fuso);
+    let ciclo_desde = estado.lock().unwrap().midia.ciclo_desde();
+    painel["consumo"] = telemetria::consumo(&eventos, ciclo_desde, fuso, agora_ms());
+
+    let mut ultimos: Vec<&Evento> = eventos.iter().collect();
+    ultimos.sort_by(|a, b| b.em.cmp(&a.em));
+    ultimos.truncate(ULTIMOS_EVENTOS);
+    painel["ultimos"] = json!(ultimos);
+    painel["sessoesVivas"] = json!(sessoes);
+    painel["feedback"] = json!(feedback);
+    painel["dono"] = json!({ "id": conta.id, "email": conta.email, "apelido": conta.apelido });
+
+    {
+        // Abrir o painel ja assina o pulso: nao ha um segundo pedido para
+        // "agora me mande as atualizacoes", porque nao existe motivo para
+        // abrir o painel e nao querer ve-lo ao vivo.
+        let mut e = estado.lock().unwrap();
+        e.admins.insert(id, fila.clone());
+        painel["agora"] = e.pulso();
+        painel["presentes"] = json!(e.presentes_para_painel());
+        painel["grupos"] = json!(e.grupos_para_painel(&membros));
+        // A escada de mídia vive na memória deste processo, e não nos
+        // eventos: quanto cada degrau já consumiu no ciclo, quem está
+        // atendendo agora, e quem está de castigo.
+        painel["midia"] = e.midia.retrato();
+    }
+
+    let _ = fila.send(texto_json(&json!({ "tipo": "admin-painel", "painel": painel })));
+}
+
+/// Muda o status de um relato pelo painel de dentro do aplicativo — o mesmo
+/// que a pagina `/admin` faz por HTTP, e com o mesmo aviso ao autor.
+/// O freio de mão do dono: forçar a malha P2P mesmo com o SFU saudável.
+///
+/// Existe para o dia em que o painel do LiveKit conta uma história diferente
+/// da nossa — a nossa medição é do lado de cá, e do lado de lá pode haver
+/// cobrança que este servidor não vê. Poder desligar sem redeploy é a
+/// diferença entre uma decisão de trinta segundos e uma de meia hora.
+async fn admin_midia(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    if conta_admin(v, cofre).await.is_none() {
+        return recusar_painel(fila);
+    }
+    let forcar = v
+        .get("malhaForcada")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let mut e = estado.lock().unwrap();
+    e.midia.forcar_malha(forcar);
+    let retrato = e.midia.retrato();
+    // Vai para todos os painéis abertos, e não só para quem clicou: dois
+    // administradores olhando a mesma tela devem ver o mesmo estado.
+    e.avisar_admins(&json!({ "tipo": "admin-midia", "midia": retrato }));
+}
+
+async fn admin_mudar_feedback(v: &Value, fila: &Fila, estado: &Arc<Mutex<Estado>>, cofre: &Arc<Cofre>) {
+    if conta_admin(v, cofre).await.is_none() {
+        return recusar_painel(fila);
+    }
+    let alvo = texto_de(v, "id");
+    let status = texto_de(v, "status");
+
+    match cofre.mudar_status_feedback(&alvo, &status).await {
+        Some(feedback) => {
+            let e = estado.lock().unwrap();
+            e.enviar_a_conta(
+                &feedback.conta_id,
+                &json!({ "tipo": "feedback-atualizado", "feedback": feedback }),
+            );
+            e.avisar_admins(&json!({ "tipo": "admin-feedback-novo", "feedback": feedback }));
+        }
+        None => {
+            let _ = fila.send(erro("Relato ou status inválido."));
         }
     }
 }
@@ -2340,19 +3201,62 @@ fn texto_json(v: &Value) -> Message {
 mod testes {
     use super::*;
 
+    use midia::degrau::{MALHA, NUVEM, PROPRIO};
+
     #[test]
-    fn transporte_fica_fixo_por_sala_durante_a_migracao() {
-        assert_eq!(escolher_provedor_midia(None, true, true), Some("livekit"));
-        assert_eq!(escolher_provedor_midia(None, false, true), Some("malha"));
+    fn sala_nova_pega_o_melhor_degrau_que_a_escada_oferece() {
         assert_eq!(
-            escolher_provedor_midia(Some("malha"), true, true),
-            Some("malha")
+            escolher_degrau_midia(None, true, Some(NUVEM), false),
+            Ok(NUVEM)
         );
+        // Sem escada de SFU disponível, a malha — e não um erro.
+        assert_eq!(escolher_degrau_midia(None, true, None, false), Ok(MALHA));
+        // Cliente antigo, que não sabe LiveKit, entra na malha sem drama.
         assert_eq!(
-            escolher_provedor_midia(Some("livekit"), true, true),
-            Some("livekit")
+            escolher_degrau_midia(None, false, Some(NUVEM), false),
+            Ok(MALHA)
         );
-        assert_eq!(escolher_provedor_midia(Some("livekit"), false, true), None);
+    }
+
+    #[test]
+    fn sala_com_gente_dentro_nao_troca_de_transporte_por_causa_de_quem_chega() {
+        // A sala está no degrau próprio e ele atende: quem chega entra ali,
+        // mesmo que a nuvem tenha voltado a ser o melhor degrau da escada.
+        assert_eq!(
+            escolher_degrau_midia(Some(PROPRIO), true, Some(NUVEM), true),
+            Ok(PROPRIO)
+        );
+        // E ninguém sobe de volta para um SFU no meio de uma call de malha.
+        assert_eq!(
+            escolher_degrau_midia(Some(MALHA), true, Some(NUVEM), false),
+            Ok(MALHA)
+        );
+    }
+
+    #[test]
+    fn sala_cujo_degrau_caiu_desce_inteira() {
+        assert_eq!(
+            escolher_degrau_midia(Some(NUVEM), true, Some(PROPRIO), false),
+            Ok(PROPRIO)
+        );
+        // E se não sobrou degrau nenhum, a malha.
+        assert_eq!(
+            escolher_degrau_midia(Some(NUVEM), true, None, false),
+            Ok(MALHA)
+        );
+    }
+
+    #[test]
+    fn cliente_antigo_nao_entra_numa_sala_de_livekit() {
+        assert_eq!(escolher_degrau_midia(Some(NUVEM), false, None, true), Err(()));
+    }
+
+    #[test]
+    fn degrau_desconhecido_de_uma_versao_mais_nova_recomeca_a_escada() {
+        assert_eq!(
+            escolher_degrau_midia(Some("degrau-do-futuro"), true, Some(NUVEM), false),
+            Ok(NUVEM)
+        );
     }
 
     /// A recusa de um `usuario` alegando ser conta e a linha `identidade()`

@@ -25,6 +25,12 @@ export class SalaLiveKit {
   #perfilTela = null;
   #fluxosRemotos = new Map();
   #falantes = new Set();
+  /** sid da trilha -> bytes recebidos por ela até a última amostragem. */
+  #bytesPorTrilha = new Map();
+  /** O que já foi recebido por trilhas que não existem mais. Sem isto, uma
+   *  pessoa que sai da call levaria embora os bytes que ela custou. */
+  #bytesEncerrados = 0;
+  #relogioDeBanda = null;
 
   constructor({
     aoTrilha,
@@ -32,6 +38,7 @@ export class SalaLiveKit {
     aoEstado,
     aoFala,
     aoEntrar,
+    aoQueda,
     carregarSdk = carregarSdkPadrao,
   }) {
     this.aoTrilha = aoTrilha;
@@ -43,11 +50,25 @@ export class SalaLiveKit {
      *  sala: o SDK faz essa entrega sozinho para as trilhas que ele mesmo
      *  processa, mas a nossa é montada à mão no grafo de áudio. */
     this.aoEntrar = aoEntrar ?? (() => {});
+    /** A sala caiu sozinha, depois de já ter estado de pé — e o SDK desistiu
+     *  de reconectar. É o caso que o `catch` de `entrar()` nunca vê: a call
+     *  começou bem e o SFU sumiu no meio. Quem recebe isto conta ao servidor,
+     *  e a escada de mídia desce um degrau. */
+    this.aoQueda = aoQueda ?? (() => {});
     this.#carregarSdk = carregarSdk;
   }
 
   get conectado() {
     return Boolean(this.#sala);
+  }
+
+  /** Bytes de mídia recebidos do SFU nesta passagem pela call, até a última
+   *  amostragem. Síncrono por contrato: quem chama precisa da medida antes
+   *  de a sala ser desmontada (ver a nota em `anunciarSaidaDaVoz`). */
+  bytesRecebidos() {
+    let total = this.#bytesEncerrados;
+    for (const bytes of this.#bytesPorTrilha.values()) total += bytes;
+    return total;
   }
 
   async definirAudio({ bitrate, dtx }) {
@@ -109,6 +130,11 @@ export class SalaLiveKit {
       }
       if (!this.#trilhaAudio) throw new Error("O microfone não está pronto.");
       this.#publicacaoAudio = await this.#publicarMicrofone();
+      // A medida de banda começa do zero a cada sala: é o consumo *desta*
+      // passagem pela call que o servidor vai somar ao ciclo.
+      this.#bytesPorTrilha.clear();
+      this.#bytesEncerrados = 0;
+      this.#comecarAmostragemDeBanda(sala, geracao);
       // Depois da publicação, e sem derrubar a entrada se falhar: um filtro de
       // ruído que não pôde conferir a licença é uma call com mais ruído, não
       // uma call que não acontece.
@@ -136,8 +162,55 @@ export class SalaLiveKit {
     });
   }
 
+  /** De quanto em quanto tempo a banda recebida é amostrada. Cinco segundos
+   *  é fino o bastante para uma call curta não medir zero, e grosso o
+   *  bastante para não custar nada: `getStats` numa sala de seis pessoas é
+   *  barato, mas não é de graça. */
+  static #INTERVALO_DE_BANDA = 5000;
+
+  #comecarAmostragemDeBanda(sala, geracao) {
+    clearInterval(this.#relogioDeBanda);
+    this.#relogioDeBanda = setInterval(() => {
+      if (this.#sala !== sala || this.#geracao !== geracao) return;
+      this.#amostrarBanda(sala).catch(() => {});
+    }, SalaLiveKit.#INTERVALO_DE_BANDA);
+  }
+
+  /** Lê o contador acumulado de cada trilha assinada. Os contadores do WebRTC
+   *  são cumulativos por trilha, então a soma **é** o total — não há
+   *  diferença para acumular à mão, e por isso uma amostragem perdida não
+   *  perde bytes: a seguinte já traz o que passou no meio. */
+  async #amostrarBanda(sala) {
+    for (const participante of sala.remoteParticipants.values()) {
+      for (const publicacao of participante.trackPublications.values()) {
+        const relatorio = await publicacao.track?.getRTCStatsReport?.();
+        if (!relatorio) continue;
+        for (const item of relatorio.values()) {
+          if (item.type !== "inbound-rtp") continue;
+          const bytes = Number(item.bytesReceived) || 0;
+          const anterior = this.#bytesPorTrilha.get(publicacao.trackSid) ?? 0;
+          // `max` porque uma reassinatura reinicia o contador da trilha do
+          // zero; sem ele, a medida andaria para trás.
+          this.#bytesPorTrilha.set(publicacao.trackSid, Math.max(anterior, bytes));
+        }
+      }
+    }
+  }
+
   #ligarEventos(sala, sdk, geracao) {
     const vigente = () => this.#sala === sala && this.#geracao === geracao;
+
+    // A queda que o `catch` de `entrar()` não vê: a sala estava de pé e o SFU
+    // sumiu. O SDK só emite isto depois de tentar reconectar sozinho, então
+    // quando chega aqui já não é um soluço de rede.
+    sala.on(sdk.RoomEvent.Disconnected, (motivo) => {
+      if (!vigente()) return;
+      // Um `disconnect()` nosso passa por aqui também; `#fecharSala` já
+      // limpou `#sala`, então `vigente()` é falso e o aviso não sai.
+      this.#sala = null;
+      clearInterval(this.#relogioDeBanda);
+      this.aoQueda(String(motivo ?? "a sala de mídia caiu"));
+    });
 
     sala.on(sdk.RoomEvent.TrackSubscribed, (track, publicacao, participante) => {
       if (!vigente()) return;
@@ -161,6 +234,13 @@ export class SalaLiveKit {
 
     sala.on(sdk.RoomEvent.TrackUnsubscribed, (track, publicacao, participante) => {
       if (!vigente()) return;
+      // O que esta trilha custou de banda não sai da conta só porque ela
+      // acabou: guarda o acumulado antes de esquecer o contador dela.
+      const bytes = this.#bytesPorTrilha.get(publicacao.trackSid);
+      if (bytes !== undefined) {
+        this.#bytesEncerrados += bytes;
+        this.#bytesPorTrilha.delete(publicacao.trackSid);
+      }
       const fluxos = this.#fluxosRemotos.get(participante.identity);
       for (const fluxo of Object.values(fluxos ?? {})) {
         if (fluxo.getTracks().includes(track.mediaStreamTrack)) fluxo.removeTrack(track.mediaStreamTrack);
@@ -279,6 +359,8 @@ export class SalaLiveKit {
   async #fecharSala(limparTrilhas) {
     const sala = this.#sala;
     this.#sala = null;
+    clearInterval(this.#relogioDeBanda);
+    this.#relogioDeBanda = null;
     for (const id of this.#falantes) this.aoFala(id, false);
     this.#falantes.clear();
     this.#fluxosRemotos.clear();

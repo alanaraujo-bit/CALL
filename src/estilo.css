@@ -1966,6 +1966,33 @@ svg {
   color: var(--vivo);
 }
 
+/* O selo de contingência: a call está de pé, mas não pelo caminho principal.
+   Discreto por decisão — é informação para quem já está dentro entender uma
+   mudança de qualidade, e não um alarme. Fica entre o estado e o tempo, e
+   `min-width: 0` deixa que seja ele a encolher quando a coluna aperta, e não
+   o nome do canal. */
+.voz__contingencia {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--texto-3);
+  background: color-mix(in srgb, var(--texto-3) 14%, transparent);
+  cursor: default;
+}
+
+/* Enquanto procura outro caminho, o selo puxa um pouco mais o olho: aqui a
+   call ainda não está de pé, e a diferença importa. */
+.voz__contingencia--atencao {
+  color: var(--atencao);
+  background: color-mix(in srgb, var(--atencao) 16%, transparent);
+}
+
 /* Tabular: sem isso o rótulo balança a cada segundo, porque o 1 é mais
    estreito que os outros algarismos. */
 .voz__tempo {

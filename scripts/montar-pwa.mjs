@@ -54,6 +54,11 @@ const MODULOS = [
   "conta.js",
   "notas-de-versao.js",
   "feedback.js",
+  "painel.js",
+  // A única folha de estilo do núcleo. Ela vem junto porque a central de
+  // comando é literalmente a mesma nas duas cascas, e duplicar mil linhas de
+  // CSS para dizer a mesma coisa é como as duas telas começam a divergir.
+  "painel.css",
 ];
 
 /** Pesado, e carregado só quando a call começa — mas precisa estar lá. */
@@ -105,7 +110,9 @@ async function copiarComReescrita(de, para, profundidade = 0) {
       continue;
     }
 
-    if (extname(item.name) === ".js") {
+    // `.html` entra na reescrita pelo `<link href="../src/painel.css">` do
+    // celular — o mesmo caminho relativo dos `import`, e o mesmo destino.
+    if ([".js", ".html"].includes(extname(item.name))) {
       const texto = await readFile(origemItem, "utf8");
       // `../` repetido conforme a profundidade: de `telas/`, `nucleo/` está
       // um nível acima; da raiz, está ao lado.

@@ -1829,11 +1829,142 @@ só clicar na ação abre o editor.
 
 ---
 
+## Iteração 23 — A mídia vira uma escada, e o painel passa a medi-la
+
+**Motivo:** o CALL parou de abrir call nenhuma. O plano gratuito do LiveKit
+acabou, e o efeito não foi "a qualidade caiu": foi um botão que não fazia
+nada, num dia em que havia gente querendo usar. Junto do conserto, o pedido
+que vem do mesmo susto — um lugar onde dê para ver quanto já foi consumido,
+antes de acabar de novo.
+
+**Diagnóstico, antes de escrever qualquer linha.** O caminho da entrada na
+voz não tinha nenhum defeito de código: o servidor escolhia LiveKit em
+`escolher_provedor_midia`, assinava um token válido, e entregava. O cliente
+tentava `livekit.entrar()`, falhava, e o `catch` fazia exatamente três coisas
+— mandava `sair-voz`, desmontava tudo, e mostrava "Não foi possível entrar na
+infraestrutura de mídia." A malha P2P (`src/rtc.js`) estava inteira e
+testada, mas só era escolhida quando o servidor **não tinha** credencial
+LiveKit no ambiente. Com a credencial lá e a conta esgotada, cada pessoa
+falhava sozinha, ninguém contava a ninguém, e o servidor nunca aprendia.
+
+O ponto que organizou o resto do trabalho é este: **o servidor nunca vê a
+conexão de mídia**. Ela acontece entre o navegador e o SFU, numa conexão da
+qual ele não participa. Não há como ele detectar sozinho que o LiveKit parou
+de atender — a única maneira é alguém contar. A ausência dessa mensagem era o
+defeito de verdade; tudo o mais foi consequência dela.
+
+**1. A escada, em `servidor/src/midia.rs`.** O arquivo foi reescrito de
+"tenho ou não tenho LiveKit" para uma escada de degraus: `nuvem` (LiveKit
+Cloud) → `proprio` (um LiveKit auto-hospedado) → `malha` (P2P). Um degrau sai
+da escada por três motivos, e cada um tem seu tempo: não estar configurado
+(nunca entra), ter estourado o teto do ciclo (sai antes de a fatura recusar),
+ou ter falhado de verdade (disjuntor). O disjuntor exige duas falhas na
+janela de três minutos — uma só seria dar a um cliente com rede ruim o poder
+de tirar o SFU do ar para todo mundo — e devolve o degrau depois de dez
+minutos **em observação**: a primeira falha depois de reabrir o derruba de
+novo, sem precisar de duas. Um SFU doente não deve ser testado com a call das
+pessoas a cada dez minutos.
+
+**2. O relato que faltava.** Duas mensagens novas no protocolo: `midia-falhou`
+(o cliente conta que não conseguiu entrar, ou que foi derrubado) e
+`voz-migrar` (o servidor responde com o degrau seguinte e uma credencial
+nova). O cliente deixou de desmontar a call ao falhar — ele avisa e espera a
+resposta, com o microfone ainda aberto e o cronômetro ainda correndo. Do
+ponto de vista de quem está falando, o que acontece é um engasgo de um ou dois
+segundos, e não uma call que caiu.
+
+Três guardas protegem o disjuntor de quem quiser derrubá-lo de fora: só relata
+quem está na voz, só sobre o degrau em que está de fato, e um relato sobre a
+malha é ignorado — ela não é um degrau que possa cair.
+
+**3. A sala inteira desce junto.** `escolher_degrau_midia` tem duas regras que
+disputam, e a ordem entre elas é a decisão inteira: coesão (quem chega entra
+por onde a sala já está, porque metade no SFU e metade na malha é uma sala em
+que as pessoas não se ouvem) vence **até** o degrau da sala cair, e aí a
+saúde vence. Quando o disjuntor dispara com gente dentro, `migrar_sala` emite
+uma credencial por pessoa — token de LiveKit vale para uma identidade só — e
+manda todo mundo descer antes de descobrir sozinho, um a um, que a porta
+fechou.
+
+Na migração para a malha havia um detalhe que só aparece pensando nos dois
+lados ao mesmo tempo: na entrada normal, quem chega oferece a conexão e quem
+já estava aceita. Numa migração **todo mundo troca ao mesmo tempo**, e dois
+lados ofertando ao mesmo par derrubariam a negociação. A regra é o id maior
+oferecer — algo que os dois lados calculam sozinhos e sempre concordam.
+
+**4. O medidor, e o furo que ele quase teve.** A telemetria já media segundos
+de voz por pessoa, que é exatamente a unidade que o LiveKit cobra
+(minuto-participante). Faltava dizer **por onde** — daí a coluna `meio` na
+migração `0007`. A banda é o outro teto, e costuma acabar primeiro numa
+transmissão de tela: ela é medida pelo cliente (`bytesRecebidos()` em
+`livekit.js`, amostrando `getRTCStatsReport` a cada cinco segundos) e enviada
+junto do `sair-voz`.
+
+O furo apareceu ao escrever o teste: o contador do ciclo vivia só na memória
+do processo. Numa hospedagem gerenciada, publicar reinicia o servidor — o teto
+zeraria várias vezes por mês e nunca chegaria a proteger nada. Por isso os
+bytes também ficaram gravados no evento (coluna `bytes`), e o servidor relê o
+consumo do ciclo na partida. É o tipo de defeito que não aparece em nenhuma
+execução local e apareceria na primeira semana de produção.
+
+Duas decisões de honestidade no medidor: o ciclo é o **da fatura** (começa no
+dia do mês configurado, não "nos últimos 30 dias" — uma resposta parecida e
+errada, e errada justamente perto do fim do mês, quando a pergunta importa), e
+um evento anterior à escada aparece como **"não medido"** em vez de ser
+atribuído ao degrau mais provável. Um medidor que chuta não serve para decidir
+desligar nada.
+
+**5. A aba Mídia da central de comando.** A escada desenhada como escada — de
+cima para baixo, com recuo crescente, porque uma fileira de cartões lado a
+lado diria "estes são equivalentes", que é o contrário do que se quer
+comunicar. Cada degrau mostra onde fala (endereço mascarado: o painel não é um
+mapa para bater no servidor), quanto consumiu do teto, e, quando está fora, por
+quê e por quanto tempo ainda. Embaixo, a chave do dono: forçar a malha em todas
+as calls novas sem redeploy — para o dia em que o painel do provedor contar uma
+história diferente da nossa.
+
+**6. O selo discreto.** Quem está numa call de contingência vê "servidor
+reserva" ou "rede direta" no rodapé, com o motivo no `title`. Sem modal, sem
+som, sem interromper: é informação para entender uma mudança de qualidade, não
+um alarme. No celular, a mesma informação entra na linha do relógio.
+
+**7. O celular recebeu tudo.** `movel/nucleo.js` tinha uma cópia da mesma
+lógica de entrada na voz, com o mesmo `catch` que desistia. Sem a mesma
+escada ali, o PWA continuaria quebrando exatamente como antes — e é ele que
+mais gente usa para entrar rápido.
+
+### Verificado
+
+| O quê | Como |
+| --- | --- |
+| A escada, em unidade | `cargo test -p sinalizacao --all-features`: 45 testes, 13 deles novos — o disjuntor derrubando com duas falhas e não com uma, a volta em observação, o teto aposentando o degrau sem precisar de falha, a banda estourando antes dos minutos, a chave do dono valendo mais que degrau saudável, e o cálculo do ciclo de cobrança na virada de ano |
+| A escada, de ponta a ponta | `node testes/midia.test.mjs`: 33 verificações contra o binário de verdade, com credenciais de LiveKit que apontam para o nada — a encenação exata do dia do apagão. Prova o desvio, a sala inteira descendo junto, quem chega depois já nascendo no degrau novo, as três guardas contra derrubar o SFU de fora, e o consumo sobrevivendo a um reinício do servidor |
+| Sem regressão no protocolo | `node testes/sinalizacao.test.mjs`: 112 verificações, todas passando |
+| Sem regressão no painel | `node testes/painel.test.mjs`: a suíte inteira passando com a coluna `meio`/`bytes` no evento |
+| A aba, vista com os próprios olhos | `powershell -File testes/capturar-painel.ps1`, cena "midia" — a bancada semeia trinta dias de consumo distribuído entre os três caminhos, e o roteiro reprova se a aba não desenhar os degraus e a chave |
+
+### O que ficou registrado como decisão, e não como pendência
+
+**A malha não é substituta equivalente, e o README diz isso.** Ela existe para
+a call acontecer, não para acontecer bem: cada pessoa envia para todas as
+outras, então até quatro ou cinco pessoas vai bem e a partir daí a transmissão
+de tela sofre. Por isso o degrau do meio — um LiveKit próprio — é o que evita
+chegar até ela, e a receita de implantação está no README. Enquanto ele não
+existir no ambiente, a escada vai da nuvem direto para a malha, e o CALL
+funciona assim mesmo.
+
+**O teto vem do ambiente, e não do código.** `LIVEKIT_MINUTOS_MES` e
+`LIVEKIT_GB_MES` são declarados por quem paga a conta, olhando o painel do
+provedor. Não há número de plano gravado em lugar nenhum do repositório: um
+limite inventado que envelhece em silêncio é pior do que limite nenhum, porque
+parece medido.
+
 ## Testes automatizados
 
 | Suíte | Comando | Cobertura |
 | --- | --- | --- |
 | Protocolo de sinalização | `node testes/sinalizacao.test.mjs` | 112 verificações: criação de grupo, convite recusado, entrada por código, voz isolada por canal, encaminhamento de sinais, difusão de estado, mensagens e histórico, regra de dono, remoção que tira gente da voz, persistência entre execuções do servidor, o cartão de perfil que viaja na saudação, a atividade — repassada, recortada no teto de 40 caracteres, presente no resumo de quem chega depois, e desligada tanto por texto em branco quanto pela ausência do campo — e, desde a iteração 17, as contas: cadastro com e-mail normalizado, senha curta e e-mail malformado recusados no campo certo, e-mail sem conta e senha errada respondendo a mesma coisa, sessão que retoma e sessão que morre ao sair, o `usuario` que vem da conta e não do que o cliente disse ser, o prefixo `conta-` recusado a quem não tem token, perfil e lista de grupos gravados, o hash Argon2id no disco e a impressão do token em vez do token |
+| Escada de mídia | `node testes/midia.test.mjs` | 33 verificações contra o binário de verdade, com credenciais de LiveKit que apontam para o nada — para o servidor, indistinguível de um plano esgotado: a call nascendo no topo da escada, quem falha sendo desviado em vez de largado, o fim da escada sendo a malha, a sala inteira descendo junto quando o disjuntor dispara, quem chega depois já nascendo no degrau novo, as três guardas contra derrubar o SFU de fora (não está na voz, está noutro degrau, relatou sobre a malha), a chave do dono, e o consumo do ciclo sobrevivendo a um reinício do servidor |
 | Contas, no Rust | `cargo test -p sinalizacao` | 7 verificações de unidade: os endereços que as pessoas têm e os que não chegam a lugar nenhum, o piso de oito caracteres, o hash que confere a senha certa e recusa a vazia de uma conta só-Google, a sessão que vale até ser fechada, o castigo depois das falhas seguidas, e o Google achando pelo e-mail a conta que já existia com senha |
 | PKCE e convite, no Rust | `cargo test -p call --lib` | 8 verificações: o `code_challenge` conferido contra o vetor do apêndice B da RFC 7636, o alfabeto e o tamanho do verificador, a URL que vai e volta inteira (inclusive um `%` solto que não pode derrubar a leitura), as formas que um link `call://` real assume, e o que não é um código |
 | Portal de conta | `powershell -File testes/rodar-portal.ps1` | 47 verificações conduzindo a aplicação real contra um servidor de verdade: qual aba abre e por quê, a altura do palco acompanhando a folha à frente, a prévia que segue a digitação, o medidor de força nos cinco níveis, o tique do e-mail, a recusa do servidor mostrada dentro do cartão, o cadastro que abre a aplicação e guarda a sessão, a reabertura que entra direto, o token revogado que devolve ao portal sem rebaixar ninguém a visitante, o olho da senha, a saída da conta que apaga sessão e identidade, e a entrada sem conta continuando a existir |

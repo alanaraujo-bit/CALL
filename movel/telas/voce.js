@@ -35,6 +35,7 @@ import {
   pedirMicrofone,
   pedirMeuFeedback,
   enviarFeedback,
+  painel,
   conectarSocial,
   VERSAO,
   SITE,
@@ -199,6 +200,19 @@ export function telaDeVoce(nav) {
           seta: true,
           aoTocar: () => nav.empilhar(telaDeFeedback(nav)),
         }),
+        // Só existe para a conta do dono do serviço. Quem decide é o
+        // servidor (`conta.admin`, de `contas::e_admin`); o cliente não
+        // conhece a lista de e-mails e não teria como inventá-la.
+        estado.conta?.admin
+          ? linha({
+              titulo: "Central de comando",
+              legenda: "Acessos, retenção e quem está online agora",
+              icone: "ondas",
+              tintaIcone: "tinta",
+              seta: true,
+              aoTocar: () => painel.abrir(),
+            })
+          : null,
         linha({
           titulo: "Baixar para Windows",
           legenda: "O CALL completo, com transmissão de tela",

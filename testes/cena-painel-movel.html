@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cena da central de comando, no celular</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #000;
+      }
+      iframe {
+        width: 390px;
+        height: 844px;
+        border: 0;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      A mesma central de comando, na casca do celular.
+
+      Existe por um motivo específico: o painel é a peça mais densa do CALL —
+      tabelas de nove colunas, um mapa de 7×24 e uma grade de coortes — e a
+      folha dele promete se estreitar sozinha abaixo de 820px. Uma promessa
+      dessas ou é fotografada num quadro de iPhone, ou não é verdade.
+    -->
+    <iframe id="app"></iframe>
+    <img src="/segurar?ms=16000" alt="" style="position: absolute; width: 1px; height: 1px; opacity: 0" />
+
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const aba = params.get("aba") ?? "geral";
+      const servidor = params.get("servidor") ?? "ws://127.0.0.1:8788";
+      const email = params.get("email") ?? "alanvitoraraujo1a@outlook.com";
+      const senha = params.get("senha") ?? "painel-de-teste-1";
+
+      const quadro = document.getElementById("app");
+      const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
+      const doc = () => quadro.contentDocument;
+      const jan = () => quadro.contentWindow;
+
+      const aguardar = async (teste, limite = 12000) => {
+        const fim = Date.now() + limite;
+        while (Date.now() < fim) {
+          try {
+            const v = teste();
+            if (v) return v;
+          } catch {
+            /* ainda montando */
+          }
+          await esperar(90);
+        }
+        return null;
+      };
+      const porTexto = (seletor, texto, raiz = doc()) =>
+        [...raiz.querySelectorAll(seletor)].find((n) =>
+          n.textContent.trim().toLowerCase().includes(texto.toLowerCase())
+        ) ?? null;
+      const tocar = (elemento) => {
+        if (!elemento) return false;
+        const o = { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true };
+        elemento.dispatchEvent(new (jan().PointerEvent)("pointerdown", o));
+        elemento.dispatchEvent(new (jan().PointerEvent)("pointerup", o));
+        elemento.click();
+        return true;
+      };
+      const teclar = (elemento, valor) => {
+        elemento.value = valor;
+        elemento.dispatchEvent(new (jan().Event)("input", { bubbles: true }));
+      };
+
+      /** O motivo, gravado em testes/resultado.json — uma captura da tela de
+       *  login nao diz se o login falhou, se a conta nao e dona, ou se o
+       *  painel nao abriu. */
+      const relatar = () =>
+        fetch("/resultado", { method: "POST", body: JSON.stringify({ titulo: document.title }) }).catch(
+          () => {}
+        );
+      addEventListener("error", relatar);
+
+      localStorage.clear();
+      quadro.src = `/movel/index.html?servidor=${encodeURIComponent(servidor)}`;
+      await new Promise((r) => quadro.addEventListener("load", r, { once: true }));
+
+      if (params.get("movimento") !== "sim") {
+        await aguardar(() => doc()?.head);
+        const parado = doc().createElement("style");
+        parado.textContent =
+          "*, *::before, *::after { animation: none !important; transition: none !important; }";
+        doc().head.append(parado);
+      }
+
+      /* Entrar, pelo portal de celular. */
+      if (!(await aguardar(() => doc().getElementById("portal")))) {
+        document.title = "FALHOU: o portal não apareceu";
+        await relatar();
+        throw new Error("portal");
+      }
+      // A aba certa do segmentado, e não o primeiro botão da tela que diz
+      // "Entrar" — sem conta lembrada o portal abre em "Criar conta".
+      tocar(doc().querySelectorAll(".segmentado__aba")[0]);
+      await esperar(500);
+
+      const campoEmail = await aguardar(() => doc().querySelector('input[autocomplete="username"]'));
+      const campoSenha = await aguardar(() =>
+        doc().querySelector('input[autocomplete="current-password"]')
+      );
+      if (!campoEmail || !campoSenha) {
+        document.title = "FALHOU: os campos de entrar não apareceram";
+        await relatar();
+        throw new Error("campos");
+      }
+      teclar(campoEmail, email);
+      teclar(campoSenha, senha);
+      campoEmail.closest("form").dispatchEvent(new (jan().Event)("submit", { cancelable: true }));
+
+      if (!(await aguardar(() => doc().getElementById("abas")?.children.length === 3))) {
+        document.title = "FALHOU: não entrou na conta";
+        await relatar();
+        throw new Error("login");
+      }
+
+      /* Aba Você → Central de comando. */
+      tocar(doc().getElementById("abas").children[2]);
+      await esperar(500);
+      const entrada = await aguardar(() => porTexto(".linha", "Central de comando"));
+      if (!entrada) {
+        document.title = "FALHOU: a entrada da central não apareceu na aba Você";
+        await relatar();
+        throw new Error("sem entrada");
+      }
+      tocar(entrada);
+
+      if (!(await aguardar(() => doc().querySelector(".pnl-metrica, .pnl-negado")))) {
+        document.title = "FALHOU: o retrato não chegou";
+        await relatar();
+        throw new Error("sem retrato");
+      }
+
+      const botao = doc().querySelector(`.pnl__aba[data-aba="${aba}"]`);
+      if (!botao) {
+        document.title = `FALHOU: aba desconhecida (${aba})`;
+        await relatar();
+        throw new Error("aba");
+      }
+      tocar(botao);
+      await esperar(700);
+
+      if (params.get("rolar") === "fim") {
+        const corpo = doc().querySelector(".pnl__corpo");
+        corpo.scrollTop = corpo.scrollHeight;
+        await esperar(400);
+      }
+
+      // Nem toda aba tem cartao de metrica — Pessoas, Retencao e Grupos nao
+      // tem. O que toda aba tem e um bloco desenhado.
+      const desenhou = doc().querySelector(".pnl-secao, .pnl-metrica");
+      document.title = desenhou ? "PRONTO" : `FALHOU: a aba ${aba} não desenhou`;
+      await relatar();
+    </script>
+  </body>
+</html>

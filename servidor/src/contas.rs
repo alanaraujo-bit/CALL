@@ -40,6 +40,46 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::modelo::{agora_ms, gravar_atomico, novo_id, sortear, SOM_BYTES_MAX, SOM_NOME_MAX};
+use crate::telemetria::{ContaNoPainel, Evento};
+
+/* ─── Quem manda aqui ─────────────────────────────────────────────────── */
+
+/// O dono do serviço, quando `ADMIN_EMAILS` não diz outra coisa.
+///
+/// Uma constante no código, e não só uma variável de ambiente, porque o
+/// painel precisa funcionar na primeira subida — antes de alguém lembrar de
+/// configurar nada. `ADMIN_EMAILS` (separado por vírgula) vence isto quando
+/// existe, que é como se troca de dono sem recompilar.
+const ADMIN_PADRAO: &str = "alanvitoraraujo1a@outlook.com";
+
+/// Se este e-mail abre o painel administrativo.
+///
+/// É a **única** porta: não há papel gravado na conta, não há campo
+/// `admin` no banco que alguém possa marcar por descuido, e não há promoção
+/// de dentro do aplicativo. Quem manda é quem controla o ambiente do
+/// servidor — e ninguém vira administrador se cadastrando.
+pub fn e_admin(email: &str) -> bool {
+    let email = email.trim().to_lowercase();
+    if email.is_empty() {
+        return false;
+    }
+    let lista = std::env::var("ADMIN_EMAILS").unwrap_or_else(|_| ADMIN_PADRAO.to_string());
+    lista
+        .split(',')
+        .map(|e| e.trim().to_lowercase())
+        .any(|e| !e.is_empty() && e == email)
+}
+
+/// Quantos dias de evento o servidor guarda. Noventa cobre a coorte de D30
+/// com folga e mantém a tabela pequena o bastante para o painel montar cada
+/// número lendo a janela inteira, sem consulta agregada nenhuma.
+pub const EVENTOS_DIAS: u64 = 90;
+const EVENTOS_JANELA_MS: u64 = EVENTOS_DIAS * 24 * 60 * 60 * 1000;
+
+/// Teto de eventos guardados no backend de arquivo. O sidecar roda na
+/// máquina de alguém e não deve crescer sem limite na memória dela; o
+/// Postgres da nuvem não tem este teto, só a janela de dias.
+const EVENTOS_ARQUIVO_MAX: usize = 50_000;
 
 /// Quantos sons cabem na biblioteca pessoal de uma conta. Bem menor que o
 /// teto por grupo (50): e uma coleção pequena para o som de entrada e para
@@ -88,9 +128,10 @@ pub const FEEDBACK_POR_CONTA_MAX: usize = 200;
 /// momento, e o relato não muda de nome sozinho se a conta for renomeada
 /// depois.
 ///
-/// `status` começa em `"recebido"` e só muda pelo painel administrativo (uma
-/// peça futura, ainda não construída) — o valor aqui é sempre a verdade
-/// atual, nunca reconstruído a partir de outra coisa.
+/// `status` começa em `"recebido"` e só muda pela central de comando — pela
+/// aba Feedback dentro do próprio CALL, ou pela página `/admin` do servidor.
+/// O valor aqui é sempre a verdade atual, nunca reconstruído a partir de
+/// outra coisa.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Feedback {
     pub id: String,
@@ -206,6 +247,10 @@ impl Conta {
             "google": !self.google.is_empty(),
             "temSenha": !self.senha.is_empty(),
             "somEntrada": self.som_entrada,
+            // Vai no resumo, e não numa pergunta à parte, porque é o que faz
+            // o ícone do painel existir na barra: a interface precisa saber
+            // disso no mesmo instante em que sabe o apelido.
+            "admin": e_admin(&self.email),
         })
     }
 }
@@ -784,6 +829,99 @@ impl Cofre {
         }
     }
 
+    /* ─── Painel administrativo ──────────────────────────────────────── */
+
+    /// Anota um evento. Nunca devolve erro e nunca faz quem chamou esperar
+    /// por uma escrita: telemetria que atrapalha o produto é telemetria que
+    /// vai acabar sendo desligada. Uma falha aqui custa uma linha do painel,
+    /// e não uma mensagem que não foi entregue.
+    pub async fn registrar_evento(&self, evento: Evento) {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => estado.lock().unwrap().registrar_evento(evento),
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::registrar_evento(pool, evento).await,
+        }
+    }
+
+    /// Os eventos da janela que o painel desenha, em qualquer ordem — quem
+    /// agrega é `telemetria::montar`, e ele não depende da ordem.
+    pub async fn eventos_desde(&self, desde: u64) -> Vec<Evento> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => estado
+                .lock()
+                .unwrap()
+                .eventos
+                .iter()
+                .filter(|e| e.em >= desde)
+                .cloned()
+                .collect(),
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::eventos_desde(pool, desde).await,
+        }
+    }
+
+    /// Todas as contas, no recorte que o painel usa. É a consulta mais cara
+    /// do servidor inteiro — e a única que lê a tabela toda —, e é por isso
+    /// que só o painel a chama, e só quando alguém o abre.
+    pub async fn contas_para_painel(&self) -> Vec<ContaNoPainel> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => estado
+                .lock()
+                .unwrap()
+                .contas
+                .values()
+                .map(|c| ContaNoPainel {
+                    id: c.id.clone(),
+                    email: c.email.clone(),
+                    apelido: c.apelido.clone(),
+                    avatar: c.avatar.clone(),
+                    criada_em: c.criada_em,
+                    google: !c.google.is_empty(),
+                    grupos: c.atalhos.len(),
+                    amigos: c.amigos.len(),
+                })
+                .collect(),
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::contas_para_painel(pool).await,
+        }
+    }
+
+    /// Quantas pessoas conhecem cada grupo — a contagem de quem tem aquele
+    /// código guardado na conta.
+    ///
+    /// Não é "quantos estão online": é o tamanho do grupo, que é a única
+    /// pergunta que a tabela de grupos não conseguia responder sem isto (a
+    /// estrutura do grupo mora no acervo, e o acervo não sabe de contas).
+    pub async fn membros_por_grupo(&self) -> HashMap<String, u64> {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                let mut mapa: HashMap<String, u64> = HashMap::new();
+                for conta in estado.lock().unwrap().contas.values() {
+                    for atalho in &conta.atalhos {
+                        *mapa.entry(atalho.codigo.clone()).or_default() += 1;
+                    }
+                }
+                mapa
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::membros_por_grupo(pool).await,
+        }
+    }
+
+    /// Quantas sessões ainda valem — o número de "aparelhos com o CALL
+    /// aberto ou aberto há pouco", que é diferente de quem está conectado
+    /// agora (isso mora em `Estado`, na memória do processo).
+    pub async fn sessoes_vivas(&self) -> u64 {
+        match &self.armazem {
+            Armazem::Arquivo(estado) => {
+                let agora = agora_ms();
+                estado.lock().unwrap().sessoes.values().filter(|s| s.expira > agora).count() as u64
+            }
+            #[cfg(feature = "banco")]
+            Armazem::Postgres(pool) => postgres::sessoes_vivas(pool).await,
+        }
+    }
+
     /// Conta dona do token, quando ele existe e ainda vale.
     pub async fn conta_do_token(&self, token: &str) -> Option<Conta> {
         let marca = marca_do_token(token);
@@ -821,6 +959,13 @@ struct EstadoArquivo {
     blobs: HashMap<String, Vec<u8>>,
     /// conta_id -> relatos que ela enviou.
     feedback: HashMap<String, Vec<Feedback>>,
+    /// O histórico do painel, em ordem de chegada. Fica em memória inteiro
+    /// (é uma linha curta por acontecimento, com teto em
+    /// `EVENTOS_ARQUIVO_MAX`) e vai para `eventos.jsonl` por acréscimo — o
+    /// mesmo desenho de `mensagens.jsonl`, e pelo mesmo motivo: reescrever o
+    /// arquivo inteiro a cada evento seria gravar megabytes para anotar
+    /// dezenas de bytes.
+    eventos: Vec<Evento>,
     pasta: Option<PathBuf>,
 }
 
@@ -843,6 +988,7 @@ impl EstadoArquivo {
             sons_pessoais: HashMap::new(),
             blobs: HashMap::new(),
             feedback: HashMap::new(),
+            eventos: Vec::new(),
             pasta: pasta.clone(),
         };
 
@@ -899,6 +1045,21 @@ impl EstadoArquivo {
             }
         }
 
+        // Uma linha ilegível no meio do histórico não derruba o resto: o
+        // painel prefere um dia incompleto a nenhum dia.
+        if let Ok(bruto) = std::fs::read_to_string(pasta.join("eventos.jsonl")) {
+            let corte = agora_ms().saturating_sub(EVENTOS_JANELA_MS);
+            estado.eventos = bruto
+                .lines()
+                .filter_map(|linha| serde_json::from_str::<Evento>(linha).ok())
+                .filter(|e| e.em >= corte)
+                .collect();
+            if estado.eventos.len() > EVENTOS_ARQUIVO_MAX {
+                let sobra = estado.eventos.len() - EVENTOS_ARQUIVO_MAX;
+                estado.eventos.drain(..sobra);
+            }
+        }
+
         println!(
             "[contas] arquivo local: {} conta(s), {} sessao(oes) viva(s), {} som(ns) pessoal(is)",
             estado.contas.len(),
@@ -906,6 +1067,45 @@ impl EstadoArquivo {
             estado.blobs.len()
         );
         estado
+    }
+
+    /// Guarda o evento e o acrescenta ao arquivo. O teto derruba o mais
+    /// antigo da memória; o arquivo é reescrito só quando o corte acontece,
+    /// e não a cada linha.
+    fn registrar_evento(&mut self, evento: Evento) {
+        if let Some(pasta) = &self.pasta {
+            if let Ok(linha) = serde_json::to_string(&evento) {
+                use std::io::Write;
+                let aberto = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(pasta.join("eventos.jsonl"));
+                if let Ok(mut arquivo) = aberto {
+                    let _ = writeln!(arquivo, "{linha}");
+                }
+            }
+        }
+
+        self.eventos.push(evento);
+        if self.eventos.len() > EVENTOS_ARQUIVO_MAX {
+            let sobra = self.eventos.len() - EVENTOS_ARQUIVO_MAX;
+            self.eventos.drain(..sobra);
+            self.compactar_eventos();
+        }
+    }
+
+    fn compactar_eventos(&self) {
+        let Some(pasta) = &self.pasta else { return };
+        let corpo: String = self
+            .eventos
+            .iter()
+            .filter_map(|e| serde_json::to_string(e).ok())
+            .map(|l| l + "
+")
+            .collect();
+        if let Err(e) = gravar_atomico(&pasta.join("eventos.jsonl"), &corpo) {
+            eprintln!("[contas] falha ao compactar eventos: {e}");
+        }
     }
 
     fn indexar(&mut self, conta: Conta) {
@@ -1078,6 +1278,7 @@ mod postgres {
 
     use super::{Atalho, Conta, Feedback, PedidoAmigo, PreferenciaSom, Recusa, SomPessoal};
     use crate::modelo::{agora_ms, novo_id};
+    use crate::telemetria::{ContaNoPainel, Evento};
 
     /// (id, email, senha, google, apelido, avatar, bio, criada_em,
     ///  som_entrada_origem, som_entrada_grupo, som_entrada_id)
@@ -1782,6 +1983,113 @@ mod postgres {
         .execute(pool)
         .await;
         matches!(resultado, Ok(r) if r.rows_affected() > 0)
+    }
+
+    /* ─── Painel ──────────────────────────────────────────────────────── */
+
+    /// Grava o evento e, de vez em quando, apara o que passou da janela.
+    ///
+    /// A poda vai junto do INSERT (uma vez a cada mil eventos, sorteada pelo
+    /// próprio relógio) em vez de virar uma tarefa periódica: sem cron, sem
+    /// estado a mais no processo, e sem uma varredura grande acontecendo
+    /// justamente quando ninguém está olhando.
+    pub async fn registrar_evento(pool: &PgPool, evento: Evento) {
+        let r = sqlx::query(
+            "INSERT INTO eventos (em, tipo, conta_id, alvo, valor, plataforma, meio, bytes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(evento.em as i64)
+        .bind(&evento.tipo)
+        .bind(&evento.conta)
+        .bind(&evento.alvo)
+        .bind(evento.valor)
+        .bind(&evento.plataforma)
+        .bind(&evento.meio)
+        .bind(evento.bytes as i64)
+        .execute(pool)
+        .await;
+
+        if let Err(e) = r {
+            eprintln!("[painel] evento nao gravado: {e}");
+            return;
+        }
+
+        if evento.em % 1000 < 2 {
+            let corte = evento.em.saturating_sub(super::EVENTOS_JANELA_MS) as i64;
+            let _ = sqlx::query("DELETE FROM eventos WHERE em < $1")
+                .bind(corte)
+                .execute(pool)
+                .await;
+        }
+    }
+
+    pub async fn eventos_desde(pool: &PgPool, desde: u64) -> Vec<Evento> {
+        sqlx::query_as::<_, (i64, String, Option<String>, String, i64, String, String, i64)>(
+            "SELECT em, tipo, conta_id, alvo, valor, plataforma, meio, bytes
+             FROM eventos WHERE em >= $1 ORDER BY em",
+        )
+        .bind(desde as i64)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(em, tipo, conta, alvo, valor, plataforma, meio, bytes)| Evento {
+            em: em as u64,
+            tipo,
+            conta,
+            alvo,
+            valor,
+            plataforma,
+            meio,
+            bytes: bytes.max(0) as u64,
+        })
+        .collect()
+    }
+
+    /// Uma consulta só, com as contagens de grupos e de amigos resolvidas em
+    /// subconsulta — e não uma volta ao banco por conta, que é o que
+    /// `por_id` faria se o painel o chamasse numa laçada.
+    pub async fn contas_para_painel(pool: &PgPool) -> Vec<ContaNoPainel> {
+        sqlx::query_as::<_, (String, String, String, String, i64, Option<String>, i64, i64)>(
+            "SELECT c.id, c.email, c.apelido, c.avatar, c.criada_em, c.google,
+                    (SELECT count(*) FROM atalhos a WHERE a.conta_id = c.id),
+                    (SELECT count(*) FROM amigos m WHERE m.conta_id = c.id)
+             FROM contas c ORDER BY c.criada_em",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, email, apelido, avatar, criada_em, google, grupos, amigos)| ContaNoPainel {
+            id,
+            email,
+            apelido,
+            avatar,
+            criada_em: criada_em as u64,
+            google: google.is_some_and(|g| !g.is_empty()),
+            grupos: grupos as usize,
+            amigos: amigos as usize,
+        })
+        .collect()
+    }
+
+    pub async fn membros_por_grupo(pool: &PgPool) -> std::collections::HashMap<String, u64> {
+        sqlx::query_as::<_, (String, i64)>("SELECT codigo, count(*) FROM atalhos GROUP BY codigo")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(codigo, quantos)| (codigo, quantos as u64))
+            .collect()
+    }
+
+    pub async fn sessoes_vivas(pool: &PgPool) -> u64 {
+        sqlx::query_as::<_, (i64,)>("SELECT count(*) FROM sessoes WHERE expira > $1")
+            .bind(agora_ms() as i64)
+            .fetch_one(pool)
+            .await
+            .map(|(n,)| n as u64)
+            .unwrap_or(0)
     }
 
     pub async fn abrir_sessao(pool: &PgPool, marca: &str, conta: &str, expira: u64) {

@@ -44,6 +44,7 @@ import { avatarSugerido } from "../src/avatares.js";
 // que o servidor também aplica. As telas dele são do CALL de mesa e ficam lá.
 import { saneado, saneadoGrupo } from "../src/perfil.js";
 import * as conta from "../src/conta.js";
+import { Painel } from "../src/painel.js";
 
 /* ═══ Constantes ════════════════════════════════════════════════ */
 
@@ -115,6 +116,10 @@ export const estado = {
   /** Silenciar tudo: continua na call, mas não ouve ninguém. */
   surdo: false,
   ocupado: false,
+  /** Qual degrau de contingência esta call está usando, ou `null` quando ela
+   *  está no caminho principal. `"proprio"`, `"malha"` ou `"conectando"` —
+   *  ver `marcarContingencia` em `src/app.js`, que é a mesma ideia. */
+  contingencia: null,
   /** `false`, `true` ou `"reconectando"`. */
   conexao: false,
 
@@ -270,8 +275,29 @@ const vozesRemotas = new Map();
 /** id -> HTMLAudioElement que toca o som da tela transmitida por alguém. */
 const somDeTelas = new Map();
 
+/** Os degraus da escada de mídia, na mesma ordem do servidor — ver a nota
+ *  em `servidor/src/midia.rs`. `nuvem` e `proprio` são dois LiveKit e usam o
+ *  mesmo cliente; `malha` é o P2P. Um servidor antigo manda só
+ *  `provedor: "livekit"`, e a leitura abaixo o traduz. */
+const DEGRAUS_DE_LIVEKIT = new Set(["nuvem", "proprio", "livekit"]);
+
 let provedorDeMidia = "malha";
-const midiaAtual = () => (provedorDeMidia === "livekit" ? livekit : malha);
+const usandoLiveKit = () => DEGRAUS_DE_LIVEKIT.has(provedorDeMidia);
+const midiaAtual = () => (usandoLiveKit() ? livekit : malha);
+
+function degrauDe(midia) {
+  if (!midia) return "malha";
+  if (midia.degrau) return midia.degrau;
+  return midia.provedor === "livekit" ? "livekit" : "malha";
+}
+
+/** Manda o `sair-voz` levando junto a banda que este aparelho recebeu do
+ *  SFU — o número que o painel usa para saber quanto do plano já foi gasto.
+ *  Síncrono de propósito: a leitura precisa acontecer antes de a sala ser
+ *  desmontada. */
+function anunciarSaidaDaVoz() {
+  sinal.enviar({ tipo: "sair-voz", bytes: usandoLiveKit() ? livekit.bytesRecebidos() : 0 });
+}
 
 export const malha = new Malha({
   enviarSinal: (para, dados) => sinal.enviar({ tipo: "sinal", para, dados }),
@@ -294,6 +320,16 @@ export const livekit = new SalaLiveKit({
     if (id !== estado.meuId) marcarFala(id, esta);
   },
   aoEntrar: (sala) => motor.supressao.aoPublicar(sala),
+  // O SFU sumiu com a call de pé. Contar ao servidor é o que faz a escada
+  // de mídia descer um degrau — para todo mundo, e não só para quem
+  // percebeu primeiro.
+  aoQueda: (motivo) => {
+    if (!estado.canalVoz || !usandoLiveKit()) return;
+    console.warn("[midia] a sala de mídia caiu no meio da call:", motivo);
+    estado.contingencia = "conectando";
+    emitir("voz");
+    sinal.enviar({ tipo: "midia-falhou", degrau: provedorDeMidia, motivo });
+  },
 });
 
 /* ═══ Perfil e conta ════════════════════════════════════════════ */
@@ -387,6 +423,7 @@ const saudacaoComPerfil = (saudacao) => ({
   avatar: estado.avatar,
   bio: estado.bio,
   foto: estado.foto,
+  plataforma: conta.plataforma(),
 });
 
 /**
@@ -715,11 +752,17 @@ sinal.addEventListener("voz", (e) => {
   });
 });
 
+sinal.addEventListener("voz-migrar", (e) => {
+  aoMigrarDeMidia(e.detail).catch((erro) => {
+    console.error("[midia] a migração de transporte falhou", erro);
+  });
+});
+
 sinal.addEventListener("entrou-voz", (e) => {
   const { membro, canal } = e.detail;
   estado.membros.set(membro.id, { ...estado.membros.get(membro.id), ...membro });
   if (canal === estado.canalVoz && membro.id !== estado.meuId) {
-    if (provedorDeMidia === "malha") malha.abrir(membro.id, false);
+    if (!usandoLiveKit()) malha.abrir(membro.id, false);
     motor.tocarAviso("entrou");
     historicoDaCall.entrou(membro.id, true);
   }
@@ -739,7 +782,7 @@ sinal.addEventListener("saiu-voz", (e) => {
 });
 
 sinal.addEventListener("sinal", (e) => {
-  if (provedorDeMidia === "malha") malha.receberSinal(e.detail.de, e.detail.dados);
+  if (!usandoLiveKit()) malha.receberSinal(e.detail.de, e.detail.dados);
 });
 
 sinal.addEventListener("estado", (e) => {
@@ -863,6 +906,24 @@ social.addEventListener("aberto", () => {
   if (estado.token) social.enviar({ tipo: "amigos", token: estado.token });
   pedirPresencas();
 });
+/* ═══ Central de comando ════════════════════════════════════════ */
+//
+// O mesmo painel do CALL de mesa, pelo mesmo socket social. Ele desenha a
+// própria cortina em cima de tudo, então não precisa de tela, de rota nem de
+// lugar na pilha de navegação — a aba Você só chama `abrir()`.
+
+export const painel = new Painel({
+  enviar: (mensagem) => social.enviar(mensagem),
+  token: () => estado.token,
+});
+
+social.addEventListener("admin-painel", (e) => painel.aoRetrato(e.detail.painel));
+social.addEventListener("admin-pulso", (e) => painel.aoPulso(e.detail));
+social.addEventListener("admin-evento", (e) => painel.aoEvento(e.detail));
+social.addEventListener("admin-feedback-novo", (e) => painel.aoFeedbackNovo(e.detail.feedback));
+social.addEventListener("admin-midia", (e) => painel.aoMidia(e.detail.midia));
+social.addEventListener("admin-negado", () => painel.aoNegado());
+
 social.addEventListener("queda", () => agendarReconexaoSocial());
 social.addEventListener("amigo-atualizado", () => pedirAmigos());
 social.addEventListener("amigo-pedido", (e) => {
@@ -1067,7 +1128,7 @@ export async function pedirMicrofone() {
   }
 }
 
-async function aoEntrarNaVoz({ canal, pares, midia }) {
+async function aoEntrarNaVoz({ canal, pares, midia, contingencia = false }) {
   if (!estado.fluxoMicrofone) {
     sinal.enviar({ tipo: "sair-voz" });
     encerrarEsperaDaVoz(new Error("O microfone não estava pronto."));
@@ -1081,34 +1142,29 @@ async function aoEntrarNaVoz({ canal, pares, midia }) {
   if (eu) eu.canalVoz = canal;
 
   const [trilha] = estado.fluxoMicrofone.getAudioTracks();
-  provedorDeMidia = midia?.provedor === "livekit" ? "livekit" : "malha";
+  provedorDeMidia = degrauDe(midia);
   midiaAtual().definirAudioLocal(trilha, estado.fluxoMicrofone);
 
   for (const par of pares) {
     estado.membros.set(par.id, { ...estado.membros.get(par.id), ...par });
   }
 
-  if (provedorDeMidia === "livekit") {
-    try {
-      await livekit.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga });
-      await livekit.entrar(midia);
-    } catch (erro) {
-      console.error("[livekit] conexão falhou", erro);
-      sinal.enviar({ tipo: "sair-voz" });
-      await desmontarMidia();
-      estado.canalVoz = null;
-      if (eu) eu.canalVoz = null;
-      emitir("voz");
-      encerrarEsperaDaVoz(erro);
-      throw erro;
-    }
+  // Entrar direto numa sala que ja tinha caido: o servidor avisa, porque
+  // este cliente nao teve como ver a queda acontecer.
+  if (!usandoLiveKit()) estado.contingencia = contingencia ? "malha" : null;
+
+  if (usandoLiveKit() && !(await conectarNoLiveKit(midia))) {
+    // Não desmonta nada: o servidor já foi avisado e responde com o degrau
+    // seguinte por `voz-migrar`. A call continua acontecendo, por outro
+    // caminho — que é justamente o ponto da escada.
+    estado.contingencia = "conectando";
   }
 
   observarVozLocal();
   comecarCall();
 
   for (const par of pares) {
-    if (provedorDeMidia === "malha") malha.abrir(par.id, true);
+    if (!usandoLiveKit()) malha.abrir(par.id, true);
     historicoDaCall.entrou(par.id, false);
   }
 
@@ -1120,10 +1176,79 @@ async function aoEntrarNaVoz({ canal, pares, midia }) {
   encerrarEsperaDaVoz();
 }
 
+/**
+ * Entra no LiveKit e conta ao servidor o que aconteceu — a mesma mecânica de
+ * `src/app.js`, e pelo mesmo motivo: o servidor não vê esta conexão, então
+ * sem o relato ele nunca aprende que o degrau parou de atender.
+ */
+async function conectarNoLiveKit(midia) {
+  try {
+    await livekit.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga });
+    await livekit.entrar(midia);
+    sinal.enviar({ tipo: "midia-entrou", degrau: provedorDeMidia });
+    estado.contingencia = provedorDeMidia === "nuvem" ? null : provedorDeMidia;
+    return true;
+  } catch (erro) {
+    console.error("[midia] falha ao entrar no degrau", provedorDeMidia, erro);
+    sinal.enviar({
+      tipo: "midia-falhou",
+      degrau: provedorDeMidia,
+      motivo: String(erro?.message ?? erro).slice(0, 160),
+    });
+    return false;
+  }
+}
+
+/**
+ * O servidor mandou trocar de transporte no meio da call. Trocar, e não
+ * recomeçar: o microfone continua aberto e o cronômetro continua correndo.
+ */
+async function aoMigrarDeMidia({ canal, degrau, midia }) {
+  if (!estado.canalVoz || canal !== estado.canalVoz) return;
+  if (!estado.fluxoMicrofone) return;
+  if (degrau === provedorDeMidia && usandoLiveKit() && livekit.conectado) return;
+
+  console.warn(`[midia] migrando esta call para o degrau '${degrau}'`);
+
+  await livekit.fecharTudo();
+  malha.fecharTudo();
+  for (const id of [...vozesRemotas.keys()]) derrubarPar(id);
+
+  provedorDeMidia = degrau;
+  const [trilha] = estado.fluxoMicrofone.getAudioTracks();
+  midiaAtual().definirAudioLocal(trilha, estado.fluxoMicrofone);
+
+  const pares = [...estado.membros.values()].filter(
+    (membro) => membro.canalVoz === canal && membro.id !== estado.meuId
+  );
+
+  if (usandoLiveKit()) {
+    if (!(await conectarNoLiveKit(midia))) {
+      estado.contingencia = "conectando";
+      emitir("voz");
+      return;
+    }
+  } else {
+    // Numa migração todo mundo troca ao mesmo tempo: quem oferece a conexão
+    // precisa ser decidido sem conversa, ou os dois lados ofertam e a
+    // negociação morre. O id maior oferece — os dois lados calculam sozinhos
+    // e sempre concordam.
+    for (const par of pares) {
+      malha.abrir(par.id, Number(estado.meuId) > Number(par.id));
+    }
+    estado.contingencia = "malha";
+  }
+
+  emitir("voz");
+  emitir("membros");
+  anunciarEstado();
+}
+
 export function sairDaVoz(anunciar = true) {
   encerrarEsperaDaVoz(desistencia("Saiu da call antes de entrar."));
   if (!estado.canalVoz) return;
-  if (anunciar) sinal.enviar({ tipo: "sair-voz" });
+  if (anunciar) anunciarSaidaDaVoz();
+  estado.contingencia = null;
 
   motor.tocarAviso("sai");
   encerrarCall();
@@ -1148,6 +1273,7 @@ function desmontarMidia(soltarMicrofone = true) {
   malha.fecharTudo();
   const fechamento = livekit.fecharTudo();
   provedorDeMidia = "malha";
+  estado.contingencia = null;
 
   pararIndicadorLocal?.();
   pararIndicadorLocal = null;

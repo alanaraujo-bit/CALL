@@ -28,6 +28,7 @@ import * as conta from "./conta.js";
 import { montarHistorico } from "./historico.js";
 import { NOTAS_DE_VERSAO } from "./notas-de-versao.js";
 import { montarListaDeFeedback, ROTULOS_STATUS } from "./feedback.js";
+import { Painel } from "./painel.js";
 
 /* ═══ Atalhos ═══════════════════════════════════════════════════ */
 
@@ -290,12 +291,48 @@ const livekit = new SalaLiveKit({
   },
   // O filtro neural de ruído só confere a licença com a sala em mãos.
   aoEntrar: (sala) => motor.supressao.aoPublicar(sala),
+  // O SFU sumiu com a call de pé. Contar ao servidor é o que faz a escada
+  // descer para todo mundo, e não só para quem percebeu primeiro.
+  aoQueda: (motivo) => {
+    if (!estado.canalVoz || !usandoLiveKit()) return;
+    console.warn("[midia] a sala de mídia caiu no meio da call:", motivo);
+    marcarContingencia("conectando");
+    sinal.enviar({ tipo: "midia-falhou", degrau: provedorDeMidia, motivo });
+  },
 });
+
+/** Os degraus da escada de mídia, na mesma ordem do servidor. `nuvem` e
+ *  `proprio` são dois LiveKit diferentes e usam o mesmo cliente; `malha` é o
+ *  P2P de sempre. Um servidor antigo não fala em degraus — manda só
+ *  `provedor: "livekit"`, e a leitura abaixo o traduz. */
+const DEGRAUS_DE_LIVEKIT = new Set(["nuvem", "proprio", "livekit"]);
 
 /** O servidor escolhe o transporte por call. Servidores antigos não enviam
  * `midia` e continuam usando a malha sem precisar de atualização coordenada. */
 let provedorDeMidia = "malha";
-const midiaAtual = () => (provedorDeMidia === "livekit" ? livekit : malha);
+const usandoLiveKit = () => DEGRAUS_DE_LIVEKIT.has(provedorDeMidia);
+const midiaAtual = () => (usandoLiveKit() ? livekit : malha);
+
+/** O degrau que o servidor mandou usar, lido de uma resposta de voz. */
+function degrauDe(midia) {
+  if (!midia) return "malha";
+  if (midia.degrau) return midia.degrau;
+  return midia.provedor === "livekit" ? "livekit" : "malha";
+}
+
+/** Manda o `sair-voz` com a medida de banda junto.
+ *
+ *  Os bytes recebidos do SFU são o que o LiveKit cobra como banda, e só o
+ *  navegador os conhece: o servidor de sinalização não vê um byte de mídia
+ *  passar. A leitura é síncrona de propósito — ela precisa acontecer *antes*
+ *  de a sala ser desmontada, e uma consulta de `getStats` que só resolvesse
+ *  depois disso mediria uma sala que já não existe. O preço é combinado:
+ *  perdem-se os últimos segundos até a última amostragem, e o painel diz
+ *  isso em vez de fingir precisão que não tem. */
+function anunciarSaidaDaVoz() {
+  const bytes = usandoLiveKit() ? livekit.bytesRecebidos() : 0;
+  sinal.enviar({ tipo: "sair-voz", bytes });
+}
 
 /* ═══ Preferências ══════════════════════════════════════════════ */
 
@@ -1175,6 +1212,8 @@ function abrirAplicacao() {
   prepararHistorico();
   marcaDeHistoricoPendente();
   prepararFeedback();
+  prepararPainel();
+  mostrarBotaoDoPainel();
   // Quem saiu da conta e entrou de novo já tem tudo ligado; repetir aqui
   // duplicaria cada ouvinte, e cada clique passaria a valer por dois.
   if (aplicacaoPronta) {
@@ -1326,10 +1365,15 @@ function prepararAplicacao() {
       avisar("Não foi possível conectar a mídia da call.", "erro");
     });
   });
+  sinal.addEventListener("voz-migrar", (e) => {
+    aoMigrarDeMidia(e.detail).catch((erro) => {
+      console.error("[midia] a migração de transporte falhou", erro);
+    });
+  });
   sinal.addEventListener("entrou-voz", (e) => aoParPorVoz(e.detail));
   sinal.addEventListener("saiu-voz", (e) => aoParDeixarVoz(e.detail));
   sinal.addEventListener("sinal", (e) => {
-    if (provedorDeMidia === "malha") malha.receberSinal(e.detail.de, e.detail.dados);
+    if (!usandoLiveKit()) malha.receberSinal(e.detail.de, e.detail.dados);
   });
   sinal.addEventListener("estado", (e) => aoEstadoDeMidia(e.detail));
   sinal.addEventListener("espectadores", (e) => aoEstadoDeEspectador(e.detail));
@@ -1491,6 +1535,7 @@ function largarIdentidadeDaConta() {
   desligarSocial();
   estado.token = "";
   estado.conta = null;
+  mostrarBotaoDoPainel();
   conta.esquecerSessao();
   if (estado.usuario.startsWith("conta-")) {
     estado.usuario = crypto.randomUUID().replace(/-/g, "");
@@ -1796,6 +1841,7 @@ function saudacaoComPerfil(saudacao) {
     avatar: estado.avatar,
     bio: estado.bio,
     foto: estado.foto,
+    plataforma: conta.plataforma(),
   };
 }
 
@@ -1909,6 +1955,7 @@ function assumirGrupo({ eu, grupo, presentes, conta: daConta, sons }) {
     estado.conta = daConta;
     fundirAtalhos(daConta.atalhos);
     mostrarContaNoPerfil();
+    mostrarBotaoDoPainel();
   }
 
   estado.membros.clear();
@@ -3379,6 +3426,12 @@ social.addEventListener("mensagem-privada-atualizada", (e) => aoMensagemPrivadaA
 social.addEventListener("reacao-privada", (e) => aoReacaoPrivada(e.detail));
 social.addEventListener("historico-privado", (e) => aoHistoricoPrivado(e.detail));
 social.addEventListener("feedback-enviado", () => aoFeedbackEnviado());
+social.addEventListener("admin-painel", (e) => painel.aoRetrato(e.detail.painel));
+social.addEventListener("admin-pulso", (e) => painel.aoPulso(e.detail));
+social.addEventListener("admin-evento", (e) => painel.aoEvento(e.detail));
+social.addEventListener("admin-feedback-novo", (e) => painel.aoFeedbackNovo(e.detail.feedback));
+social.addEventListener("admin-midia", (e) => painel.aoMidia(e.detail.midia));
+social.addEventListener("admin-negado", () => painel.aoNegado());
 social.addEventListener("feedback-lista", (e) => aoListaDeFeedback(e.detail));
 social.addEventListener("feedback-atualizado", (e) => aoFeedbackAtualizado(e.detail.feedback));
 social.addEventListener("sem-sessao", () => avisar("Sua sessão expirou. Entre novamente.", "erro"));
@@ -3664,7 +3717,7 @@ async function entrarNaVoz(canal) {
 }
 
 /** Resposta do servidor a `entrar-voz`: quem já está na sala. */
-async function aoEntrarNaVoz({ canal, pares, midia }) {
+async function aoEntrarNaVoz({ canal, pares, midia, contingencia = false }) {
   // O microfone é pedido antes de anunciar a entrada, mas entre uma coisa e
   // outra a pessoa pode ter desistido. Entrar sem trilha deixaria todo mundo
   // conectado a alguém permanentemente mudo.
@@ -3685,7 +3738,7 @@ async function aoEntrarNaVoz({ canal, pares, midia }) {
   if (eu) eu.canalVoz = canal;
 
   const [trilha] = estado.fluxoMicrofone.getAudioTracks();
-  provedorDeMidia = midia?.provedor === "livekit" ? "livekit" : "malha";
+  provedorDeMidia = degrauDe(midia);
   midiaAtual().definirAudioLocal(trilha, estado.fluxoMicrofone);
 
   // Os participantes precisam existir antes do connect: as trilhas de quem já
@@ -3694,22 +3747,16 @@ async function aoEntrarNaVoz({ canal, pares, midia }) {
     estado.membros.set(par.id, { ...estado.membros.get(par.id), ...par });
   }
 
-  if (provedorDeMidia === "livekit") {
-    try {
-      await livekit.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga });
-      await livekit.definirPerfilTela(acharPerfilDeTela(estado.perfilTela));
-      await livekit.entrar(midia);
-    } catch (erro) {
-      console.error("[livekit] conexão falhou", erro);
-      sinal.enviar({ tipo: "sair-voz" });
-      await desmontarMalha();
-      estado.canalVoz = null;
-      if (eu) eu.canalVoz = null;
-      atualizarRodapeDeVoz();
-      redesenhar();
-      avisar("Não foi possível entrar na infraestrutura de mídia.", "erro");
-      return;
-    }
+  // Entrar direto numa sala que já tinha caído: o servidor avisa, porque
+  // este cliente não teve como ver a queda acontecer.
+  if (!usandoLiveKit()) marcarContingencia(contingencia ? "malha" : null);
+
+  if (usandoLiveKit() && !(await conectarNoLiveKit(midia))) {
+    // O relato já foi enviado, e o servidor responde com o degrau seguinte
+    // por `voz-migrar`. Ficar aqui esperando desmontaria a call que está
+    // prestes a acontecer por outro caminho — então a entrada continua, e a
+    // migração termina o serviço quando a resposta chegar.
+    marcarContingencia("conectando");
   }
   observarVozLocal();
 
@@ -3719,7 +3766,7 @@ async function aoEntrarNaVoz({ canal, pares, midia }) {
   // Quem já estava na sala: eu ofereço a conexão. Quem chegar depois oferece
   // para mim — assim nunca há dois lados ofertando ao mesmo tempo.
   for (const par of pares) {
-    if (provedorDeMidia === "malha") malha.abrir(par.id, true);
+    if (!usandoLiveKit()) malha.abrir(par.id, true);
     // `false`: estas pessoas já estavam aqui, e o servidor não diz desde
     // quando. O tempo delas só pode ser contado a partir de agora.
     historicoDaCall.entrou(par.id, false);
@@ -3735,10 +3782,116 @@ async function aoEntrarNaVoz({ canal, pares, midia }) {
   anunciarEstado();
 }
 
+/**
+ * Entra no LiveKit e **conta ao servidor o que aconteceu**.
+ *
+ * A parte que faltava não era a tentativa: era o relato. O servidor não vê
+ * esta conexão — ela acontece entre este navegador e o SFU, e quando ela
+ * falha o servidor continua achando que tudo vai bem e entregando o mesmo
+ * degrau para a próxima pessoa. Foi assim que uma quota esgotada virou um
+ * apagão: cada um falhava sozinho, ninguém contava, e o servidor nunca
+ * aprendia. Agora a falha sobe, o disjuntor conta, e a escada desce.
+ *
+ * Devolve `true` quando entrou. Não desmonta nada ao falhar: quem trata a
+ * queda é `aoMigrarDeMidia`, com a resposta do servidor em mãos.
+ */
+async function conectarNoLiveKit(midia) {
+  try {
+    await livekit.definirAudio({ bitrate: estado.audio.bitrate, dtx: !estado.audio.bandaLarga });
+    await livekit.definirPerfilTela(acharPerfilDeTela(estado.perfilTela));
+    await livekit.entrar(midia);
+    sinal.enviar({ tipo: "midia-entrou", degrau: provedorDeMidia });
+    marcarContingencia(provedorDeMidia);
+    return true;
+  } catch (erro) {
+    console.error("[midia] falha ao entrar no degrau", provedorDeMidia, erro);
+    sinal.enviar({
+      tipo: "midia-falhou",
+      degrau: provedorDeMidia,
+      motivo: String(erro?.message ?? erro).slice(0, 160),
+    });
+    return false;
+  }
+}
+
+/**
+ * O servidor mandou trocar de transporte no meio da call.
+ *
+ * Trocar, e não recomeçar: o microfone continua aberto, o cronômetro
+ * continua correndo e o histórico da call continua o mesmo. Do ponto de
+ * vista de quem está falando, o que acontece aqui é um engasgo de um ou dois
+ * segundos — e não uma call que caiu e outra que começou.
+ */
+async function aoMigrarDeMidia({ canal, degrau, midia }) {
+  if (!estado.canalVoz || canal !== estado.canalVoz) return;
+  if (!estado.fluxoMicrofone) return;
+  if (degrau === provedorDeMidia && usandoLiveKit() && livekit.conectado) return;
+
+  console.warn(`[midia] migrando esta call para o degrau '${degrau}'`);
+
+  // Solta o transporte antigo sem soltar o microfone: os dois são coisas
+  // diferentes, e é justamente por isso que a migração é possível.
+  await livekit.fecharTudo();
+  malha.fecharTudo();
+  for (const id of [...audiosRemotos.keys()]) derrubarPar(id);
+
+  provedorDeMidia = degrau;
+  const [trilha] = estado.fluxoMicrofone.getAudioTracks();
+  midiaAtual().definirAudioLocal(trilha, estado.fluxoMicrofone);
+
+  const pares = [...estado.membros.values()].filter(
+    (membro) => membro.canalVoz === canal && membro.id !== estado.meuId
+  );
+
+  if (usandoLiveKit()) {
+    if (!(await conectarNoLiveKit(midia))) {
+      // O degrau novo também não atendeu. O servidor já foi avisado e vai
+      // responder com o degrau seguinte — a escada tem fim, e o fim dela é
+      // a malha, que não depende de servidor nenhum.
+      marcarContingencia("conectando");
+      return;
+    }
+  } else {
+    // Na malha, quem oferece a conexão precisa ser decidido sem conversa:
+    // numa migração todo mundo troca ao mesmo tempo, e dois lados ofertando
+    // ao mesmo par derrubariam a negociação. O id maior oferece — uma regra
+    // que os dois lados calculam sozinhos e sempre concordam.
+    for (const par of pares) {
+      malha.abrir(par.id, Number(estado.meuId) > Number(par.id));
+    }
+    marcarContingencia("malha");
+  }
+
+  atualizarRodapeDeVoz();
+  redesenhar();
+  anunciarEstado();
+}
+
+/** Os degraus que não são o principal aparecem no rodapé — sem modal, sem
+ *  som, sem interromper. Quem estiver na call entende por que a tela ficou
+ *  mais pesada; quem não estiver não é incomodado por uma decisão de
+ *  infraestrutura. */
+function marcarContingencia(degrau) {
+  const selo = $("contingencia-voz");
+  if (!selo) return;
+  const legendas = {
+    proprio: ["servidor reserva", "O servidor de mídia principal não está atendendo; esta call está no nosso servidor reserva."],
+    malha: ["rede direta", "Esta call está ligando as pessoas diretamente umas às outras, sem servidor de mídia. Funciona bem em grupos pequenos; com muita gente, a transmissão de tela sofre."],
+    conectando: ["reconectando", "Procurando outro caminho para esta call."],
+  };
+  const legenda = legendas[degrau];
+  selo.classList.toggle("oculto", !legenda);
+  if (legenda) {
+    selo.textContent = legenda[0];
+    selo.title = legenda[1];
+    selo.classList.toggle("voz__contingencia--atencao", degrau === "conectando");
+  }
+}
+
 function aoParPorVoz({ membro, canal }) {
   estado.membros.set(membro.id, { ...estado.membros.get(membro.id), ...membro });
   if (canal === estado.canalVoz && membro.id !== estado.meuId) {
-    if (provedorDeMidia === "malha") malha.abrir(membro.id, false);
+    if (!usandoLiveKit()) malha.abrir(membro.id, false);
     motor.tocarAviso("entrou");
     // Esta chegada eu vi acontecer, então o tempo dela é exato.
     historicoDaCall.entrou(membro.id, true);
@@ -4157,7 +4310,8 @@ function mostrarTempoDaCall() {
 
 function sairDaVoz(anunciar) {
   if (!estado.canalVoz) return;
-  if (anunciar) sinal.enviar({ tipo: "sair-voz" });
+  if (anunciar) anunciarSaidaDaVoz();
+  marcarContingencia(null);
   fecharSoundboard();
 
   // Antes de desmontar: é `desmontarMalha` que fecha o contexto de áudio, e o
@@ -4185,6 +4339,7 @@ function desmontarMalha(soltarMicrofone = true) {
   malha.fecharTudo();
   const fechamentoLiveKit = livekit.fecharTudo();
   provedorDeMidia = "malha";
+  marcarContingencia(null);
 
   pararIndicadorLocal?.();
   pararIndicadorLocal = null;
@@ -5200,7 +5355,7 @@ function atualizarQuadroDeVoz(quadro, membro) {
  *  menos do que o perfil promete, e o selo deve mostrar a entrega, não a
  *  promessa. */
 async function statsDeQualidade(id) {
-  if (provedorDeMidia === "livekit") return livekit.statsDeVideo(id, estado.meuId);
+  if (usandoLiveKit()) return livekit.statsDeVideo(id, estado.meuId);
   if (id === estado.meuId) {
     if (!trilhaDeCaptura) return null;
     for (const pc of malha.conexoes.values()) {
@@ -5331,7 +5486,7 @@ async function ligarAudioRemoto(id, fluxo) {
   ganho.gain.value = estado.volumes.get(membro?.usuario) ?? 1;
   // No LiveKit o SFU entrega a lista de falantes ativos. A análise local fica
   // como compatibilidade para servidores antigos que ainda usam malha P2P.
-  if (provedorDeMidia === "malha") await observarVoz(id, ganho);
+  if (!usandoLiveKit()) await observarVoz(id, ganho);
 }
 
 /** Usa a mesma decisão da porta de ruído para destacar a própria fala. */
@@ -6353,6 +6508,41 @@ function prepararHistorico() {
   if (historicoPreparado) return;
   historicoPreparado = true;
   $("botao-historico").addEventListener("click", abrirHistorico);
+}
+
+/* ═══ Central de comando ═════════════════════════════════════════ */
+//
+// O painel do dono viaja pelo mesmo socket social que amizade, PV e feedback
+// já usam — não há segunda conexão, não há segunda senha, e não há segundo
+// endereço para decorar. Ver `src/painel.js` para o que ele mostra e por quê,
+// e `servidor/src/telemetria.rs` para onde cada número é calculado.
+
+const painel = new Painel({
+  enviar: (mensagem) => social.enviar(mensagem),
+  token: () => estado.token,
+});
+
+/**
+ * Revela ou esconde o ícone conforme quem está logado.
+ *
+ * Quem decide é o servidor: `conta.admin` vem no resumo da sessão, e o
+ * cliente não tem opinião sobre isso — ele nem conhece a lista de e-mails.
+ * Esconder o botão é cortesia, não defesa: cada pedido do painel é conferido
+ * de novo do outro lado.
+ */
+function mostrarBotaoDoPainel() {
+  const botao = $("botao-painel");
+  if (!botao) return;
+  const dono = Boolean(estado.conta?.admin);
+  botao.classList.toggle("oculto", !dono);
+  if (!dono && painel.aberto) painel.fechar();
+}
+
+function prepararPainel() {
+  const botao = $("botao-painel");
+  if (!botao || botao.dataset.pronto) return;
+  botao.dataset.pronto = "1";
+  botao.addEventListener("click", () => painel.abrir());
 }
 
 /* ═══ Feedback ═══════════════════════════════════════════════════ */

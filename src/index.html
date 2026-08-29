@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CALL</title>
     <link rel="stylesheet" href="estilo.css" />
+    <!-- A central de comando mora numa folha própria porque as duas cascas do
+         CALL a usam: esta e a do celular. Ela depende dos mesmos tokens de
+         `estilo.css` e por isso vem depois. -->
+    <link rel="stylesheet" href="painel.css" />
   </head>
   <body>
     <!-- Mancha de luz roxa que segue o cursor pela janela inteira — entrada,
@@ -364,6 +368,11 @@
                  rodapé já divide 212 px com três botões. -->
             <div class="voz__linha">
               <span class="voz__estado" id="estado-voz">Conectado</span>
+              <!-- Só aparece quando a call não está no servidor de mídia
+                   principal. Discreto de propósito: quem está na call precisa
+                   saber por que a qualidade mudou, não ser interrompido por
+                   isso. O `title` conta o resto. -->
+              <span class="voz__contingencia oculto" id="contingencia-voz"></span>
               <span class="voz__tempo" id="tempo-voz" title="Tempo nesta call">00:00</span>
             </div>
             <span class="voz__canal" id="nome-canal-voz">—</span>
@@ -445,6 +454,19 @@
                 <path d="M4 4l14 4-3 3 6 6-2 2-6-6-3 3z"/>
               </svg>
               <span class="historico-botao__ponto oculto" id="historico-ponto" aria-hidden="true"></span>
+            </button>
+
+            <!-- A central de comando. Só existe para a conta do dono do
+                 serviço — e "só existe" é literal: sem esse e-mail, o botão
+                 nunca é revelado, e o servidor recusa o pedido de qualquer
+                 jeito. Esconder um botão não é segurança; a segurança está
+                 do outro lado (`contas::e_admin`). Isto é só para não
+                 oferecer a ninguém uma porta que não abre. -->
+            <button class="icone oculto" type="button" id="botao-painel"
+                    title="Central de comando" aria-label="Central de comando">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 19V9m5 10V5m5 14v-7m5 7V8"/>
+              </svg>
             </button>
 
             <!-- Reportar bug, sugerir algo ou elogiar — sempre disponível,

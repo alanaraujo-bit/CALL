@@ -245,6 +245,77 @@ No servidor oficial as contas ficam num **Postgres**, e não num arquivo — ver
 "Arquitetura" logo abaixo para o porquê de ter dois jeitos de guardar a mesma
 coisa.
 
+### 7. Central de comando (só o dono)
+
+A conta cadastrada em `ADMIN_EMAILS` — e só ela — vê um ícone a mais na
+barra do topo, no computador, e uma linha a mais na aba **Você**, no celular.
+Ele abre a **central de comando**: o que está acontecendo no CALL, em números
+que podem dar má notícia.
+
+Não é uma página à parte, não tem senha própria e não tem endereço para
+decorar. O token de sessão que já abre a conta é o mesmo que abre o painel, e
+quem decide se ele abre é o **e-mail** — ver `contas::e_admin`. Ninguém vira
+administrador se cadastrando: a lista vive no ambiente do servidor, e não no
+banco.
+
+Sete abas:
+
+| Aba | O que responde |
+| --- | --- |
+| **Visão geral** | Quantas pessoas usaram hoje, quantas entraram, quanto tempo de voz, e a curva de trinta dias |
+| **Crescimento** | Contas acumuladas, contas novas, acessos, mensagens e minutos por dia |
+| **Retenção** | De quem criou conta num dia, quantos voltaram no seguinte, no sétimo e no trigésimo — em coortes, dia a dia |
+| **Pessoas** | Cada conta: quando entrou, quando foi vista, dias ativos, mensagens, tempo de voz, em que aparelho |
+| **Grupos** | Cada grupo: tamanho, quem está dentro agora, mensagens, última atividade |
+| **Ao vivo** | Quem está conectado neste instante, em qual grupo, em qual canal — e cada acontecimento na hora em que acontece |
+| **Feedback** | Os relatos que chegaram, e o status de cada um |
+
+**A tela não recarrega em laço.** O servidor empurra um pulso a cada cinco
+segundos e cada acontecimento na hora em que ele acontece; o retrato inteiro é
+refeito a cada 45 segundos e é ele quem reconcilia. O canto do painel diz há
+quantos segundos o que está na tela chegou — um painel que não diz isso é um
+painel em que não dá para confiar no dia em que o servidor cair.
+
+**Os números foram escolhidos para poderem dar má notícia.** "Total de contas"
+sobe todo dia e nunca desce; ele faz qualquer produto parecer saudável,
+inclusive um que ninguém abre há um mês. Por isso a manchete é *pessoas ativas
+por dia* (pessoas, não eventos, e não acumulado), e o bloco que mais importa é
+a retenção por coorte — a única medida que separa "muita gente entrou" de "o
+produto serve para alguma coisa". O funil de ativação mostra onde se perde
+gente entre criar conta e entrar numa call.
+
+Retenção só cobra de quem teve a chance: quem criou a conta ontem não entra no
+denominador do D7, porque o sétimo dia dela ainda não chegou. Sem isso, cada
+conta nova de hoje derrubaria a média, e o painel puniria o próprio
+crescimento.
+
+Os dias são os **dias de quem lê**: o navegador manda o próprio fuso junto do
+pedido. Sem isso, "hoje" num servidor em UTC começaria às 21h de ontem no
+Brasil.
+
+#### O que é anotado, e o que não é
+
+A retenção exige memória do percurso, e o estado atual do banco não a tem —
+nenhuma consulta em `contas` reconstrói um dia de uso que ninguém anotou. Daí
+a tabela `eventos`, e ela guarda o mínimo que responde à pergunta:
+
+* **O que entra:** o instante, o tipo do acontecimento (conta criada, sessão
+  aberta ou retomada, entrou/criou grupo, entrou/saiu da voz, transmitiu,
+  mensagem, feedback), o **identificador da conta** — o mesmo que já viaja no
+  protocolo —, o código do grupo ou do canal, os segundos de uma passagem pela
+  call, e uma palavra dizendo de qual casca veio: `windows`, `movel` ou
+  `navegador`.
+* **O que não entra:** endereço IP, user-agent, impressão digital de
+  navegador, **o texto das mensagens**, o título de janela, o nome do programa
+  em uso, e qualquer coisa vinda de quem está sem conta além do fato de haver
+  uma janela aberta. Uma linha ali diz *"esta conta fez isto, nesta hora"*, e o
+  painel não precisa de mais.
+* **Por quanto tempo:** noventa dias. O que passa disso é apagado pelo próprio
+  servidor.
+
+Quem usa **sem conta** aparece como número, nunca como pessoa: o CALL nunca
+prometeu saber quem essa pessoa é, e o painel não finge que sabe.
+
 ---
 
 ## Arquitetura
@@ -253,19 +324,52 @@ coisa.
 call.exe                 janela Tauri + interface
   └─ WebView2            renderização e pilha WebRTC
 sinalizacao.exe          servidor de sinalização (sidecar, só ao hospedar)
-LiveKit Cloud            SFU/TURN da mídia no serviço oficial
+LiveKit                  SFU/TURN da mídia — em escada, ver abaixo
 ```
 
-O servidor guarda a estrutura dos grupos e o histórico dos canais de texto. No
-serviço oficial, ele assina um JWT LiveKit de dez minutos, limitado a uma sala e
-às fontes de microfone, tela e som da tela. O segredo fica somente no servidor;
-expirar o token afeta novas entradas, não derruba uma call já estabelecida.
+O servidor guarda a estrutura dos grupos e o histórico dos canais de texto. Ele
+assina um JWT LiveKit de dez minutos, limitado a uma sala e às fontes de
+microfone, tela e som da tela. O segredo fica somente no servidor; expirar o
+token afeta novas entradas, não derruba uma call já estabelecida.
 
-Sem as três variáveis LiveKit, o mesmo binário encaminha ofertas, respostas e
-candidatos ICE entre quem está no **mesmo canal de voz**, formando a malha P2P
-usada pelo sidecar. O cliente anuncia os transportes que entende e o servidor
-fixa um deles por sala: durante a atualização, uma call nunca fica metade SFU e
-metade P2P.
+### A escada de mídia
+
+A mídia não é um interruptor de sim ou não: é uma **escada**, e a call desce
+sozinha quando um degrau para de atender.
+
+```text
+1. nuvem     LiveKit Cloud       qualidade e alcance, com teto mensal
+2. proprio   LiveKit nosso       sem quota; custa uma máquina
+3. malha     P2P, sem servidor   nunca falta, mas grupos grandes sofrem
+```
+
+Isto existe por causa de um apagão: no dia em que o plano do LiveKit acabou, o
+servidor continuou emitindo tokens com confiança, cada cliente falhou sozinho
+sem contar a ninguém, e o CALL simplesmente não abriu call nenhuma. A escada é
+a resposta, e tem três gatilhos independentes:
+
+* **Preventivo.** O servidor mede o próprio consumo do ciclo e para de emitir
+  token ao chegar em `LIVEKIT_MARGEM` (90% por padrão) do teto declarado.
+  Nenhuma call precisa falhar para o degrau seguinte assumir.
+* **Reativo.** O cliente que não consegue entrar no SFU **avisa o servidor**
+  (`midia-falhou`) em vez de desistir, e recebe de volta o degrau seguinte
+  (`voz-migrar`) sem perder o microfone nem o cronômetro da call. Duas falhas
+  na janela derrubam o degrau por dez minutos, e ele volta em observação: a
+  primeira falha depois de reabrir o derruba de novo.
+* **Manual.** Uma chave na aba **Mídia** da central de comando força a malha
+  em todas as calls novas, sem redeploy.
+
+Quando um degrau cai com gente dentro, a **sala inteira desce junto** — metade
+no SFU e metade na malha é uma sala em que as pessoas não se ouvem. Quem está
+numa call de contingência vê uma marca discreta no rodapé ("servidor reserva",
+"rede direta"), com o motivo no `title`: informação para entender uma mudança
+de qualidade, não um alarme.
+
+O consumo é medido do lado de cá em **minutos-participante** (a mesma unidade
+que o LiveKit cobra) e em **bytes recebidos do SFU**, que só o navegador
+conhece e reporta ao sair da call. Os dois ficam gravados no evento, e não só
+na memória do processo: sem isso, um redeploy zeraria o teto e ele nunca
+chegaria a proteger a fatura.
 
 Na imagem hospedada, configure diretamente no Railway — nunca no repositório:
 
@@ -273,7 +377,55 @@ Na imagem hospedada, configure diretamente no Railway — nunca no repositório:
 LIVEKIT_URL=wss://seu-projeto.livekit.cloud
 LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
+
+# O teto do plano, para o medidor. O painel do provedor é a fonte de verdade
+# da fatura; estes números são o alarme que dispara antes dela. Sem eles o
+# degrau atende até falhar — que é o comportamento antigo.
+LIVEKIT_MINUTOS_MES=5000        # minutos-participante do plano
+LIVEKIT_GB_MES=50               # banda do plano
+LIVEKIT_MARGEM=90               # % do teto em que o degrau se aposenta
+LIVEKIT_DIA_DO_CICLO=1          # dia do mês em que a fatura vira
+
+# O segundo degrau: um LiveKit nosso. Opcional — sem ele a escada vai da
+# nuvem direto para a malha.
+LIVEKIT_RESERVA_URL=wss://midia.seudominio.com
+LIVEKIT_RESERVA_API_KEY=...
+LIVEKIT_RESERVA_API_SECRET=...
 ```
+
+### Subir o LiveKit próprio
+
+O LiveKit é código aberto e cabe num contêiner. No Railway, um serviço novo a
+partir da imagem `livekit/livekit-server`, com um volume para o arquivo de
+configuração:
+
+```yaml
+# livekit.yaml
+port: 7880
+rtc:
+  tcp_port: 7881
+  # Numa hospedagem com um IP público e sem faixa UDP aberta, `use_external_ip`
+  # e a porta TCP única são o que faz a mídia atravessar. UDP é melhor quando
+  # dá para abrir a faixa; TCP funciona em qualquer lugar.
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: true
+keys:
+  # A mesma chave/segredo que vão para LIVEKIT_RESERVA_API_KEY/SECRET.
+  chave_da_reserva: segredo_bem_longo_e_aleatorio
+```
+
+Aponte um subdomínio para o serviço, sirva por TLS (o Railway já faz), e
+preencha as três variáveis `LIVEKIT_RESERVA_*`. O servidor loga a escada que
+montou na partida:
+
+```text
+[midia] escada de mídia: nuvem → proprio → malha P2P.
+```
+
+Se aparecer só `malha P2P`, alguma credencial está incompleta — o servidor
+diz qual prefixo falhou e continua funcionando pela malha, em vez de subir
+prometendo um degrau que não tem.
 
 O login do Google usa **dois clientes OAuth**, e não um — porque o Google
 separa por tipo e o CALL precisa dos dois:
@@ -290,6 +442,19 @@ Não dá para atender os dois com um cliente só: o de computador recusa URI
 instalado é sorteada a cada login. `servidor/src/google.rs` escolhe o par
 pelo formato do endereço de retorno, que é a única coisa que distingue, de
 fora, de qual casca veio o código.
+
+O dono do serviço — quem abre a central de comando — sai daqui:
+
+```text
+ADMIN_EMAILS=voce@exemplo.com          # separados por vírgula, se houver mais de um
+```
+
+Sem a variável vale o padrão gravado em `contas.rs` (`ADMIN_PADRAO`). É
+deliberado que isto seja ambiente e não banco: assim ninguém vira
+administrador se cadastrando, e trocar de dono não exige uma migração. O
+mesmo e-mail também abre a página `/admin` do servidor, com o token de sessão
+do aplicativo — o `ADMIN_TOKEN` de antes continua valendo ali, para quando
+não há sessão à mão.
 
 Sem o par `_WEB`, tudo continua funcionando e o celular simplesmente **não
 oferece o botão do Google** — entrar por e-mail e senha, e entrar sem conta,
@@ -354,6 +519,8 @@ dependências do servidor não viajam no sidecar do aplicativo.
 | `src/tempo.js` | Tempo em call e histórico de quem passou por ela |
 | `src/atividade.js` | O que mostrar do programa em uso, e com que calma |
 | `src/emojis.js` | Emojis Unicode e os cinco emojis próprios do CALL |
+| `src/painel.js` | A central de comando: abas, gráficos e tabelas, nas duas cascas |
+| `src/painel.css` | A folha do painel — própria porque as duas cascas a usam |
 | `src-tauri/src/atividade.rs` | Qual programa está em primeiro plano |
 | `src-tauri/src/google.rs` | PKCE, navegador do sistema e porta de retorno |
 | `src-tauri/src/tela.rs` | Som da transmissão via loopback, excluindo o próprio CALL |
@@ -361,6 +528,8 @@ dependências do servidor não viajam no sidecar do aplicativo.
 | `servidor/src/main.rs` | Protocolo do servidor |
 | `servidor/src/modelo.rs` | Grupos, mensagens e persistência em disco |
 | `servidor/src/contas.rs` | Contas, senhas e sessões — backend de arquivo e de Postgres |
+| `servidor/src/telemetria.rs` | De eventos crus a retenção, coortes, funil e séries — funções puras, com testes |
+| `servidor/migracoes/0006_eventos.sql` | A tabela de eventos, e a nota do que **não** entra nela |
 | `servidor/migracoes/` | Schema das contas, migrado automaticamente no boot |
 | `servidor/src/google.rs` | Troca do código de autorização com o Google |
 
@@ -426,6 +595,8 @@ cargo test -p call --lib                     # PKCE, convite e atividade
 node testes/sinalizacao.test.mjs             # protocolo do servidor, contas inclusas
 node testes/tempo.test.mjs                   # cronômetro e histórico da call
 node testes/atividade.test.mjs               # política do que se anuncia
+node testes/painel.test.mjs                  # a central de comando: porta fechada, números reais, ao vivo
+node testes/midia.test.mjs                   # a escada de mídia: queda, desvio e o consumo que sobrevive ao redeploy
 powershell -File testes/rodar-malha.ps1      # malha WebRTC e áudio no motor real
 powershell -File testes/rodar-portal.ps1     # entrar e criar conta na aplicação real
 powershell -File testes/rodar-perfil.ps1     # perfil, mascotes e cartão de alguém
@@ -436,6 +607,8 @@ powershell -File testes/rodar-sons.ps1       # o sino, medido na amostra renderi
 powershell -File testes/rodar-movel.ps1      # o aplicativo de celular, num quadro de iPhone
 powershell -File testes/capturar-movel.ps1   # fotografa cada tela do celular
 powershell -File testes/capturar-site.ps1    # fotografa o seletor de plataforma do site
+powershell -File testes/capturar-painel.ps1  # fotografa a central de comando, aba por aba
+node testes/painel-semente.mjs               # semeia 30 dias de história e deixa o servidor de pé
 powershell -File testes/duas-instancias.ps1  # duas janelas reais no mesmo grupo
 powershell -File testes/convite.ps1          # o link call:// abrindo o grupo
 ```
@@ -463,9 +636,18 @@ o schema crescer.
 
 ## Limites conhecidos
 
-- A topologia em malha é adequada a grupos pequenos: cada participante envia
-  sua mídia para todos os outros. Grupos grandes exigiriam um servidor
-  intermediário de mídia.
+- **A malha é rede de segurança, e não plano.** Ela é adequada a grupos
+  pequenos: cada participante envia sua mídia para todos os outros. Até quatro
+  ou cinco pessoas vai bem; a partir daí a transmissão de tela sofre bastante.
+  Quando a escada de mídia cai até ela, a call acontece — mas com qualidade
+  menor, e o rodapé diz isso a quem está dentro. Um degrau de LiveKit próprio
+  (`LIVEKIT_RESERVA_*`) é o que evita chegar até aqui.
+- **O medidor de consumo mede do lado de cá.** Os minutos-participante e os
+  bytes recebidos do SFU são contados pelo servidor e pelos clientes do CALL,
+  e comparados com um teto que o dono declara no ambiente. É um alarme, e não
+  uma fatura: o painel do provedor continua sendo a fonte de verdade, e uma
+  diferença entre os dois números é esperada — a nossa medida não enxerga o
+  que o provedor cobra por fora (gravação, egress, tráfego de reconexão).
 - Sem servidor TURN configurado, participantes atrás de NATs restritivos
   podem não se conectar. Há apenas STUN público configurado em `src/rtc.js`.
 - A porta 8787 só entra em jogo para quem usa **Hospedar**: nesse caso ela

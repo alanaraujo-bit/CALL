@@ -202,6 +202,28 @@
 
       const ENDERECO =
         new URLSearchParams(location.search).get("servidor") ?? "ws://127.0.0.1:8898";
+
+      /**
+       * O cão de guarda.
+       *
+       * `sala.entrar()` pode não voltar nunca: um SFU que aceita a conexão e
+       * não responde deixa o SDK tentando, e sem este relógio a página fica
+       * pendurada para sempre — sem relatório, sem diagnóstico, sem nada. Foi
+       * exatamente assim que este arquivo escondeu, por três execuções
+       * seguidas, dois defeitos diferentes: a política de conteúdo barrando o
+       * SFU próprio e o plano da nuvem esgotado. Um teste que trava não
+       * reprova; ele só some.
+       */
+      let entregue = false;
+      const relatarSempre = async (extra) => {
+        if (entregue) return;
+        entregue = true;
+        if (extra) conferir(false, extra);
+        await entregar({ falhas, relatorio });
+      };
+      setTimeout(() => {
+        relatarSempre(`o teste não terminou em 90s contra ${ENDERECO}`);
+      }, 90_000);
       const ana = participante("Ana");
       const bruno = participante("Bruno");
       let audioAna;
@@ -277,9 +299,9 @@
       }
 
       document.getElementById("cabecalho").textContent = falhas
-        ? `LiveKit Cloud: ${falhas} falha(s)`
-        : "LiveKit Cloud: aprovado";
-      await entregar({ falhas, relatorio });
+        ? `LiveKit: ${falhas} falha(s)`
+        : "LiveKit: aprovado";
+      await relatarSempre();
     </script>
   </body>
 </html>

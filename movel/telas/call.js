@@ -331,8 +331,20 @@ function montar() {
     }
   }
 
+  /** O que a legenda diz quando a call não está no caminho principal. Entra
+   *  na mesma linha do relógio, sem modal e sem som: quem está na call
+   *  precisa entender por que a qualidade mudou, não ser interrompido. */
+  const CONTINGENCIA = {
+    proprio: "servidor reserva",
+    malha: "rede direta",
+    conectando: "reconectando",
+  };
+
   function marcarRelogio() {
-    legenda.textContent = `${estado.grupo?.nome ?? "CALL"} · ${tempoDeCallEmTexto()}`;
+    const aviso = CONTINGENCIA[estado.contingencia];
+    legenda.textContent =
+      `${estado.grupo?.nome ?? "CALL"} · ${tempoDeCallEmTexto()}` +
+      (aviso ? ` · ${aviso}` : "");
   }
 
   function pintarFala() {
