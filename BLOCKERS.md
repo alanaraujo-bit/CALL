@@ -3,39 +3,11 @@
 Nenhum item aqui impede o resto do trabalho: são registros de algo que só o
 Alan pode decidir ou verificar, não pendências de código.
 
-## 1. Três grupos de teste "Estúdio" ficaram no servidor de produção
+## 1. ~~Três grupos de teste "Estúdio" no servidor de produção~~ — resolvido
 
-Ao automatizar a captura de tela da sala de voz (`testes/cena.html`, cenas
-"voz"/"voz-chat"), descobri que a própria `testes/cena.html` tinha um defeito
-antigo: o endereço do servidor virou preferência (`localStorage`) desde que o
-campo saiu da tela de entrada, mas a cena continuava tentando escrevê-lo num
-campo (`#campo-servidor`) que já não fica nessa tela — então a semeadura nunca
-tinha efeito, e o aplicativo caía no padrão, `SERVIDOR_PADRAO` em `app.js`
-(`wss://sinalizacao-production.up.railway.app`, o servidor de produção).
-
-Antes de eu perceber isso e corrigir (semear `localStorage` antes do quadro
-carregar, como `testes/perfil.html` já fazia), três execuções de depuração
-criaram grupos reais de nome "Estúdio" no servidor de produção, com códigos de
-convite aleatórios de 10 caracteres que não anotei todos — um deles foi
-`M7GFVB4Y55`. São grupos vazios, sem ninguém além de um participante de teste
-efêmero ("Bruna", que nunca ficou conectada), e o código não foi compartilhado
-em lugar nenhum — mas existem lá, ocupando uma entrada no arquivo de grupos do
-servidor hospedado.
-
-**O que falta:** decidir se vale a pena removê-los (o servidor não expõe uma
-rota de exclusão de grupo por código para quem não é o dono logado, e "dono"
-aqui é um `usuario` aleatório de uma sessão de teste que não voltará). Na
-prática são inofensivos — sem conteúdo, sem acesso de ninguém — mas o Alan
-deve saber que existem.
-
-**O que já foi corrigido:** `testes/cena.html` agora semeia
-`call.preferencias` no `localStorage` antes do `<iframe>` carregar (mesma
-técnica de `testes/perfil.html`), então toda cena passou a rodar contra o
-servidor local que `testes/capturar-desktop.ps1` sobe (porta 8898, sem
-`DADOS` — não grava nada em disco). Reexecutei as cenas "entrada", "login",
-"grupo", "voz", "voz-chat" e "cartão" depois da correção e todas criam grupo
-contra o servidor local, confirmado pelo próprio `__log` de mensagens do
-WebSocket durante a depuração.
+O servidor de produção daquela época foi desligado, e o de hoje (recriado em
+2026-10-09) nasceu com volume e banco vazios: os grupos de teste não existem
+mais. A correção de `testes/cena.html` continua valendo.
 
 ## 2. Tela cheia (F11) não foi vista com os próprios olhos
 
