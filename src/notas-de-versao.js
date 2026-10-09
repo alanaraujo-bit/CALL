@@ -18,6 +18,28 @@
  */
 export const NOTAS_DE_VERSAO = [
   {
+    versao: "0.20.0",
+    data: "2026-10-09",
+    titulo: "A call conecta até no 4G",
+    resumo:
+      "O CALL voltou ao ar, e a call agora tem um ponto de encontro para quando os dois lados não conseguem se achar sozinhos.",
+    destaques: [
+      {
+        titulo: "Novo",
+        itens: [
+          "Quem está no 4G, ou numa rede que esconde o aparelho atrás de um endereço compartilhado, passa a conectar na call — antes entrava, via todo mundo na lista e não ouvia ninguém.",
+          "Entrar com o Google funciona de novo, no computador e no celular.",
+        ],
+      },
+      {
+        titulo: "Consertado",
+        itens: [
+          "O aplicativo no celular deixou de ficar até uma semana com arquivos velhos depois de uma atualização do CALL.",
+        ],
+      },
+    ],
+  },
+  {
     versao: "0.18.0",
     data: "2026-08-19",
     titulo: "Agora dá para ver quem está mudo de verdade",
