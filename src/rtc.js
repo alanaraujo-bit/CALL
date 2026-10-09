@@ -247,7 +247,7 @@ class Elo {
     /** Guardado só para a preferência de codec, que age no transceptor. */
     this.transceptorTela = null;
 
-    const pc = new RTCPeerConnection(CONFIGURACAO);
+    const pc = new RTCPeerConnection(malha.configuracao);
     this.pc = pc;
 
     pc.onnegotiationneeded = () => {
@@ -434,6 +434,7 @@ export class Malha {
   #bitrateAudio = 96000;
   #dtx = false;
   #perfilTela = acharPerfilDeTela(PERFIL_TELA_PADRAO);
+  #servidoresIce = null;
 
   constructor({ enviarSinal, aoTrilha, aoFimDeTrilha, aoEstado, meuId }) {
     this.enviarSinal = enviarSinal;
@@ -441,6 +442,26 @@ export class Malha {
     this.aoFimDeTrilha = aoFimDeTrilha;
     this.aoEstado = aoEstado ?? (() => {});
     this.#meuId = meuId ?? null;
+  }
+
+  /**
+   * O TURN que o servidor anuncia ao entrar na call (`ice` em `voz` e
+   * `voz-migrar`), com uma credencial que vale 24 horas. Só o STUN não
+   * atravessa o CGNAT do 4G: os dois lados ficam atrás de endereços que
+   * ninguém de fora alcança, e a call abre sem ninguém se ouvir. Com o TURN,
+   * esse caso passa a ter um ponto de encontro.
+   *
+   * Vale para os elos abertos daqui em diante. Servidor sem TURN (o sidecar
+   * da rede local) não manda a lista, e fica só o STUN de sempre.
+   */
+  definirServidoresIce(lista) {
+    this.#servidoresIce = Array.isArray(lista) && lista.length ? lista : null;
+  }
+
+  /** Lido pelo `Elo` ao criar a `RTCPeerConnection`. */
+  get configuracao() {
+    if (!this.#servidoresIce) return CONFIGURACAO;
+    return { ...CONFIGURACAO, iceServers: [...CONFIGURACAO.iceServers, ...this.#servidoresIce] };
   }
 
   /** Lido pelo `Elo` na hora de montar a descrição local. */

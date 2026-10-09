@@ -746,6 +746,10 @@ sinal.addEventListener("grupo", (e) => {
 });
 
 sinal.addEventListener("voz", (e) => {
+  // `?.` porque `nucleo/rtc.js` e este arquivo chegam ao celular por caches
+  // diferentes: por um tempo, este pode ser novo e aquele ainda o antigo, sem
+  // o método. Sem TURN a call ainda abre; com um TypeError aqui, não abriria.
+  malha.definirServidoresIce?.(e.detail.ice);
   aoEntrarNaVoz(e.detail).catch((erro) => {
     console.error("[midia] entrada falhou", erro);
     emitir("erro", "Não foi possível conectar a mídia da call.");
@@ -753,6 +757,7 @@ sinal.addEventListener("voz", (e) => {
 });
 
 sinal.addEventListener("voz-migrar", (e) => {
+  malha.definirServidoresIce?.(e.detail.ice);
   aoMigrarDeMidia(e.detail).catch((erro) => {
     console.error("[midia] a migração de transporte falhou", erro);
   });

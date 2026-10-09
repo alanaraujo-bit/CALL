@@ -23,7 +23,7 @@
  * transforma toda abertura em download.
  */
 
-const VERSAO = "1.0.0";
+const VERSAO = "1.0.1";
 const CACHE = `call-movel-${VERSAO}`;
 
 /** A casca mínima: o que precisa existir para a primeira tela aparecer. */
@@ -115,7 +115,11 @@ self.addEventListener("fetch", (evento) => {
       const cache = await caches.open(CACHE);
       const guardado = await cache.match(pedido);
 
-      const daRede = fetch(pedido)
+      // `no-cache` pergunta ao servidor (um 304 barato quando nada mudou) em
+      // vez de aceitar a cópia do cache HTTP do navegador. Sem isso, o
+      // `max-age` de uma semana em `/app/nucleo/` fazia esta revalidação
+      // devolver o arquivo velho por dias depois de um deploy.
+      const daRede = fetch(pedido, { cache: "no-cache" })
         .then((resposta) => {
           if (resposta.ok && resposta.type === "basic") cache.put(pedido, resposta.clone());
           return resposta;

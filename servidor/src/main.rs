@@ -21,6 +21,7 @@ mod google;
 mod midia;
 mod modelo;
 mod telemetria;
+mod turn;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1788,6 +1789,7 @@ fn entrar_voz(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
     if let Some(midia) = midia {
         resposta["midia"] = midia;
     }
+    anexar_ice(&mut resposta, id);
     let _ = fila.send(texto_json(&resposta));
 
     if migrou {
@@ -1806,6 +1808,17 @@ fn entrar_voz(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
 
     let aviso = json!({ "tipo": "entrou-voz", "membro": eu.resumo(), "canal": canal });
     e.difundir(&codigo, &aviso, Some(id));
+}
+
+/// Os servidores ICE (TURN) desta conexão, em toda mensagem que pode levar o
+/// cliente para a malha. Vai também quando o degrau é LiveKit: a sala pode
+/// descer para a malha depois, e quem já está dentro abre elos com quem chega
+/// usando a credencial que recebeu aqui. Sem TURN configurado, nada é
+/// anexado e o cliente fica com o STUN de sempre.
+fn anexar_ice(mensagem: &mut Value, id: u64) {
+    if let Some(ice) = turn::servidores_ice(&id.to_string()) {
+        mensagem["ice"] = ice;
+    }
 }
 
 /// Desce a sala inteira um degrau, para quem já estava dentro.
@@ -1847,6 +1860,7 @@ fn migrar_sala(e: &mut Estado, codigo: &str, canal: &str, degrau: &str, exceto: 
                 }
             }
         }
+        anexar_ice(&mut aviso, id);
         let _ = fila.send(texto_json(&aviso));
     }
 }
@@ -1922,6 +1936,7 @@ fn midia_falhou(v: &Value, id: u64, fila: &Fila, estado: &Arc<Mutex<Estado>>) {
             }
         }
     }
+    anexar_ice(&mut resposta, id);
     let _ = fila.send(texto_json(&resposta));
 
     // O degrau caiu de vez: os outros da sala estão prestes a descobrir o

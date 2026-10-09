@@ -30,11 +30,11 @@ function conferir(condicao, descricao) {
 
 let porta = 8899;
 
-async function subirServidor() {
+async function subirServidor(ambiente = {}) {
   porta++;
   const processo = spawn(BINARIO, [String(porta)], {
     stdio: "ignore",
-    env: { ...process.env, DADOS: PASTA },
+    env: { ...process.env, DADOS: PASTA, ...ambiente },
   });
 
   // Esperar a porta abrir, e não um tempo fixo: numa máquina ocupada o tempo
@@ -283,6 +283,7 @@ try {
   ana.enviar({ tipo: "entrar-voz", canal: canalVoz.id });
   const vozAna = await ana.aguardar("voz");
   conferir(vozAna?.pares?.length === 0, "primeiro a entrar na voz encontra a sala vazia");
+  conferir(vozAna?.ice === undefined, "sem TURN configurado, a voz não anuncia servidor ICE");
 
   bruno.enviar({ tipo: "entrar-voz", canal: canalVoz.id });
   const vozBruno = await bruno.aguardar("voz");
@@ -834,7 +835,12 @@ conferir(
   "e cada uma sabe quando vence"
 );
 
-servidor = await subirServidor();
+// A segunda partida vem com TURN, para conferir a credencial que a voz leva.
+const SEGREDO_TURN = "segredo-de-teste";
+servidor = await subirServidor({
+  TURN_URLS: "turn:turn.exemplo.com:3478?transport=tcp, stun:ignorado.exemplo.com",
+  TURN_SECRET: SEGREDO_TURN,
+});
 try {
   const ana = await cliente({
     tipo: "entrar",
@@ -843,6 +849,34 @@ try {
     usuario: "ana-001",
   });
   const devolta = await ana.aguardar("bem-vindo");
+
+  console.log("\nTURN para a malha");
+  // A bateria apaga os canais de voz que criou; um novo, só para isto.
+  ana.enviar({
+    tipo: "criar-canal",
+    categoria: devolta.grupo.categorias[0].id,
+    nome: "turn",
+    tipoCanal: "voz",
+  });
+  const comVoz = await ana.aguardar("grupo");
+  ana.enviar({ tipo: "entrar-voz", canal: canalPorTipo(comVoz?.grupo, "voz")?.id });
+  const comTurn = await ana.aguardar("voz");
+  const [turn] = comTurn?.ice ?? [];
+  conferir(
+    comTurn?.ice?.length === 1 &&
+      turn.urls?.length === 1 &&
+      turn.urls[0] === "turn:turn.exemplo.com:3478?transport=tcp",
+    "a voz anuncia o TURN configurado, e só endereços turn:"
+  );
+  const [expira] = String(turn?.username).split(":");
+  const horas = (Number(expira) * 1000 - Date.now()) / 3_600_000;
+  conferir(horas > 23.9 && horas <= 24, "a credencial vence em 24 horas");
+  const { createHmac } = await import("node:crypto");
+  conferir(
+    turn?.credential === createHmac("sha1", SEGREDO_TURN).update(turn.username).digest("base64"),
+    "a senha é o HMAC-SHA1 do usuário, o que o coturn confere com --use-auth-secret"
+  );
+  ana.enviar({ tipo: "sair-voz" });
   conferir(!!devolta, "o grupo sobrevive ao fechamento do servidor");
   conferir(devolta?.grupo?.nome === "Equipe de produto", "com o nome que tinha");
   conferir(devolta?.grupo?.dono === "ana-001", "e com o mesmo dono");

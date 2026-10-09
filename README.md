@@ -427,6 +427,38 @@ Se aparecer só `malha P2P`, alguma credencial está incompleta — o servidor
 diz qual prefixo falhou e continua funcionando pela malha, em vez de subir
 prometendo um degrau que não tem.
 
+### O TURN da malha
+
+A malha P2P só com STUN falha justamente no 4G: a operadora põe milhares de
+aparelhos atrás do mesmo endereço (CGNAT), nenhum dos lados alcança o outro, e
+a call abre sem ninguém se ouvir. O serviço `turn` (pasta `turn/`, um coturn)
+é o ponto de encontro para esse caso.
+
+O Railway não abre UDP para fora — só TCP, por proxy. Então o TURN atende
+apenas por TCP, e os dois lados da call se encontram em duas alocações do
+mesmo coturn, que repassa os pacotes pela própria máquina. Por isso o
+endereço anunciado é o IP privado do contêiner, e **não** há `--external-ip`,
+ao contrário do que os guias de coturn mandam. Todo o resto da rede privada
+fica negado (`--denied-peer-ip`): quem tem um convite recebe credencial, e
+sem isso o TURN seria uma porta para o Postgres.
+
+A credencial não é fixa: o servidor assina, a cada entrada na voz, um usuário
+que vence em 24 horas (`servidor/src/turn.rs`), e o coturn confere com o
+mesmo segredo. No Railway:
+
+```text
+# serviço turn
+TURN_SECRET=...                 # aleatório, longo
+
+# serviço sinalizacao
+TURN_SECRET=${{turn.TURN_SECRET}}
+TURN_URLS=turn:<proxy TCP do turn>?transport=tcp
+```
+
+O tráfego que passa pelo TURN sai do Railway e é cobrado, por isso há teto:
+4 Mbps por sessão e 60 Mbps no total (`turn/iniciar.sh`). Ele só é usado
+quando a conexão direta falha — o ICE prefere sempre o caminho direto.
+
 O login do Google usa **dois clientes OAuth**, e não um — porque o Google
 separa por tipo e o CALL precisa dos dois:
 
@@ -648,8 +680,10 @@ o schema crescer.
   uma fatura: o painel do provedor continua sendo a fonte de verdade, e uma
   diferença entre os dois números é esperada — a nossa medida não enxerga o
   que o provedor cobra por fora (gravação, egress, tráfego de reconexão).
-- Sem servidor TURN configurado, participantes atrás de NATs restritivos
-  podem não se conectar. Há apenas STUN público configurado em `src/rtc.js`.
+- O TURN é só por TCP e passa pela região do Railway, longe do Brasil: quando
+  a call precisa dele, a latência sobe. Um TURN gerenciado com UDP e presença
+  em São Paulo seria melhor; este é o que cabe sem conta nova em lugar nenhum.
+  E só ajuda quando os dois lados têm a v0.20.0 ou mais nova.
 - A porta 8787 só entra em jogo para quem usa **Hospedar**: nesse caso ela
   precisa estar liberada no firewall da máquina que hospeda. Com o servidor
   oficial, não há porta a abrir.

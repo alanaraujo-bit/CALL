@@ -1360,12 +1360,14 @@ function prepararAplicacao() {
   sinal.addEventListener("saiu", (e) => aoSair(e.detail.id));
   sinal.addEventListener("grupo", (e) => aoEstrutura(e.detail.grupo));
   sinal.addEventListener("voz", (e) => {
+    malha.definirServidoresIce(e.detail.ice);
     aoEntrarNaVoz(e.detail).catch((erro) => {
       console.error("[midia] entrada falhou", erro);
       avisar("Não foi possível conectar a mídia da call.", "erro");
     });
   });
   sinal.addEventListener("voz-migrar", (e) => {
+    malha.definirServidoresIce(e.detail.ice);
     aoMigrarDeMidia(e.detail).catch((erro) => {
       console.error("[midia] a migração de transporte falhou", erro);
     });

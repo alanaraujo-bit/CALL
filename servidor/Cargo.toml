@@ -40,6 +40,11 @@ blake2 = "0.10"
 # codificar/decodificar, puro Rust, sem custo de instalador (isto e o
 # servidor, nao o sidecar do aplicativo).
 base64 = "0.22"
+# Credenciais efemeras do TURN: HMAC-SHA1 do usuario com o segredo que o
+# coturn tambem conhece. Ver `src/turn.rs`. Os dois ja estavam no Cargo.lock
+# (sqlx e tungstenite), entao nao ha codigo novo para baixar.
+hmac = "0.12"
+sha1 = "0.10"
 livekit-api = { version = "0.6.3", default-features = false, features = ["access-token"], optional = true }
 # So com a opcao `google`.
 reqwest = { version = "0.12", default-features = false, features = [
