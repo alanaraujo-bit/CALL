@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head><meta charset="UTF-8" /><title>Teste do som da tela</title></head>
+  <body>
+    <!-- Roda sob a CSP real do aplicativo (nonce casado com `servir.mjs`): é
+         ela que decide se o worklet — e o `import` que ele faz da fila — pode
+         carregar dentro do pacote. -->
+    <script type="module" nonce="som-da-tela">
+      import { criarTocadorDeSomDaTela, RESERVA_DO_SOM_DA_TELA } from "../src/som-da-tela.js";
+
+      const relatorio = [];
+      let falhas = 0;
+      const conferir = (condicao, descricao, medida) => {
+        if (!condicao) falhas++;
+        relatorio.push({ ok: Boolean(condicao), descricao: medida ? `${descricao}  [${medida}]` : descricao });
+      };
+      const entregar = (dados) =>
+        fetch("http://127.0.0.1:8123/resultado", { method: "POST", body: JSON.stringify(dados, null, 2) }).catch(() => {});
+      const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      const TAXA = 48000;
+      const PEDACO = 960;
+
+      /** O que o Rust manda: 20 ms de PCM estéreo de 16 bits, num ArrayBuffer. */
+      function pedaco(fase) {
+        const pcm = new Int16Array(PEDACO * 2);
+        for (let i = 0; i < PEDACO; i++) {
+          const v = Math.round(Math.sin((2 * Math.PI * 440 * (fase + i)) / TAXA) * 0.5 * 32767);
+          pcm[2 * i] = v;
+          pcm[2 * i + 1] = v;
+        }
+        return pcm.buffer;
+      }
+
+      /** Trava o thread da interface — o que um redesenho pesado ou um jogo
+       *  disputando CPU fazem com o thread que recebe os pedaços. */
+      function travar(ms) {
+        const fim = performance.now() + ms;
+        while (performance.now() < fim) {}
+      }
+
+      try {
+        const contexto = new AudioContext({ latencyHint: "interactive", sampleRate: TAXA });
+        await contexto.resume();
+
+        let tocador;
+        try {
+          tocador = await criarTocadorDeSomDaTela(contexto);
+          conferir(true, "o worklet e a fila carregam sob a CSP do aplicativo");
+        } catch (erro) {
+          conferir(false, "o worklet e a fila carregam sob a CSP do aplicativo", String(erro));
+          throw erro;
+        }
+
+        const relatos = [];
+        tocador.port.onmessage = ({ data }) => relatos.push(data);
+
+        const destino = contexto.createMediaStreamDestination();
+        const analisador = contexto.createAnalyser();
+        analisador.fftSize = 2048;
+        tocador.connect(destino);
+        tocador.connect(analisador);
+
+        // O produtor anda no relógio de parede, como a placa de som de quem
+        // transmite: se o thread atrasou, ele manda os pedaços acumulados de
+        // uma vez — exatamente como os eventos chegam depois de um engasgo.
+        const inicio = performance.now();
+        let enviados = 0;
+        let fase = 0;
+        let maiorRajada = 0;
+        const energias = [];
+        const amostras = new Float32Array(analisador.fftSize);
+        const DURACAO = 6000;
+
+        while (performance.now() - inicio < DURACAO) {
+          const devidos = Math.floor((performance.now() - inicio) / 20) + 1;
+          maiorRajada = Math.max(maiorRajada, devidos - enviados);
+          while (enviados < devidos) {
+            const bytes = pedaco(fase);
+            fase += PEDACO;
+            tocador.port.postMessage(bytes, [bytes]);
+            enviados++;
+          }
+          // A cada ~700 ms a interface engasga por 45 ms: o caso que antes
+          // virava estalo, porque o agendamento já tinha passado da hora.
+          if (enviados % 35 === 0) travar(45);
+          analisador.getFloatTimeDomainData(amostras);
+          energias.push(Math.sqrt(amostras.reduce((s, v) => s + v * v, 0) / amostras.length));
+          await esperar(5 + Math.random() * 25);
+        }
+        // O estado é lido com o produtor ainda de pé: depois que ele para, a
+        // fila esvazia e a falta que isso conta é o fim do som, não um defeito.
+        const pedirRelato = () =>
+          new Promise((resolve) => {
+            const anterior = tocador.port.onmessage;
+            tocador.port.onmessage = ({ data }) => {
+              tocador.port.onmessage = anterior;
+              resolve(data);
+            };
+            tocador.port.postMessage("relatar");
+          });
+        const ultimo = await pedirRelato();
+
+        const ms = (quadros) => `${((quadros / TAXA) * 1000).toFixed(0)} ms`;
+        conferir(relatos.length >= 4, "o worklet relata o estado uma vez por segundo", `${relatos.length} relatos`);
+        conferir(maiorRajada >= 2, "o ensaio de fato produziu rajadas atrasadas", `maior rajada ${maiorRajada} pedaços`);
+        // Uma falta é admitida: é ela que ensina a fila a precisar de mais
+        // reserva nesta máquina. Duas seriam a reserva não aprendendo.
+        conferir(
+          ultimo.faltas <= 1,
+          "seis segundos com engasgos de 45 ms: no máximo a falta que ajusta a reserva",
+          `faltas ${ultimo.faltas}, reserva ${ms(ultimo.alvo)}`
+        );
+        if (ultimo.faltas > 0) {
+          conferir(
+            ultimo.alvo > RESERVA_DO_SOM_DA_TELA * TAXA,
+            "depois de faltar, a reserva cresce sozinha",
+            `${ms(RESERVA_DO_SOM_DA_TELA * TAXA)} → ${ms(ultimo.alvo)}`
+          );
+        }
+        conferir(ultimo.descartes === 0, "e sem descartar som por excesso", `descartes ${ultimo.descartes}`);
+        conferir(
+          ultimo.nivel / TAXA < 0.25,
+          "o atraso fica longe do teto — o som não descola da imagem",
+          `${ms(ultimo.nivel)} na fila`
+        );
+        // Senoide de 0,5 tem RMS 0,354. A janela do analisador é de 43 ms, então
+        // a falta admitida acima aparece em uma ou duas medições — e só nelas.
+        const tocando = energias.slice(10);
+        const cheias = tocando.filter((rms) => rms > 0.3).length / tocando.length;
+        conferir(
+          cheias >= 0.97,
+          "o som sai do tocador praticamente o tempo todo",
+          `${(cheias * 100).toFixed(1)}% das ${tocando.length} medições com som cheio`
+        );
+
+        const [trilha] = destino.stream.getAudioTracks();
+        conferir(trilha?.readyState === "live", "a trilha que vai para a publicação está viva");
+
+        tocador.port.postMessage("limpar");
+        await esperar(150);
+        analisador.getFloatTimeDomainData(amostras);
+        const rmsDepois = Math.sqrt(amostras.reduce((s, v) => s + v * v, 0) / amostras.length);
+        conferir(rmsDepois < 0.01, "limpar silencia o tocador na hora", `RMS ${rmsDepois.toFixed(4)}`);
+
+        // Um segundo tocador no mesmo contexto — transmitir de novo na mesma
+        // call — não pode recarregar nem falhar ao registrar o processador.
+        let segundo = null;
+        try {
+          segundo = await criarTocadorDeSomDaTela(contexto);
+        } catch (erro) {
+          conferir(false, "transmitir de novo no mesmo contexto monta outro tocador", String(erro));
+        }
+        if (segundo) conferir(true, "transmitir de novo no mesmo contexto monta outro tocador");
+
+        await contexto.close();
+      } catch (erro) {
+        conferir(false, "o ensaio terminou sem exceção", String(erro?.stack ?? erro));
+      }
+
+      await entregar({ falhas, relatorio });
+    </script>
+  </body>
+</html>

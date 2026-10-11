@@ -462,6 +462,17 @@
           "trocar de perfil também troca o que o codificador sacrifica"
         );
 
+        // O perfil Texto é o único que sacrifica quadros em vez de resolução:
+        // é a razão de ele existir, e é o que tem que chegar ao codificador.
+        const texto = acharPerfilDeTela("texto");
+        await ana.malha.definirPerfilTela(texto);
+        conferir(
+          tela.getVideoTracks()[0].contentHint === "detail" &&
+            remetenteDeTela()?.getParameters().degradationPreference === "maintain-resolution" &&
+            codificacaoDaTela().maxFramerate === texto.quadros,
+          `o perfil Texto preserva a resolução e sacrifica quadros (${texto.detalhe})`
+        );
+
         // Qual codec foi realmente negociado. A preferência não é imposição —
         // se o motor não tiver o codec pedido, isto registra o que ele usou em
         // vez de reprovar por uma limitação do ambiente.

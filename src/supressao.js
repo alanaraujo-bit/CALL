@@ -82,6 +82,20 @@ export class Supressao {
   #causa = ""; // o erro cru, para diagnóstico — nunca vai para a interface
   #ouvintes = new Set();
   #aoDegradar = null;
+  /** O que foi pedido e o que o processador atual foi montado para fazer. O
+   *  BVC é opção de construção do Krisp: mudar de ideia é montar outro. */
+  #vozesAoFundo = false;
+  #processadorComBvc = false;
+  /** O Krisp recusou o filtro montado com BVC nesta sessão. Daqui em diante
+   *  ele é montado sem BVC: perder a remoção de vozes é aceitável, perder a
+   *  supressão neural inteira por causa dela não é. */
+  #bvcRecusado = false;
+  /** O que a pessoa marcou, antes de qualquer recusa. */
+  #bvcPedido = false;
+  /** A última sala entregue em `aoPublicar`. Um processador montado depois de
+   *  entrar — trocar o BVC no meio da call — precisa conferir a licença nela,
+   *  e ninguém mais vai chamar `aoPublicar` até a próxima entrada. */
+  #sala = null;
 
   /**
    * `aoDegradar` é chamado quando o Krisp cai **depois** de já estar valendo —
@@ -98,6 +112,11 @@ export class Supressao {
   /** Qual motor está valendo agora. */
   get motor() {
     return this.#motor;
+  }
+
+  /** O BVC foi recusado nesta sessão e o Krisp segue sem ele. */
+  get bvcRecusado() {
+    return this.#bvcRecusado;
   }
 
   /** Por que não é o de cima da lista. Vazio quando não há o que explicar. */
@@ -167,14 +186,20 @@ export class Supressao {
    * ao sistema. O `false` nos dois é o caso da neural — ela vem depois, no
    * grafo, e o pedido ao sistema tem que sair do caminho.
    */
-  async prepararCaptura(ligada) {
+  async prepararCaptura(ligada, { vozesAoFundo = false } = {}) {
     if (!ligada) {
       this.#anunciar("desligada");
       return { noiseSuppression: false, voiceIsolation: false };
     }
 
+    this.#bvcPedido = Boolean(vozesAoFundo);
+    this.#vozesAoFundo = this.#bvcPedido && !this.#bvcRecusado;
+    if (this.#processador && this.#processadorComBvc !== this.#vozesAoFundo) {
+      await this.#trocarProcessador();
+    }
+
     if (!this.#krispRecusado && (await this.#garantirKrisp())) {
-      this.#anunciar("neural");
+      this.#anunciar("neural", this.#detalheDoNeural());
       return { noiseSuppression: false, voiceIsolation: false };
     }
 
@@ -185,6 +210,13 @@ export class Supressao {
 
     this.#anunciar("nativa", this.#detalheDaRecusa());
     return { noiseSuppression: true, voiceIsolation: false };
+  }
+
+  /** Com o neural valendo, só há o que explicar se o BVC foi pedido e ficou de fora. */
+  #detalheDoNeural() {
+    return this.#bvcPedido && this.#bvcRecusado
+      ? "A remoção de vozes ao fundo não está liberada; seguindo só com a redução de ruído."
+      : "";
   }
 
   #detalheDaRecusa() {
@@ -203,7 +235,15 @@ export class Supressao {
       // `quality: "medium"` é o padrão do pacote e o equilíbrio que o próprio
       // Krisp recomenda; "high" pesa em máquina fraca com um jogo aberto, que
       // é justamente a situação de uso do CALL.
-      this.#processador = this.#modulo.KrispNoiseFilter({ quality: "medium" });
+      //
+      // `useBVC` não liga o BVC à força: o modelo vem no pacote, mas o Krisp
+      // só o usa em microfone da lista de dispositivos dele, e nos outros fica
+      // na supressão de ruído de sempre.
+      this.#processador = this.#modulo.KrispNoiseFilter({
+        quality: "medium",
+        useBVC: this.#vozesAoFundo,
+      });
+      this.#processadorComBvc = this.#vozesAoFundo;
       return true;
     } catch (erro) {
       console.warn("[supressao] o filtro neural não carregou", erro);
@@ -228,9 +268,13 @@ export class Supressao {
     if (this.#motor !== "neural" || !this.#processador) return trilha;
 
     const opcoes = { kind: "audio", track: trilha, audioContext: contexto };
+    let novo = false;
     try {
       if (this.#processador.processedTrack) await this.#processador.restart(opcoes);
-      else await this.#processador.init(opcoes);
+      else {
+        await this.#processador.init(opcoes);
+        novo = true;
+      }
     } catch (erro) {
       console.warn("[supressao] o filtro neural não iniciou", erro);
       this.#krispRecusado = true;
@@ -259,15 +303,41 @@ export class Supressao {
     tratada.removeEventListener("enable-lk-krisp-noise-filter", this.#aoLigar);
     tratada.addEventListener("disable-lk-krisp-noise-filter", this.#aoDesligar);
     tratada.addEventListener("enable-lk-krisp-noise-filter", this.#aoLigar);
+
+    // Montado no meio da call (o BVC mudou): a sala já está de pé e não vai
+    // passar por `aoPublicar` de novo, então a licença é conferida aqui.
+    if (novo && this.#sala) this.aoPublicar(this.#sala);
     return tratada;
   }
 
+  /** Desmonta o processador atual para o próximo `#garantirKrisp` montar outro
+   *  com as opções novas. Não é recusa: o Krisp continua sendo o motor. */
+  async #trocarProcessador() {
+    const anterior = this.#processador;
+    this.#processador = null;
+    anterior?.processedTrack?.removeEventListener("disable-lk-krisp-noise-filter", this.#aoDesligar);
+    anterior?.processedTrack?.removeEventListener("enable-lk-krisp-noise-filter", this.#aoLigar);
+    await anterior?.destroy?.().catch?.(() => {});
+  }
+
   #aoLigar = () => {
-    this.#anunciar("neural");
+    this.#anunciar("neural", this.#detalheDoNeural());
   };
 
   #aoDesligar = () => {
     if (this.#motor !== "neural") return;
+    if (this.#processadorComBvc) {
+      // A recusa pode ser só do BVC. Antes de desistir do Krisp, uma tentativa
+      // sem ele: o processador é desmontado, a recaptura monta outro sem BVC e
+      // confere a licença de novo na mesma sala. Se essa também for recusada,
+      // `#processadorComBvc` já é falso e o caminho de baixo desiste de vez.
+      this.#bvcRecusado = true;
+      this.#vozesAoFundo = false;
+      this.#trocarProcessador();
+      this.#anunciar("neural", this.#detalheDoNeural());
+      this.#aoDegradar?.();
+      return;
+    }
     this.#krispRecusado = true;
     this.#anunciar("nativa", "A redução neural não está liberada para esta sala.");
     // Recapturar é responsabilidade de quem abriu o microfone: as constraints
@@ -282,6 +352,7 @@ export class Supressao {
    * mão no grafo, então a chamada é nossa também.
    */
   async aoPublicar(sala) {
+    if (sala) this.#sala = sala;
     if (!sala || !this.#processador?.onPublish) return;
     try {
       await this.#processador.onPublish(sala);
@@ -295,6 +366,7 @@ export class Supressao {
   async soltar() {
     const processador = this.#processador;
     this.#processador = null;
+    this.#sala = null; // saiu da voz: a sala morreu junto
     processador?.processedTrack?.removeEventListener("disable-lk-krisp-noise-filter", this.#aoDesligar);
     processador?.processedTrack?.removeEventListener("enable-lk-krisp-noise-filter", this.#aoLigar);
     await processador?.destroy?.().catch?.(() => {});

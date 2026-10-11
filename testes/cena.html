@@ -158,7 +158,7 @@
           await aguardar(() => $("lista-participantes").children.length === 5);
         }
 
-        if (cena === "voz" || cena === "voz-chat") {
+        if (cena === "voz" || cena === "voz-chat" || cena === "transmitir") {
           // Sala de voz real, com uma segunda pessoa de verdade entrando pelo
           // WebSocket — e não marcação copiada à mão. A versão anterior
           // desenhava `.presenca` no braço, e ficou para trás na primeira vez
@@ -217,6 +217,17 @@
           // ícone (e não só de cor) que este selo prova.
           $("botao-microfone").click();
           await esperar(150);
+
+          if (cena === "transmitir") {
+            // O diálogo de qualidade, que é quem mostra os perfis de tela —
+            // inclusive o Texto, que fica fora da escada de peso. Pelo botão
+            // direito: o clique comum abriria o seletor de captura do sistema.
+            $("botao-transmitir").dispatchEvent(
+              new jan.MouseEvent("contextmenu", { bubbles: true, cancelable: true })
+            );
+            await aguardar(() => !$("transmitir-dialogo").classList.contains("oculto"));
+            await esperar(200);
+          }
         }
 
         if (cena === "cartao") {

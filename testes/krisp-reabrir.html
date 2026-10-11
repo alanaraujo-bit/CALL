@@ -99,6 +99,45 @@
         conferir(tratadaB?.readyState === "live", "a trilha tratada continua viva depois de reabrir");
         conferir(degradou === 0, "reabrir o microfone não é confundido com uma queda do filtro");
 
+        // Ligar a remoção de vozes ao fundo no meio da call: o BVC é opção de
+        // construção do Krisp, então o processador é trocado por outro — e a
+        // troca não pode parecer queda nem deixar o motor sem filtro.
+        passo("ligar a remoção de vozes ao fundo");
+        segundo.getTracks().forEach((t) => t.stop());
+        const pedidaComBvc = await supressao.prepararCaptura(true, { vozesAoFundo: true });
+        const terceiro = await pedir();
+        const tratadaC = await supressao.tratar(terceiro.getAudioTracks()[0], contexto);
+        conferir(
+          supressao.motor === "neural" && pedidaComBvc.noiseSuppression === false,
+          `pedir a remoção de vozes mantém o motor neural (${supressao.motor}${
+            supressao.causa ? ` — ${supressao.causa}` : ""
+          })`
+        );
+        conferir(
+          tratadaC?.readyState === "live" && tratadaC !== tratadaB,
+          "o filtro remontado com BVC devolve uma trilha nova e viva"
+        );
+        conferir(degradou === 0, "trocar o filtro não é confundido com uma queda dele");
+
+        // A licença recusa o filtro montado com BVC. Desistir do Krisp aqui
+        // deixaria a pessoa sem supressão neural por causa de uma opção extra
+        // — e para sempre, porque a preferência ficou gravada. O certo é pedir
+        // a recaptura e voltar sem BVC.
+        passo("recusa da licença com BVC");
+        tratadaC.dispatchEvent(new Event("disable-lk-krisp-noise-filter"));
+        conferir(degradou === 1, `a recusa com BVC pede uma recaptura (recapturas: ${degradou})`);
+        conferir(supressao.bvcRecusado, "e marca o BVC como recusado nesta sessão");
+        terceiro.getTracks().forEach((t) => t.stop());
+        const pedidaSemBvc = await supressao.prepararCaptura(true, { vozesAoFundo: true });
+        const quarto = await pedir();
+        const tratadaD = await supressao.tratar(quarto.getAudioTracks()[0], contexto);
+        conferir(
+          supressao.motor === "neural" && pedidaSemBvc.noiseSuppression === false && tratadaD?.readyState === "live",
+          `a recaptura volta com o Krisp, sem BVC (motor: ${supressao.motor})`
+        );
+        conferir(/vozes ao fundo/.test(supressao.detalhe), `e diz que a remoção de vozes ficou de fora ("${supressao.detalhe}")`);
+        quarto.getTracks().forEach((t) => t.stop());
+
         passo("soltar");
         await supressao.soltar();
         conferir(true, "soltar devolve o filtro sem travar");

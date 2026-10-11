@@ -60,6 +60,10 @@
 
       const ENDERECO =
         new URLSearchParams(location.search).get("servidor") ?? "ws://127.0.0.1:8898";
+      // Com `?bvc=sim` o filtro é montado pedindo também a remoção de vozes ao
+      // fundo: a pergunta passa a ser se o plano aceita o BVC sem recusar o
+      // filtro inteiro — que é o que importa antes de oferecer a opção.
+      const COM_BVC = new URLSearchParams(location.search).get("bvc") === "sim";
 
       const motor = new MotorDeAudio();
       const sinal = new Sinal();
@@ -79,7 +83,8 @@
 
       try {
         passo("abrir o microfone");
-        await motor.aplicar(AUDIO_PADRAO);
+        await motor.aplicar({ ...AUDIO_PADRAO, vozesAoFundo: COM_BVC });
+        relatorio.push({ ok: true, descricao: `remoção de vozes ao fundo pedida: ${COM_BVC ? "sim" : "não"}` });
         await motor.abrirMicrofone();
         conferir(
           motor.supressao.motor === "neural",

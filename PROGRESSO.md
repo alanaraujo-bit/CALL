@@ -1959,6 +1959,85 @@ provedor. Não há número de plano gravado em lugar nenhum do repositório: um
 limite inventado que envelhece em silêncio é pior do que limite nenhum, porque
 parece medido.
 
+## Iteração 24 — Transmissão de tela e som no nível do Discord
+
+**Ponto de partida:** comparar o comportamento do CALL com o do Discord na
+transmissão de tela e no áudio. A diferença principal é estrutural: lá, voz,
+tela e codificação rodam num motor nativo fora do Chromium; aqui tudo roda no
+WebView2. Do que dá para trazer sem reescrever o transporte, isto entrou:
+
+**1. O som da tela parou de estalar.** Eram cinquenta eventos por segundo com
+PCM em base64 dentro de JSON, decodificados e agendados um a um como
+`AudioBufferSource` no thread da interface — bastava ela engasgar para o
+pedaço chegar depois da hora. Agora o Rust manda bytes crus por um
+`tauri::ipc::Channel` e quem toca é um `AudioWorklet` (`som-da-tela-worklet.js`)
+a partir de uma fila com reserva (`fila-de-amostras.js`): junta 80 ms antes de
+tocar, **cresce a reserva sozinha** até 150 ms numa máquina que engasga,
+descarta o excesso acima de 250 ms para o som não descolar da imagem, e costura
+toda descontinuidade com uma cauda de 1,3 ms em vez de um degrau.
+
+**2. Transmitir uma janela leva só o som dela.** Como no Discord: transmitir o
+jogo não leva junto o Spotify nem as notificações. O Rust lê o `label` da
+trilha (`window:<HWND>:0`), acha o processo dono e usa o loopback em modo
+`INCLUDE_TARGET_PROCESS_TREE`. Tela inteira, a própria janela do CALL, um
+hospedeiro de janela alheia (`ApplicationFrameHost.exe`) ou qualquer coisa que
+não dê para afirmar caem no modo de antes — o sistema todo menos o CALL —,
+porque um som a mais é melhor que silêncio.
+
+**3. A qualidade da transmissão voltou a ter porta.** Defeito antigo: o diálogo
+de qualidade abria pela engrenagem do seletor de fontes próprio, que saiu de
+cena quando a captura passou a ser o `getDisplayMedia`. `prepararTransmitirDialogo`
+e `abrirTransmitirDialogo` não eram chamados por ninguém — todo mundo estava
+preso no perfil Equilibrado e com o som sempre ligado. Agora o botão direito no
+botão de transmitir abre a qualidade, antes ou durante a transmissão; o clique
+comum continua indo direto ao seletor do sistema.
+
+**4. Perfil Texto.** 1440p, 15 fps, 4 Mbps, `contentHint: "detail"` e
+`maintain-resolution`: o único perfil que sacrifica quadros em vez de
+resolução, para código e documento chegarem legíveis. Fica fora da escada de
+peso (`PERFIS_DA_ESCADA`) e ocupa a linha inteira da grade.
+
+**5. Remover vozes ao fundo.** Opção nova, desligada por padrão, que monta o
+Krisp com `useBVC` (Background Voice Cancellation), o que tira também a voz
+de outras pessoas no cômodo. Só aparece com o motor neural valendo; trocar no meio da call
+remonta o processador e confere a licença de novo na sala que já está de pé.
+
+### Medido
+
+| O quê | Resultado |
+| --- | --- |
+| Codecs nesta máquina (`testes/medir-codecs.ps1`, 1080p60) | H.264 pelo NVENC (`powerEfficientEncoder`); VP9 e AV1 por software; HEVC ausente no WebRTC. O AV1 gasta menos banda em texto, mas o LiveKit força `motion`/`L1T3` em tela com codec SVC — por isso a escada continua em H.264 |
+| Som da tela com a interface travando 45 ms a cada 700 ms (`testes/rodar-som-da-tela.ps1`, 5 execuções) | no máximo uma falta, que eleva a reserva de 80 para 120 ms; nenhum descarte; 99–100% das medições com som cheio |
+| Costuras (`testes/fila-de-amostras.test.mjs`) | maior salto 0,0518 no fim do som e no descarte — o mesmo da própria senoide (0,052) |
+
+### Verificado
+
+| O quê | Como |
+| --- | --- |
+| Alvo do loopback | `cargo test -p call --lib`: 24 verificações, 5 novas — o rótulo do Chromium, tela inteira e rótulo estranho não virando janela, hospedeiros de janela alheia recusados, e o modo seguro como queda |
+| A fila | `node testes/fila-de-amostras.test.mjs`, suíte nova |
+| O worklet sob a CSP real | `powershell -File testes/rodar-som-da-tela.ps1`, suíte nova — inclusive o `import` de dentro do worklet |
+| O perfil Texto no codificador | `testes/rodar-malha.ps1`, verificação nova |
+| A troca do Krisp com BVC | `testes/rodar-krisp-reabrir.ps1`, sete verificações novas — inclusive a licença recusando o filtro com BVC: em vez de desistir do Krisp, ele volta sem BVC e diz isso na tela |
+| O diálogo de qualidade | `testes/capturar-desktop.ps1 -Cenas transmitir`, cena nova — aberta pelo botão direito, sem disparar captura |
+| Sem regressão | motor de áudio, interface, malha, sinalização, mídia, painel, tempo, atividade, resumo e teclado passando; `tauri build --no-bundle` compila |
+
+### O que ficou em aberto
+
+**A produção está sem LiveKit.** Em 2026-10-11 o servidor de produção
+respondeu `"degrau": "malha"` com `"contingencia": false` a uma entrada de voz
+— ou seja, não há degrau de SFU configurado: toda call está indo pela malha
+P2P. Provável que `LIVEKIT_URL`, `LIVEKIT_API_KEY` e `LIVEKIT_API_SECRET` não
+tenham acompanhado a recriação do serviço em 2026-10-09. Isso também impede
+`testes/rodar-krisp-licenca.ps1` (com ou sem `-Bvc`) de responder se o plano
+libera o Krisp e o BVC: o ensaio parou em "recebeu token do LiveKit Cloud".
+
+**O som só do programa não foi ouvido.** O formato `window:<HWND>:0` do rótulo
+é o do Chromium, mas a captura de uma janela de verdade pede o seletor do
+sistema, que é decisão de quem usa — não foi automatizada. Se o WebView2
+rotular diferente, o Rust cai no modo do sistema inteiro (o de antes) e o aviso
+"Transmitindo só o som de…" simplesmente não aparece.
+
 ## Testes automatizados
 
 | Suíte | Comando | Cobertura |
@@ -1972,6 +2051,8 @@ parece medido.
 | Painel de ajustes | `powershell -File testes/rodar-interface.ps1` | 22 verificações conduzindo a aplicação real dentro de um quadro: controles refletindo o estado, medidor recebendo nível da porta de ruído, dispositivos enumerados com nome, abas, persistência das escolhas — e os erros de execução da própria aplicação, recolhidos |
 | Convite por link | `powershell -File testes/convite.ps1` | 8 verificações na janela real: o esquema `call://` registrado, o link com o aplicativo aberto trocando de grupo sem abrir segunda instância, e o link com o aplicativo fechado abrindo o CALL e esperando a tela de entrada — os dois provados pelo canal em que a mensagem escrita depois caiu |
 | Perfil | `powershell -File testes/rodar-perfil.ps1` | 41 verificações conduzindo a aplicação real: a fita de mascotes da tela de entrada, o painel com prévia ao vivo e contador de bio, cancelar que não grava, o cartão de si mesmo oferecendo "Editar perfil" em vez de abrir o editor direto, e — com uma segunda pessoa entrando no grupo por um WebSocket cru — o cartão dela e a troca de perfil chegando de fora |
+| Fila do som da tela | `node testes/fila-de-amostras.test.mjs` | Reserva antes de tocar, dez segundos de regime sem clique, 40 ms de atraso cobertos, o fim do som e o descarte costurados sem degrau, o teto do atraso, limpar entre transmissões e o contrato dos parâmetros |
+| Som da tela no Chromium | `powershell -File testes/rodar-som-da-tela.ps1` | O worklet e a fila carregando sob a CSP do aplicativo, seis segundos com a interface travando 45 ms sem perder som, a reserva crescendo depois de uma falta, a trilha viva para a publicação, limpar silenciando na hora e o segundo tocador no mesmo contexto |
 | Sons, incluindo mutar/desmutar | `powershell -File testes/rodar-sons.ps1` | 51 medições nas amostras renderizadas em `OfflineAudioContext`: pico dentro da faixa alvo, ausência de degrau no ataque, começo e fim em silêncio real, duração abaixo de 700 ms, e — via Goertzel nas duas notas — que o gesto sobe ao entrar/desmutar e desce ao sair/mutar, que o evento próprio tem grave e o dos outros não, e que o intervalo continua sendo uma quinta justa |
 | Tempo em call | `node testes/tempo.test.mjs` | 31 verificações com relógio injetado: formatação do cronômetro nas viradas de minuto e de hora, truncamento em vez de arredondamento, tempo negativo de relógio que anda para trás, e o histórico — somar quem sai e volta numa linha só, a contaminação do "pelo menos" quando uma passagem tem começo desconhecido, saída sem entrada que não cria linha, e a limpeza ao trocar de call |
 | Atividade | `node testes/atividade.test.mjs` | 28 verificações da política: a área de trabalho e as cascas do Windows que não viram atividade, caracteres de controle e nomes absurdos que não estragam a coluna, a exigência de duas leituras seguidas antes de anunciar, a saída imediata, a leitura que falha sem apagar o que estava no ar, e o desligamento que limpa a linha dos outros em vez de congelá-la |

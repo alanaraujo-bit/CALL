@@ -3,11 +3,13 @@ import { SalaLiveKit } from "./livekit.js";
 import {
   Malha,
   PERFIS_TELA,
+  PERFIS_DA_ESCADA,
   PERFIL_TELA_PADRAO,
   acharPerfilDeTela,
   restricoesDoPerfil,
 } from "./rtc.js";
 import { MotorDeAudio, AUDIO_PADRAO, BITRATES_AUDIO, listarDispositivos } from "./audio.js";
+import { criarTocadorDeSomDaTela } from "./som-da-tela.js";
 import { HistoricoDaCall, relogio, tempoCurto } from "./tempo.js";
 import { Vigia } from "./atividade.js";
 import { buscarResumoDeAtividade } from "./resumo.js";
@@ -1292,9 +1294,20 @@ function prepararAplicacao() {
   });
 
   $("botao-microfone").addEventListener("click", alternarMicrofone);
+  // O clique vai direto ao seletor do sistema — a qualidade não fica no meio
+  // do caminho toda vez (ver `prepararTransmitirDialogo`). O botão direito
+  // abre a qualidade a qualquer momento: antes, ela leva ao seletor; no ar,
+  // ela muda a transmissão em voo sem pedir a fonte de novo.
   $("botao-transmitir").addEventListener("click", () => {
     if (estado.transmitindo) pararTransmissao();
     else iniciarCapturaOtimizada(acharPerfilDeTela(estado.perfilTela));
+  });
+  $("botao-transmitir").addEventListener("contextmenu", (evento) => {
+    evento.preventDefault();
+    // O botão mora dentro de `#coluna-canais`, cujo botão direito abre o menu
+    // do grupo: sem isto, os dois abririam juntos.
+    evento.stopPropagation();
+    abrirTransmitirDialogo();
   });
   $("botao-sair-voz").addEventListener("click", () => sairDaVoz(true));
 
@@ -4712,9 +4725,12 @@ let transmitirVindoDoSeletor = false;
 
 /** A qualidade não pergunta mais nada toda vez que alguém clica em
  *  transmitir: isso morava aqui antes, e virou uma tela a mais no meio do
- *  caminho toda vez. Agora é só configuração — abre pela engrenagem do
- *  seletor, o que for escolhido vale a partir da próxima transmissão, e o
- *  botão de transmitir vai direto ao seletor de fontes. */
+ *  caminho toda vez. Agora é só configuração — o botão de transmitir vai
+ *  direto ao seletor do sistema, e a qualidade abre pelo **botão direito**
+ *  nele. Ela abria pela engrenagem do seletor de fontes próprio; quando a
+ *  captura passou a ser o `getDisplayMedia`, esse seletor saiu de cena e a
+ *  qualidade ficou sem porta nenhuma — preso no perfil padrão e com o som
+ *  sempre ligado, sem ter como saber. */
 function prepararTransmitirDialogo() {
   if (transmitirDialogoPreparado) return;
   transmitirDialogoPreparado = true;
@@ -4722,7 +4738,12 @@ function prepararTransmitirDialogo() {
   montarPerfisLive();
 
   $("transmitir-fechar").addEventListener("click", fecharTransmitirDialogo);
-  $("transmitir-confirmar").addEventListener("click", fecharTransmitirDialogo);
+  $("transmitir-confirmar").addEventListener("click", () => {
+    fecharTransmitirDialogo();
+    // O clique é o gesto que o `getDisplayMedia` exige: a captura começa
+    // dentro dele, e não num `setTimeout` depois.
+    if (!estado.transmitindo) iniciarCapturaOtimizada(acharPerfilDeTela(estado.perfilTela));
+  });
   $("transmitir-dialogo").addEventListener("click", (evento) => {
     if (evento.target === $("transmitir-dialogo")) fecharTransmitirDialogo();
   });
@@ -4737,6 +4758,10 @@ function prepararTransmitirDialogo() {
  *  não fechado) enquanto a qualidade está aberta, e volta sozinho ao fechar. */
 function abrirTransmitirDialogo(vindoDoSeletor = false) {
   if (!estado.canalVoz) return;
+  prepararTransmitirDialogo();
+  // O mesmo diálogo serve aos dois momentos: antes, ele leva ao seletor; no
+  // ar, ele só ajusta a transmissão que já está saindo.
+  $("transmitir-confirmar").textContent = estado.transmitindo ? "Pronto" : "Transmitir";
   transmitirVindoDoSeletor = vindoDoSeletor;
   if (vindoDoSeletor) $("seletor-dialogo").classList.add("oculto");
   refletirTransmitirDialogo();
@@ -4752,10 +4777,18 @@ function fecharTransmitirDialogo() {
 }
 
 /** As mesmas barrinhas de sinal, uma a mais acesa por perfil — o índice na
- *  lista já é a ordem de peso, do mais leve ao mais pesado. */
-function iconeDeQualidade(indice) {
+ *  escada já é a ordem de peso, do mais leve ao mais pesado. Um perfil fora
+ *  da escada (o Texto) não tem peso para mostrar: ganha linhas de texto. */
+function iconeDeQualidade(perfil) {
+  const indice = PERFIS_DA_ESCADA.indexOf(perfil);
+  if (indice < 0) {
+    const linhas = [7, 12, 17]
+      .map((y, i) => `<rect x="3" y="${y - 0.9}" width="${i === 2 ? 11 : 18}" height="1.8" rx="0.9" class="acesa"/>`)
+      .join("");
+    return `<svg viewBox="0 0 24 24" aria-hidden="true">${linhas}</svg>`;
+  }
   let barras = "";
-  for (let i = 0; i < PERFIS_TELA.length; i++) {
+  for (let i = 0; i < PERFIS_DA_ESCADA.length; i++) {
     const altura = 5 + i * 4;
     barras += `<rect x="${2 + i * 6}" y="${20 - altura}" width="4" height="${altura}" rx="1.2" class="${i <= indice ? "acesa" : ""}"/>`;
   }
@@ -4765,13 +4798,13 @@ function iconeDeQualidade(indice) {
 function montarPerfisLive() {
   const area = $("transmitir-perfis");
   area.textContent = "";
-  PERFIS_TELA.forEach((perfil, indice) => {
+  PERFIS_TELA.forEach((perfil) => {
     const botao = document.createElement("button");
     botao.type = "button";
     botao.className = "perfil-live";
     botao.dataset.perfil = perfil.id;
     botao.innerHTML = `
-      <span class="perfil-live__icone">${iconeDeQualidade(indice)}</span>
+      <span class="perfil-live__icone">${iconeDeQualidade(perfil)}</span>
       <span class="perfil-live__texto">
         <span class="perfil-live__nome"></span>
         <span class="perfil-live__resumo"></span>
@@ -4864,7 +4897,7 @@ async function iniciarCapturaOtimizada(perfil) {
     trilha.onended = () => pararTransmissao();
     await aplicarPerfilDeTela(perfil);
 
-    const trilhaDeAudio = estado.audioDaTela ? await iniciarAudioDaTela() : null;
+    const trilhaDeAudio = estado.audioDaTela ? await iniciarAudioDaTela(trilha.label) : null;
     if (!estado.canalVoz || trilha.readyState === "ended") {
       pararAudioDaTela();
       fluxo.getTracks().forEach((t) => t.stop());
@@ -4917,14 +4950,12 @@ function pararTransmissao() {
   anunciarEstado();
 }
 
-/* ── Áudio do sistema: WASAPI em loopback, reproduzido no Web Audio ──
+/* ── Áudio da tela: WASAPI em loopback, reproduzido no Web Audio ──
  *
- * O Rust manda pedaços de 20 ms de PCM de 16 bits; cada pedaço vira um
- * `AudioBuffer` agendado logo depois do anterior — a técnica padrão para
- * tocar áudio contínuo por partes sem estalos entre elas. Se o atraso
- * acumulado passar de meio segundo (rede lenta, pedaço perdido), o cursor
- * pula direto para "agora": preferir som ao vivo, mesmo com uma perda
- * inaudível de continuidade, a ir ficando cada vez mais atrasado.
+ * O Rust manda pedaços de 20 ms de PCM de 16 bits, como bytes crus, por um
+ * `Channel`. Este thread só os repassa ao `AudioWorklet` de
+ * `som-da-tela-worklet.js`, que os toca de uma fila com reserva — ver
+ * `fila-de-amostras.js` para o que acontece quando falta ou sobra som.
  *
  * Isto roda no **mesmo `AudioContext` do motor de voz**, e não em um próprio.
  * Um segundo contexto é um segundo caminho de renderização aberto no
@@ -4936,11 +4967,8 @@ function pararTransmissao() {
 
 let contextoDeAudioDaTela = null;
 let destinoDeAudioDaTela = null;
-let proximoInicioDeAudio = 0;
-let pararDeOuvirAudio = null;
+let tocadorDeAudioDaTela = null;
 let pararDeOuvirErroAudio = null;
-
-const ATRASO_MAXIMO_DE_AUDIO = 0.5;
 
 function decodificarBase64(base64) {
   if (Uint8Array.fromBase64) return Uint8Array.fromBase64(base64);
@@ -4963,77 +4991,76 @@ function codificarBase64(bytes) {
   return btoa(binario);
 }
 
-function tocarPedacoDeAudioDaTela(pedaco) {
-  // O contexto agora é emprestado do motor de voz, então ele pode fechar por
-  // baixo — sair da voz com a transmissão no ar é o caminho. Um `createBuffer`
-  // em contexto fechado lança, e lançaria a cada 20 ms.
-  if (!contextoDeAudioDaTela || contextoDeAudioDaTela.state === "closed") return;
-
-  const bytes = decodificarBase64(pedaco.dados);
-  const amostras = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
-  const canais = pedaco.canais;
-  const quadros = amostras.length / canais;
-  if (quadros <= 0) return;
-
-  const buffer = contextoDeAudioDaTela.createBuffer(canais, quadros, pedaco.taxaDeAmostragem);
-  for (let c = 0; c < canais; c++) {
-    const canal = buffer.getChannelData(c);
-    for (let i = 0; i < quadros; i++) canal[i] = amostras[i * canais + c] / 32768;
-  }
-
-  const fonte = contextoDeAudioDaTela.createBufferSource();
-  fonte.buffer = buffer;
-  fonte.connect(destinoDeAudioDaTela);
-
-  const agora = contextoDeAudioDaTela.currentTime;
-  if (proximoInicioDeAudio < agora || proximoInicioDeAudio - agora > ATRASO_MAXIMO_DE_AUDIO) {
-    proximoInicioDeAudio = agora;
-  }
-  fonte.start(proximoInicioDeAudio);
-  proximoInicioDeAudio += buffer.duration;
-}
-
 /** Devolve a trilha de áudio já pronta para `malha.publicarTela`, ou `null`
  *  se a captura do lado do Rust não conseguir começar (sem áudio dedicado
  *  configurado, por exemplo) — a transmissão de vídeo segue de qualquer
- *  forma, só sem o som do sistema. */
-async function iniciarAudioDaTela() {
+ *  forma, só sem o som.
+ *
+ *  `rotulo` é o `label` da trilha de vídeo: é por ele que o Rust sabe se a
+ *  pessoa escolheu uma janela, e então transmite só o som daquele programa. */
+async function iniciarAudioDaTela(rotulo) {
   // Emprestado do motor, nunca criado aqui — ver a nota no topo da seção.
   contextoDeAudioDaTela = await motor.contexto();
   destinoDeAudioDaTela = contextoDeAudioDaTela.createMediaStreamDestination();
-  proximoInicioDeAudio = 0;
+  tocadorDeAudioDaTela = await criarTocadorDeSomDaTela(contextoDeAudioDaTela);
+  tocadorDeAudioDaTela.connect(destinoDeAudioDaTela);
 
-  pararDeOuvirAudio = await window.__TAURI__.event.listen("audio-tela", (evento) =>
-    tocarPedacoDeAudioDaTela(evento.payload)
-  );
+  const tocador = tocadorDeAudioDaTela;
+  const canal = new window.__TAURI__.core.Channel();
+  // Transferido, e não copiado: o `ArrayBuffer` que chegou do Rust passa para
+  // o thread de áudio sem mais uma cópia no caminho.
+  let formatoEstranhoAvisado = false;
+  canal.onmessage = (bytes) => {
+    if (bytes instanceof ArrayBuffer) {
+      tocador.port.postMessage(bytes, [bytes]);
+    } else if (ArrayBuffer.isView(bytes)) {
+      // Uma versão do Tauri que entregue `Uint8Array` em vez do buffer: copia
+      // só a fatia dele, que o buffer de baixo pode ser maior.
+      const copia = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      tocador.port.postMessage(copia, [copia]);
+    } else if (!formatoEstranhoAvisado) {
+      // Calado, isto seria uma transmissão sem som e sem motivo aparente.
+      formatoEstranhoAvisado = true;
+      console.warn("[tela] o som chegou num formato inesperado", typeof bytes, bytes);
+      avisar("O som da transmissão chegou num formato inesperado e não está sendo enviado.", "erro");
+    }
+  };
+
   pararDeOuvirErroAudio = await window.__TAURI__.event.listen("erro-audio-tela", (evento) => {
-    console.warn("[tela] som do sistema indisponível", evento.payload);
-    avisar("O vídeo continua, mas o som do sistema não pôde ser capturado.", "neutro");
+    console.warn("[tela] som da transmissão indisponível", evento.payload);
+    avisar("O vídeo continua, mas o som não pôde ser capturado.", "neutro");
   });
 
   try {
-    await invocar("iniciar_audio_da_tela");
+    const fonte = await invocar("iniciar_audio_da_tela", { canal, rotulo: rotulo ?? null });
+    if (fonte?.modo === "programa") {
+      const nome = fonte.programa ? fonte.programa.replace(/\.exe$/i, "") : "da janela";
+      avisar(`Transmitindo só o som de ${nome}.`, "neutro");
+    }
   } catch {
-    pararDeOuvirAudio?.();
-    pararDeOuvirAudio = null;
     pararDeOuvirErroAudio?.();
     pararDeOuvirErroAudio = null;
-    for (const trilha of destinoDeAudioDaTela?.stream.getAudioTracks() ?? []) trilha.stop();
-    destinoDeAudioDaTela?.disconnect();
-    contextoDeAudioDaTela = null;
-    destinoDeAudioDaTela = null;
-    avisar("Não foi possível capturar o som do sistema.", "neutro");
+    soltarTocadorDeAudioDaTela();
+    avisar("Não foi possível capturar o som.", "neutro");
     return null;
   }
 
   return destinoDeAudioDaTela.stream.getAudioTracks()[0];
 }
 
+function soltarTocadorDeAudioDaTela() {
+  tocadorDeAudioDaTela?.port.postMessage("limpar");
+  tocadorDeAudioDaTela?.disconnect();
+  tocadorDeAudioDaTela = null;
+  for (const trilha of destinoDeAudioDaTela?.stream.getAudioTracks() ?? []) trilha.stop();
+  destinoDeAudioDaTela?.disconnect();
+  contextoDeAudioDaTela = null;
+  destinoDeAudioDaTela = null;
+}
+
 function pararAudioDaTela() {
   if (!contextoDeAudioDaTela) return;
   invocar("parar_audio_da_tela").catch(() => {});
-  pararDeOuvirAudio?.();
-  pararDeOuvirAudio = null;
   pararDeOuvirErroAudio?.();
   pararDeOuvirErroAudio = null;
   // O contexto é do motor de voz e continua vivo depois da transmissão: aqui
@@ -5045,17 +5072,14 @@ function pararAudioDaTela() {
   // false`, de propósito, para não parar trilha que não é dela. Sem esta linha
   // cada transmissão deixa um nó e uma trilha vivos até a pessoa sair da voz,
   // e transmitir várias vezes na mesma call vai empilhando.
-  for (const trilha of destinoDeAudioDaTela.stream.getAudioTracks()) trilha.stop();
-  destinoDeAudioDaTela.disconnect();
-  contextoDeAudioDaTela = null;
-  destinoDeAudioDaTela = null;
+  soltarTocadorDeAudioDaTela();
 }
 
 function atualizarBotaoTransmissao() {
   const botao = $("botao-transmitir");
   botao.dataset.ativo = estado.transmitindo ? "sim" : "nao";
   const rotulo = estado.transmitindo ? "Parar a transmissão" : "Transmitir tela";
-  botao.title = rotulo;
+  botao.title = `${rotulo} (botão direito: qualidade)`;
   botao.setAttribute("aria-label", rotulo);
   publicarEstadoDeControle();
 }
@@ -5686,6 +5710,8 @@ function prepararAjustes() {
   chave("ajuste-porta", "porta");
   chave("ajuste-eco", "cancelarEco");
   chave("ajuste-supressao", "suprimirRuido");
+  chave("ajuste-vozes", "vozesAoFundo");
+  $("ajuste-vozes").addEventListener("change", () => mostrarMotorDeSupressao());
   chave("ajuste-agc", "ganhoAutomatico");
 
   $("ajuste-eco").addEventListener("change", mostrarAvisoDeEcoDaSaida);
@@ -6125,10 +6151,18 @@ function mostrarMotorDeSupressao(escolha = motorDeSupressao) {
   // A caixa desmarcada manda mais do que a última escolha: enquanto o
   // microfone não for reaberto, o motor anunciado é o da captura anterior.
   const frase = estado.audio.suprimirRuido ? frases[escolha.motor] : "";
+  // A remoção de vozes é do modelo neural: com outro motor valendo, a opção
+  // não faria nada. Mas, marcada, ela nunca some — senão quem a ligou não
+  // teria como desligá-la depois de o motor cair.
+  $("bloco-vozes").hidden = !(
+    estado.audio.vozesAoFundo ||
+    (estado.audio.suprimirRuido && escolha.motor === "neural")
+  );
   linha.hidden = !frase;
   if (!frase) return;
-  linha.textContent =
-    escolha.detalhe && escolha.motor !== "neural" ? `${frase} ${escolha.detalhe}` : frase;
+  // Com o neural valendo, o detalhe só existe para dizer que o BVC ficou de
+  // fora — e isso quem marcou a opção precisa saber.
+  linha.textContent = escolha.detalhe ? `${frase} ${escolha.detalhe}` : frase;
 }
 
 /**
@@ -6167,6 +6201,7 @@ function refletirAjustes() {
   $("bloco-limiar").hidden = !a.porta;
   $("ajuste-eco").checked = a.cancelarEco;
   $("ajuste-supressao").checked = a.suprimirRuido;
+  $("ajuste-vozes").checked = a.vozesAoFundo;
   $("ajuste-agc").checked = a.ganhoAutomatico;
   mostrarAvisoDeEcoDaSaida();
   mostrarMotorDeSupressao();

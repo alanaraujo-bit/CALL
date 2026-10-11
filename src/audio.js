@@ -56,6 +56,13 @@ export const AUDIO_PADRAO = {
    *  do que carregou nesta máquina, e é informação que ninguém tem antes de
    *  tentar. A interface mostra qual ganhou. */
   suprimirRuido: true,
+  /** Remove também a voz de **outras pessoas** no ambiente — a TV, alguém
+   *  conversando no mesmo cômodo — e não só ruído. É o modelo BVC (Background
+   *  Voice Cancellation) do Krisp. Desligado por padrão: o Krisp
+   *  só o aplica em microfones da lista dele, e num microfone de mesa longe da
+   *  boca ele pode tratar a própria voz como "de fundo". Só vale com o motor
+   *  neural; nos outros não há o que pedir. */
+  vozesAoFundo: false,
   ganhoAutomatico: true,
   /** Nossa porta de ruído, que age sobre o que sobra dos filtros acima. */
   porta: true,
@@ -431,12 +438,13 @@ export class MotorDeAudio {
    */
   async #capturarComSupressao(contexto) {
     const ligada = this.#config.suprimirRuido;
-    const pedida = await this.#supressao.prepararCaptura(ligada);
+    const opcoes = { vozesAoFundo: this.#config.vozesAoFundo };
+    const pedida = await this.#supressao.prepararCaptura(ligada, opcoes);
     let fluxo = await this.#capturar(pedida);
     let trilhaBruta = fluxo.getAudioTracks()[0];
     let trilhaTratada = await this.#supressao.tratar(trilhaBruta, contexto);
 
-    const revista = await this.#supressao.prepararCaptura(ligada);
+    const revista = await this.#supressao.prepararCaptura(ligada, opcoes);
     if (
       revista.noiseSuppression !== pedida.noiseSuppression ||
       revista.voiceIsolation !== pedida.voiceIsolation
@@ -738,6 +746,7 @@ export class MotorDeAudio {
       (depois.entrada !== antes.entrada ||
         depois.cancelarEco !== antes.cancelarEco ||
         depois.suprimirRuido !== antes.suprimirRuido ||
+        depois.vozesAoFundo !== antes.vozesAoFundo ||
         depois.ganhoAutomatico !== antes.ganhoAutomatico);
 
     if (recapturar) await this.abrirMicrofone();

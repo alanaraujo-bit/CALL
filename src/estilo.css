@@ -5340,6 +5340,12 @@ select.campo__entrada {
   gap: 8px;
 }
 
+/* O Texto fica fora da escada de peso (ver `PERFIS_DA_ESCADA` em rtc.js): a
+   linha inteira dele diz isso sem precisar de rótulo. */
+.perfil-live[data-perfil="texto"] {
+  grid-column: 1 / -1;
+}
+
 .perfil-live {
   position: relative;
   display: flex;

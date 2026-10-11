@@ -9,7 +9,9 @@
 #   powershell -File testes\rodar-krisp-licenca.ps1
 
 param(
-  [string]$Servidor = "wss://sinalizacao-production.up.railway.app"
+  [string]$Servidor = "wss://sinalizacao-production.up.railway.app",
+  # Pede também a remoção de vozes ao fundo (BVC) ao montar o filtro.
+  [switch]$Bvc
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,7 +39,7 @@ try {
     "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
     "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
     "--autoplay-policy=no-user-gesture-required", "--user-data-dir=$perfil",
-    "http://127.0.0.1:8123/testes/krisp-licenca.html?servidor=$endereco"
+    "http://127.0.0.1:8123/testes/krisp-licenca.html?servidor=$endereco$(if ($Bvc) { '&bvc=sim' })"
   )
 
   $limite = (Get-Date).AddSeconds(70)

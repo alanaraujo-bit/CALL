@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head><meta charset="UTF-8" /><title>Medição dos codecs da tela</title></head>
+  <body>
+    <canvas id="tela" width="1920" height="1080"></canvas>
+    <!-- Mede, na máquina e no motor Chromium de verdade, o que cada codec de
+         vídeo custa para transmitir uma tela 1080p60: se o encoder é de
+         hardware, quanto tempo cada quadro leva para codificar e quantos
+         quadros saem por segundo. É esta medida — e não a tabela de
+         compatibilidade de um site — que decide o codec dos perfis. -->
+    <script type="module">
+      const entregar = (dados) =>
+        fetch("http://127.0.0.1:8123/resultado", { method: "POST", body: JSON.stringify(dados, null, 2) }).catch(() => {});
+      const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      // Um conteúdo que parece tela: texto miúdo (onde codec ruim borra) e um
+      // bloco em movimento (onde codec lento perde quadro).
+      const canvas = document.getElementById("tela");
+      const g = canvas.getContext("2d");
+      let quadro = 0;
+      function desenhar() {
+        g.fillStyle = "#1e1f22";
+        g.fillRect(0, 0, 1920, 1080);
+        g.fillStyle = "#dbdee1";
+        g.font = "14px monospace";
+        for (let linha = 0; linha < 60; linha++) {
+          g.fillText(`${linha.toString().padStart(3, "0")}  const valor = calcular(${quadro + linha}, "transmissão de tela");`, 20, 20 + linha * 17);
+        }
+        g.fillStyle = "#5865f2";
+        g.fillRect((quadro * 13) % 1700, 300 + Math.sin(quadro / 20) * 200, 220, 220);
+        quadro++;
+      }
+      // Timer, e não requestAnimationFrame: no headless a página conta como
+      // oculta e o rAF não dispara.
+      setInterval(desenhar, 1000 / 60);
+
+      // O Chromium só expõe `encoderImplementation` e `powerEfficientEncoder`
+      // a uma página com captura de mídia ativa — é a proteção dele contra
+      // fingerprinting do hardware. A câmera é a falsa do próprio Chromium.
+      const liberacao = await navigator.mediaDevices.getUserMedia({ video: true });
+
+      const suportados = RTCRtpSender.getCapabilities("video").codecs;
+      const CANDIDATOS = ["video/H264", "video/VP9", "video/AV1", "video/VP8", "video/H265"];
+
+      async function medir(mime) {
+        const preferidos = suportados.filter((c) => c.mimeType === mime);
+        if (!preferidos.length) return { codec: mime, suportado: false };
+
+        const fluxo = canvas.captureStream(60);
+        const [trilha] = fluxo.getVideoTracks();
+        trilha.contentHint = "detail";
+        const a = new RTCPeerConnection();
+        const b = new RTCPeerConnection();
+        a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+        b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+        const transceptor = a.addTransceiver(trilha, { direction: "sendonly" });
+        transceptor.setCodecPreferences(preferidos);
+        const parametros = transceptor.sender.getParameters();
+        parametros.encodings = [{ maxBitrate: 6_000_000, maxFramerate: 60 }];
+        parametros.degradationPreference = "maintain-framerate";
+        await transceptor.sender.setParameters(parametros).catch(() => {});
+
+        await a.setLocalDescription();
+        await b.setRemoteDescription(a.localDescription);
+        await b.setLocalDescription();
+        await a.setRemoteDescription(b.localDescription);
+
+        await esperar(6000);
+        const inicio = await saida(a);
+        await esperar(4000);
+        const fim = await saida(a);
+        a.close();
+        b.close();
+        trilha.stop();
+        if (!inicio || !fim) return { codec: mime, suportado: true, erro: "sem estatística de saída" };
+
+        const quadros = fim.framesEncoded - inicio.framesEncoded;
+        const segundos = (fim.timestamp - inicio.timestamp) / 1000;
+        return {
+          codec: mime,
+          suportado: true,
+          implementacao: fim.encoderImplementation,
+          hardware: fim.powerEfficientEncoder,
+          quadrosPorSegundo: +(quadros / segundos).toFixed(1),
+          msPorQuadro: +(((fim.totalEncodeTime - inicio.totalEncodeTime) / quadros) * 1000).toFixed(2),
+          mbps: +((((fim.bytesSent - inicio.bytesSent) * 8) / segundos) / 1e6).toFixed(2),
+          qpMedio: fim.qpSum != null ? +((fim.qpSum - inicio.qpSum) / quadros).toFixed(1) : null,
+          resolucao: `${fim.frameWidth}x${fim.frameHeight}`,
+          limitadoPor: fim.qualityLimitationReason,
+        };
+      }
+
+      async function saida(pc) {
+        const relatorio = await pc.getStats();
+        for (const item of relatorio.values()) if (item.type === "outbound-rtp" && item.kind === "video") return item;
+        return null;
+      }
+
+      const medidas = [];
+      for (const mime of CANDIDATOS) {
+        try {
+          medidas.push(await medir(mime));
+        } catch (erro) {
+          medidas.push({ codec: mime, erro: String(erro) });
+        }
+      }
+      liberacao.getTracks().forEach((t) => t.stop());
+      await entregar({ navegador: navigator.userAgent, medidas });
+    </script>
+  </body>
+</html>

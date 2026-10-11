@@ -26,9 +26,21 @@ const CONFIGURACAO = {
  * que o CALL quer atender. Se H.264 não existir no par, a lista completa de
  * codecs continua atrás dele e a negociação escolhe o melhor fallback comum.
  *
- * `dica` vira `contentHint` na trilha. Todos os perfis usam `motion`: quando a
- * banda aperta, a imagem pode perder resolução, mas o encoder não deve trocar
- * os 30/60 quadros escolhidos por uma apresentação de slides mais nítida.
+ * Medido com `testes/medir-codecs.ps1` (1080p60, WebView2 155, RTX): H.264 sai
+ * pelo NVENC (`MediaFoundationVideoEncodeAccelerator`, `powerEfficientEncoder`),
+ * enquanto VP9 (libvpx) e AV1 (libaom) saem por software; HEVC não existe no
+ * WebRTC do Chromium. O AV1 é o mais econômico em banda para texto, mas o
+ * LiveKit força `contentHint = "motion"` e `L1T3` em toda tela com codec SVC
+ * — o que anula justamente a vantagem dele em texto — e cobra CPU de quem
+ * está jogando. Não compensa.
+ *
+ * `dica` vira `contentHint` na trilha e `degradacao` decide o que se sacrifica
+ * quando a banda aperta. Os quatro perfis da escada usam `motion` com
+ * `maintain-framerate`: num jogo, perder resolução é melhor que perder
+ * quadros. O perfil **Texto** é o contrário, e é por isso que ele existe: em
+ * código, documento ou planilha, um quadro a menos ninguém percebe, mas letra
+ * borrada ninguém lê. Ele fica fora da escada (`escada: false`) porque não é
+ * "mais leve" nem "mais pesado" que os outros — é outro tipo de conteúdo.
  */
 export const PERFIS_TELA = [
   {
@@ -64,7 +76,19 @@ export const PERFIS_TELA = [
     dica: "motion", degradacao: "maintain-framerate",
     codec: "H264",
   },
+  {
+    id: "texto",
+    nome: "Texto",
+    detalhe: "1440p · 15 fps · 4 Mbps",
+    resumo: "Código e documentos nítidos",
+    largura: 2560, altura: 1440, quadros: 15, bits: 4_000_000,
+    dica: "detail", codec: "H264", degradacao: "maintain-resolution",
+    escada: false,
+  },
 ];
+
+/** Os perfis que formam a escada de peso, na ordem do mais leve ao mais pesado. */
+export const PERFIS_DA_ESCADA = PERFIS_TELA.filter((perfil) => perfil.escada !== false);
 
 export const PERFIL_TELA_PADRAO = "equilibrado";
 
