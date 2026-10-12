@@ -6144,7 +6144,7 @@ function mostrarMotorDeSupressao(escolha = motorDeSupressao) {
   motorDeSupressao = escolha;
   const linha = $("motor-supressao");
   const frases = {
-    neural: "Redução neural ativa — o mesmo motor do Discord. Remove teclado, prato e cadeira até por cima da fala.",
+    neural: "Redução neural local ativa (GTCRN). Reduz ruídos como teclado e ventilador, sem depender da sala.",
     sistema: "Usando o isolamento de voz do Windows.",
     nativa: "Usando a redução do sistema: ela tira chiado e ventilador, mas não teclado nem batida durante a fala.",
   };
@@ -6155,8 +6155,7 @@ function mostrarMotorDeSupressao(escolha = motorDeSupressao) {
   // não faria nada. Mas, marcada, ela nunca some — senão quem a ligou não
   // teria como desligá-la depois de o motor cair.
   $("bloco-vozes").hidden = !(
-    estado.audio.vozesAoFundo ||
-    (estado.audio.suprimirRuido && escolha.motor === "neural")
+    estado.audio.vozesAoFundo
   );
   linha.hidden = !frase;
   if (!frase) return;

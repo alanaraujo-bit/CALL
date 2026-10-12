@@ -30,6 +30,7 @@
          motor que sobrou depois da entrada. -->
     <script type="module" nonce="krisp-licenca">
       import { AUDIO_PADRAO, MotorDeAudio } from "../src/audio.js";
+      import { Supressao } from "../src/supressao-krisp.js";
       import { SalaLiveKit } from "../src/livekit.js";
       import { Sinal } from "../src/sinal.js";
 
@@ -65,7 +66,7 @@
       // filtro inteiro — que é o que importa antes de oferecer a opção.
       const COM_BVC = new URLSearchParams(location.search).get("bvc") === "sim";
 
-      const motor = new MotorDeAudio();
+      const motor = new MotorDeAudio({ supressao: new Supressao() });
       const sinal = new Sinal();
       // O caminho de produção: é `aoEntrar` que entrega a sala ao filtro.
       const sala = new SalaLiveKit({

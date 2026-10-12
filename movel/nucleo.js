@@ -254,14 +254,14 @@ export function salvarPreferencias() {
 /**
  * O motor de áudio, sem o filtro neural.
  *
- * `carregarKrisp` que sempre falha é o jeito declarado de dizer "não neste
+ * `carregarNeural` que sempre falha é o jeito declarado de dizer "não neste
  * aparelho": `Supressao` já sabe cair para o supressor do sistema, e o
  * caminho de degradação dele é o mesmo que roda quando a licença é negada no
  * computador. Não há código novo, só uma porta fechada.
  */
 export const motor = new MotorDeAudio({
   supressao: new Supressao({
-    carregarKrisp: () => Promise.reject(new Error("filtro neural não roda no celular")),
+    carregarNeural: () => Promise.reject(new Error("filtro neural não roda no celular")),
   }),
 });
 
