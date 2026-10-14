@@ -156,11 +156,24 @@
         // A troca de canal de voz: `soltarMicrofone()` + `abrirMicrofone()`
         // com o filtro neural vivo entre os dois. O nó tem de sobreviver (é o
         // mesmo contexto) e o motor não pode ter caído para o nativo.
+        // Contar o nó não basta: uma fonte que não volta a ligar nele passaria.
+        // Por isso mede áudio de novo, agora na trilha reaberta.
+        fonte.disconnect();
         motor.soltarMicrofone();
         const fluxoReaberto = await motor.abrirMicrofone();
+        const fonteReaberta = contexto.createMediaStreamSource(fluxoReaberto);
+        fonteReaberta.connect(analisador);
+        let picoReaberto = 0;
+        const fimReaberto = performance.now() + (microfoneReal ? 5000 : 1500);
+        while (performance.now() < fimReaberto) {
+          analisador.getByteTimeDomainData(dados);
+          for (const amostra of dados) picoReaberto = Math.max(picoReaberto, Math.abs(amostra - 128));
+          await esperar(30);
+        }
+        fonteReaberta.disconnect();
         conferir(
-          fluxoReaberto.getAudioTracks().length === 1 && supressao.motor === "neural" && supressao.no,
-          `reabrir o microfone mantém o filtro neural (motor: ${supressao.motor})`
+          supressao.motor === "neural" && supressao.no && picoReaberto > 2,
+          `reabrir o microfone mantém o filtro neural e o áudio (motor: ${supressao.motor}, pico ${picoReaberto})`
         );
 
         fonte.disconnect();

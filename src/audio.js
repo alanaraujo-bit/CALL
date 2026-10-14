@@ -824,9 +824,8 @@ export class MotorDeAudio {
 
   async #encerrarAgora() {
     this.soltarMicrofone();
-    // Antes de fechar o contexto: o filtro neural tem um worklet e um módulo
-    // WASM pendurados nele, e sem o `destroy` entrar e sair da voz algumas
-    // vezes acumula instâncias que ninguém mais alcança.
+    // Antes de fechar o contexto: tira o nó do filtro neural do grafo. O
+    // worklet e o WASM dele morrem com o contexto, logo abaixo.
     await this.#supressao.soltar();
     for (const id of [...this.#saidas.keys()]) this.desligarSaida(id);
     this.medir(null);
@@ -862,8 +861,8 @@ export class MotorDeAudio {
     this.#worklet = null;
     this.#retornoLocal = null;
     this.#monitorandoEntrada = false;
-    // O nó do GTCRN já foi desconectado e destruído por `#supressao.soltar()`
-    // no começo deste método; aqui só se larga a referência.
+    // O nó do GTCRN já foi desconectado por `#supressao.soltar()` no começo
+    // deste método; aqui só se larga a referência.
     this.#noSupressao = null;
     this.#passaAlta = null;
     this.#misturaEnvio = null;

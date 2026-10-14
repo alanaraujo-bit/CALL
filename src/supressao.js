@@ -65,9 +65,14 @@ const carregarGtcrnPadrao = async () => {
 const WORKLET_GTCRN = "@sapphi-red/web-noise-suppressor/gtcrn";
 
 /**
- * Libera o estado do modelo dentro do worklet. O nó é um `AudioWorkletNode`
- * cru, não a classe do pacote — então não há `destroy()` nele; o que a classe
- * faria é só mandar `"destroy"` pela porta, e o processador solta o WASM.
+ * O que a classe do pacote faz no `destroy()`: mandar `"destroy"` pela porta.
+ * O nó aqui é um `AudioWorkletNode` cru, sem esse método.
+ *
+ * Não conte com isso para liberar memória: o processador escuta com
+ * `addEventListener` e nunca chama `port.start()`, então a mensagem
+ * provavelmente não é entregue. Quem de fato solta o worklet e o WASM é o
+ * `close()` do `AudioContext` em `encerrar()`. Fica o envio para o dia em que o
+ * pacote corrigir isso.
  */
 function destruirNo(no) {
   try {
@@ -269,6 +274,14 @@ export class Supressao {
     if (this.#no) return trilha;
 
     try {
+      // O modelo só aceita 16 kHz ou 48 kHz, e o processador descobre isso
+      // dentro de uma promessa no worklet — a falha nunca volta para cá. O nó
+      // montaria, o motor diria `neural`, a porta sairia de cena e a pessoa
+      // ficaria muda. O motor de áudio fixa 48 kHz; isto é o que garante que
+      // ninguém desfaça isso calado.
+      if (contexto.sampleRate !== 48000 && contexto.sampleRate !== 16000) {
+        throw new Error(`GTCRN não roda a ${contexto.sampleRate} Hz`);
+      }
       await contexto.audioWorklet.addModule(this.#recursos.urlWorklet);
       // `wasmBinary` embutido + `maxChannels: 1` (voz é mono). O construtor do
       // pacote é só um `AudioWorkletNode` com estes `processorOptions`.
@@ -307,8 +320,8 @@ export class Supressao {
     /* GTCRN não depende de sala nem de licença. */
   }
 
-  /** Solta o filtro. O `destroy` devolve o worklet e o WASM; sem ele, entrar e
-   *  sair da voz algumas vezes deixa uma pilha de instâncias na memória. */
+  /** Solta o filtro: tira o nó do grafo. A memória do worklet só volta quando o
+   *  `AudioContext` fecha — ver `destruirNo`. */
   async soltar() {
     const no = this.#no;
     this.#no = null;
