@@ -65,6 +65,19 @@ const carregarGtcrnPadrao = async () => {
 const WORKLET_GTCRN = "@sapphi-red/web-noise-suppressor/gtcrn";
 
 /**
+ * Libera o estado do modelo dentro do worklet. O nó é um `AudioWorkletNode`
+ * cru, não a classe do pacote — então não há `destroy()` nele; o que a classe
+ * faria é só mandar `"destroy"` pela porta, e o processador solta o WASM.
+ */
+function destruirNo(no) {
+  try {
+    no?.port.postMessage("destroy");
+  } catch {
+    /* contexto já foi embora */
+  }
+}
+
+/**
  * Estados possíveis. `indisponivel` não é um motor: é a memória de que o GTCRN
  * já foi tentado e recusado nesta sessão, para não tentar de novo a cada
  * reabertura do microfone.
@@ -249,11 +262,7 @@ export class Supressao {
     // contexto e abre outro, então um nó de um contexto morto não serve: se o
     // contexto mudou, descarta o nó velho e monta no novo.
     if (this.#no && this.#contextoDoNo !== contexto) {
-      try {
-        this.#no.destroy?.();
-      } catch {
-        /* contexto já foi embora */
-      }
+      destruirNo(this.#no);
       this.#no = null;
       this.#contextoDoNo = null;
     }
@@ -309,10 +318,6 @@ export class Supressao {
     } catch {
       /* já desconectado */
     }
-    try {
-      no?.destroy?.();
-    } catch {
-      /* contexto já fechou */
-    }
+    destruirNo(no);
   }
 }

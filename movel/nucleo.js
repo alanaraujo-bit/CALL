@@ -254,14 +254,15 @@ export function salvarPreferencias() {
 /**
  * O motor de áudio, sem o filtro neural.
  *
- * `carregarKrisp` que sempre falha é o jeito declarado de dizer "não neste
+ * `carregarGtcrn` que sempre falha é o jeito declarado de dizer "não neste
  * aparelho": `Supressao` já sabe cair para o supressor do sistema, e o
- * caminho de degradação dele é o mesmo que roda quando a licença é negada no
- * computador. Não há código novo, só uma porta fechada.
+ * caminho de degradação dele é o mesmo que roda quando o modelo não carrega
+ * no computador. Não há código novo, só uma porta fechada. (O `gtcrn.wasm`
+ * nem é publicado no PWA — ver `MODULOS` em `scripts/montar-pwa.mjs`.)
  */
 export const motor = new MotorDeAudio({
   supressao: new Supressao({
-    carregarKrisp: () => Promise.reject(new Error("filtro neural não roda no celular")),
+    carregarGtcrn: () => Promise.reject(new Error("filtro neural não roda no celular")),
   }),
 });
 

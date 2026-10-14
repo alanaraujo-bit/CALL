@@ -7,6 +7,7 @@
          worklet do filtro neural podem carregar. -->
     <script type="module" nonce="motor-audio">
       import { AUDIO_PADRAO, MotorDeAudio } from "../src/audio.js";
+      import { Supressao } from "../src/supressao.js";
 
       const relatorio = [];
       let falhas = 0;
@@ -142,14 +143,6 @@
           supressao.motor !== "neural" || !supressao.portaFazSentido,
           "a porta de ruído fica em repouso quando o filtro neural está valendo"
         );
-        // E o contrário, que é onde já houve engano: só o Krisp aposenta a
-        // porta. Com o isolamento do sistema — que pode ser promessa vazia numa
-        // máquina sem o recurso — ou com a redução desligada, tirar a porta
-        // deixaria a pessoa sem defesa nenhuma e sem sinal disso.
-        conferir(
-          supressao.motor === "neural" || supressao.portaFazSentido,
-          `fora do filtro neural a porta continua de pé (motor: ${supressao.motor})`
-        );
         // Só se pode exigir onde existe fala garantida. No modo de microfone
         // real a sala pode estar em silêncio, e "ninguém falou" não é defeito
         // do detector.
@@ -160,16 +153,45 @@
           );
         }
 
-        // A troca de canal de voz — `soltarMicrofone()` + `abrirMicrofone()`
-        // com o filtro neural vivo entre os dois — tem ensaio próprio em
-        // `krisp-reabrir.html`. Não cabe aqui: este ensaio troca o
-        // `getUserMedia` por trilhas do Web Audio, que o filtro neural recusa,
-        // e no modo de microfone real dependeria de um aparelho sem fio não
-        // desligar no meio.
+        // A troca de canal de voz: `soltarMicrofone()` + `abrirMicrofone()`
+        // com o filtro neural vivo entre os dois. O nó tem de sobreviver (é o
+        // mesmo contexto) e o motor não pode ter caído para o nativo.
+        motor.soltarMicrofone();
+        const fluxoReaberto = await motor.abrirMicrofone();
+        conferir(
+          fluxoReaberto.getAudioTracks().length === 1 && supressao.motor === "neural" && supressao.no,
+          `reabrir o microfone mantém o filtro neural (motor: ${supressao.motor})`
+        );
 
         fonte.disconnect();
         analisador.disconnect();
         silencioso.disconnect();
+
+        // E o contrário, que é onde já houve engano: só o filtro neural
+        // aposenta a porta. É também o caminho do celular, que não publica o
+        // modelo — por isso o motor é montado como `movel/nucleo.js` o monta.
+        // Com o isolamento do sistema — que pode ser promessa vazia numa
+        // máquina sem o recurso — ou com o nativo, tirar a porta deixaria a
+        // pessoa sem defesa nenhuma e sem sinal disso.
+        const motorSemNeural = new MotorDeAudio({
+          supressao: new Supressao({
+            carregarGtcrn: () => Promise.reject(new Error("recusado pelo teste")),
+          }),
+        });
+        try {
+          await motorSemNeural.aplicar(AUDIO_PADRAO);
+          const fluxoSemNeural = await motorSemNeural.abrirMicrofone();
+          const s = motorSemNeural.supressao;
+          conferir(
+            fluxoSemNeural.getAudioTracks().length === 1 &&
+              ["sistema", "nativa"].includes(s.motor) &&
+              !s.no &&
+              s.portaFazSentido,
+            `sem o modelo, cai para o supressor do sistema e a porta continua de pé (motor: ${s.motor})`
+          );
+        } finally {
+          await motorSemNeural.encerrar().catch(() => {});
+        }
       } catch (erro) {
         conferir(false, `execução sem exceções: ${erro?.message ?? erro}`);
       } finally {

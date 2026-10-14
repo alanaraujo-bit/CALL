@@ -13,8 +13,9 @@
 /src/livekit-client.esm.mjs
 /src/LIVEKIT-LICENSE.txt
 
-# Filtro neural de ruído, copiado do pacote npm no mesmo passo. São ~6 MB de
-# modelo embutido: versionar isso incharia o repositório a cada atualização.
+# Filtro neural de ruído (GTCRN), copiado do pacote npm no mesmo passo. É
+# artefato de terceiro: versionar duplicaria o que o package-lock já fixa, e
+# a troca de `import.meta.url` só existe se o script rodar.
 /src/gtcrn-worklet.js
 /src/gtcrn.wasm
 /src/GTCRN-LICENSE.txt

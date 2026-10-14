@@ -176,13 +176,22 @@ pela internet, onde a rede já custa 30-80 ms. Não há motivo para manter.
 
 | Opção | Qualidade | CPU | Licença / custo | Esforço |
 |---|---|---|---|---|
-| **`@livekit/krisp-noise-filter`** | Excelente — é literalmente o que o Discord usa | Baixa (WASM otimizado) | **Exige LiveKit Cloud** (vocês já têm); é recurso de plano pago — confirmar no plano de vocês | **Baixo** — plugin oficial, `setProcessor()` |
+| **`@livekit/krisp-noise-filter`** | Excelente — é literalmente o que o Discord usa | Baixa (WASM otimizado) | **Só licencia dentro de uma sala LiveKit Cloud.** Fora dela (malha P2P, LiveKit próprio) não roda | **Baixo** — plugin oficial, `setProcessor()` |
+| **GTCRN (`@sapphi-red/web-noise-suppressor`)** | Boa — modelo de 2024, bem acima do RNNoise | Baixa (~197 KB de WASM, AudioWorklet) | MIT, grátis, **offline, qualquer transporte** | **Baixo** — um nó no grafo |
 | **RNNoise (WASM)** | Média. Modelo de 2018. Melhor que nada, bem abaixo do Krisp em ruído não-estacionário | Muito baixa | BSD, grátis | Médio — worklet próprio |
 | **DeepFilterNet 3 (WASM/ONNX)** | Muito boa, perto do Krisp | Média-alta; quer SIMD | MIT/Apache, grátis | Alto — integração e tuning por conta de vocês |
 | **`voiceIsolation: true`** (constraint) | Depende da máquina: usa Windows Studio Effects (NPU) ou o isolamento de voz do macOS | Zero (é o SO/NPU) | Grátis | **Trivial** — uma linha |
 
-**Recomendação:** Krisp, porque vocês já estão em LiveKit Cloud e é o mesmo
-motor do concorrente que está ganhando de vocês.
+**Recomendação (revista):** **GTCRN.** A primeira recomendação foi o Krisp, e
+ele chegou a ir para produção — mas só funciona enquanto a call passa pelo
+LiveKit Cloud, que é justamente o degrau que o CALL não pode pagar. Na malha
+P2P e no LiveKit auto-hospedado o motor ficava "neural" com o Krisp recusado e
+o microfone saía praticamente cru. O GTCRN roda inteiramente local e vale em
+qualquer transporte. Ver "Krisp → GTCRN" mais abaixo.
+
+*O texto a seguir, e as seções "Feito na rodada seguinte", descrevem a fase
+Krisp. Ficam como histórico: os riscos de integração continuam valendo para
+qualquer supressor neural.*
 
 **As opções são mutuamente exclusivas.** O `voiceIsolation` do Windows Studio
 Effects *também* é um supressor neural — ligá-lo junto com o Krisp é
@@ -419,10 +428,58 @@ problema.
 
 ### O que isto **não** resolve
 
-A correção de ruído é do lado de **quem envia**. O Krisp na sua máquina limpa o
+A correção de ruído é do lado de **quem envia**. O filtro na sua máquina limpa o
 que os outros ouvem de você; o teclado do João continua chegando inteiro até o
 João atualizar. Um teste com metade do grupo na versão antiga vai parecer que
 nada mudou.
+
+## Krisp → GTCRN — a redução neural sai do LiveKit Cloud
+
+O ensaio de licença acima media a coisa certa no lugar errado: ele provava que
+o Krisp funcionava **dentro de uma sala do LiveKit Cloud**. Quando o CALL
+passou a cair para a malha P2P (e a planejar o LiveKit auto-hospedado), o
+Krisp deixou de licenciar e o microfone ficou sem tratamento — o supressor
+nativo e a porta tinham sido desligados para dar lugar a ele. A qualidade de
+áudio boa existia, na prática, só no degrau pago.
+
+A troca:
+
+| Motor | O que é | Quando entra |
+|---|---|---|
+| `neural` | **GTCRN** (`@sapphi-red/web-noise-suppressor`, MIT), offline | sempre que o modelo carregar e o nó montar |
+| `sistema` | constraint `voiceIsolation` (Windows Studio Effects) | se o GTCRN não carregar |
+| `nativa` | supressor do Chromium + porta de ruído | chão, quando nada acima existe |
+
+O que mudou em relação à fase Krisp:
+
+1. **O GTCRN é um nó do grafo, não um processador de trilha.** `tratar()`
+   devolve a trilha crua e expõe o `AudioWorkletNode` em `supressao.no`; o
+   motor costura `microfone → GTCRN → passa-alta`, no **mesmo
+   `AudioContext`** (o mesmo cuidado de AEC do item 4b).
+2. **Não há licença nem falha tardia.** Ou o nó monta, ou a falha aparece
+   ainda dentro da captura e a "revista" de `#capturarComSupressao` recaptura
+   com o supressor nativo. `aoPublicar()` virou no-op e o evento
+   `disable-lk-krisp-noise-filter` deixou de existir.
+3. **A CSP não precisa de nada novo.** O worklet e o modelo são servidos de
+   `src/` (`'self'`). A entrada `https://integrations.livekit.io` saiu do
+   `connect-src`. (`blob:` em `script-src`/`worker-src` entrou para o Krisp e
+   ficou: tirar exige confirmar que o `livekit-client` não monta worker por
+   `blob:` — e falha de CSP aqui é silenciosa.)
+4. **`import.meta.url` no worklet.** O glue do Emscripten traz
+   `import.meta.url`, que é erro de sintaxe no escopo de um AudioWorklet.
+   `scripts/preparar-audio.mjs` troca o token ao vendorizar e falha alto se o
+   pacote mudar e o token sumir.
+5. **Celular continua sem filtro neural.** O PWA não publica o `gtcrn.wasm`, e
+   `movel/nucleo.js` injeta um `carregarGtcrn` que recusa — cai para
+   `sistema`/`nativa` pelo mesmo caminho do computador.
+
+**Medido:** `testes/rodar-motor-audio.ps1`, sob a CSP real, nos modos normal e
+`-Reabrir`. Diferente do Krisp, o GTCRN aceita o microfone sintético dos
+testes, então o ensaio agora espera `neural` também ali. Os ensaios exclusivos
+do Krisp (`krisp-licenca`, `krisp-reabrir`) foram removidos.
+
+**Ainda não medido:** o resultado com microfone real numa call de verdade,
+com o grupo inteiro na versão nova.
 
 ---
 
@@ -461,10 +518,12 @@ Os itens 2 e 3 são correções pequenas e independentes: dá para fazer agora
 sem esperar decisão sobre o Krisp.
 
 **Estado desta lista:** 2, 3, 4 e 5 estão feitos (ver as duas seções
-"Feito"). Sobram, em ordem:
+"Feito"); o item 4 foi refeito com o GTCRN no lugar do Krisp (ver "Krisp →
+GTCRN"). Sobram, em ordem:
 
-1. **O grupo inteiro na versão nova.** É pré-condição para julgar o resultado,
-   não uma tarefa técnica — sem isso o teste mede a máquina antiga do colega.
+1. **O grupo inteiro na versão nova, e uma call real com microfone real.** É
+   pré-condição para julgar o resultado, não uma tarefa técnica — sem isso o
+   teste mede a máquina antiga do colega.
 2. **O teste do "Transmitir som" desmarcado**, se o eco tiver sobrevivido ao
    fim do segundo `AudioContext`. Só ele separa a hipótese do loopback.
 3. **Medição de áudio no stats** (`concealedSamples`, `packetsLost`,
