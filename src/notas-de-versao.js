@@ -18,6 +18,28 @@
  */
 export const NOTAS_DE_VERSAO = [
   {
+    versao: "0.21.0",
+    data: "2026-10-14",
+    titulo: "O ruído fica do seu lado",
+    resumo:
+      "A redução de ruído inteligente voltou a valer em toda call, e agora roda inteira no seu computador.",
+    destaques: [
+      {
+        titulo: "Novo",
+        itens: [
+          "Teclado, ventilador, respiração e chiado de fundo são limpos do seu microfone antes de sair, inclusive enquanto você fala — em qualquer call, não só em algumas.",
+          "O filtro roda no próprio computador, sem internet extra e sem depender de servidor nenhum.",
+        ],
+      },
+      {
+        titulo: "Para saber",
+        itens: [
+          "A limpeza acontece em quem fala. Para ouvir seus amigos sem ruído, eles também precisam estar nesta versão.",
+        ],
+      },
+    ],
+  },
+  {
     versao: "0.20.0",
     data: "2026-10-09",
     titulo: "A call conecta até no 4G",

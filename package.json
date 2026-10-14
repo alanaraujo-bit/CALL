@@ -1,6 +1,6 @@
 {
   "name": "call",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "private": true,
   "type": "module",
   "description": "Aplicativo de comunicacao: grupos, chat de voz e transmissao de tela",
@@ -17,10 +17,10 @@
     "build:site": "npm run preparar:audio && npm run montar:pwa"
   },
   "dependencies": {
+    "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "livekit-client": "2.21.0"
   },
   "devDependencies": {
-    "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "@tauri-apps/cli": "^2.9.1"
   }
 }
