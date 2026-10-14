@@ -240,6 +240,7 @@ export class MotorDeAudio {
   #worklet = null; // AudioWorkletNode da porta de ruído
   #fluxoBruto = null; // o que veio do getUserMedia
   #fonteEntrada = null;
+  #noSupressao = null; // nó do GTCRN no grafo, quando o motor é o neural
   #passaAlta = null;
   #destino = null; // MediaStreamAudioDestinationNode
   #misturaEnvio = null; // voz + soundboard antes do limitador
@@ -396,8 +397,23 @@ export class MotorDeAudio {
     const fluxoParaOGrafo =
       trilhaTratada === trilhaBruta ? fluxo : new MediaStream([trilhaTratada]);
 
+    // Limpa a aresta da captura anterior antes de religar. O nó do GTCRN é
+    // reaproveitado entre reaberturas (ele pertence ao contexto, não ao
+    // microfone), então sua ligação com a passa-alta ainda está pendurada —
+    // e `connect` no mesmo par soma o sinal em dobro, não é idempotente.
+    this.#noSupressao?.disconnect();
     this.#fonteEntrada = contexto.createMediaStreamSource(fluxoParaOGrafo);
-    this.#fonteEntrada.connect(this.#passaAlta);
+    this.#noSupressao = this.#supressao.no;
+    if (this.#noSupressao) {
+      // microfone → GTCRN → passa-alta. A supressão neural vem antes de tudo o
+      // que o grafo faz: é a única etapa que separa voz de não-voz, e as
+      // outras (passa-alta, porta, ganho) só ficam mais fáceis com um sinal já
+      // limpo.
+      this.#fonteEntrada.connect(this.#noSupressao);
+      this.#noSupressao.connect(this.#passaAlta);
+    } else {
+      this.#fonteEntrada.connect(this.#passaAlta);
+    }
     // A porta só vale quando o motor é o nativo; ver `portaFazSentido`.
     this.#ajustarPorta();
 
@@ -846,6 +862,9 @@ export class MotorDeAudio {
     this.#worklet = null;
     this.#retornoLocal = null;
     this.#monitorandoEntrada = false;
+    // O nó do GTCRN já foi desconectado e destruído por `#supressao.soltar()`
+    // no começo deste método; aqui só se larga a referência.
+    this.#noSupressao = null;
     this.#passaAlta = null;
     this.#misturaEnvio = null;
     this.#limitadorEnvio = null;

@@ -15,7 +15,9 @@
 
 # Filtro neural de ruído, copiado do pacote npm no mesmo passo. São ~6 MB de
 # modelo embutido: versionar isso incharia o repositório a cada atualização.
-/src/krisp-noise-filter.esm.mjs
+/src/gtcrn-worklet.js
+/src/gtcrn.wasm
+/src/GTCRN-LICENSE.txt
 
 # Saída dos testes: capturas de tela da máquina real e relatórios
 /testes/capturas/

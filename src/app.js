@@ -6118,7 +6118,7 @@ function mostrarMotorDeSupressao(escolha = motorDeSupressao) {
   motorDeSupressao = escolha;
   const linha = $("motor-supressao");
   const frases = {
-    neural: "Redução neural ativa — o mesmo motor do Discord. Remove teclado, prato e cadeira até por cima da fala.",
+    neural: "Redução neural ativa. Remove teclado, prato e cadeira até por cima da fala.",
     sistema: "Usando o isolamento de voz do Windows.",
     nativa: "Usando a redução do sistema: ela tira chiado e ventilador, mas não teclado nem batida durante a fala.",
   };

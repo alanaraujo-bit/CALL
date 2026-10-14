@@ -122,28 +122,20 @@
         // "o filtro neural não limpa" de "o filtro neural nem entrou no
         // caminho", que é onde a investigação sempre começa.
         //
-        // A exigência muda com a fonte, e não por conveniência: o filtro
-        // neural aplica constraints de **dispositivo** na trilha que recebe, e
-        // um `MediaStreamAudioDestinationNode` não tem o que satisfazer — ele
-        // recusa com "Cannot satisfy constraints". Com microfone sintético,
-        // então, o que se pode exigir é o contrário: que a recusa caia num
-        // motor que funciona em vez de deixar a captura sem supressão nenhuma,
-        // que é o modo de falhar que esta cadeia tem de nunca ter.
+        // O GTCRN é um nó de grafo (`AudioWorkletNode`), não um processador de
+        // trilha. Diferente do Krisp, ele não aplica constraints de dispositivo
+        // na trilha recebida, então trata qualquer fonte — inclusive a trilha
+        // sintética do `MediaStreamAudioDestinationNode` deste ensaio. Por isso
+        // o motor esperado é `neural` nos dois modos: se o GTCRN carregou e
+        // montou no grafo, ele vale para qualquer microfone.
         const supressao = motor.supressao;
         const ondeParou = `motor: ${supressao.motor}${
           supressao.causa ? ` — ${supressao.causa}` : supressao.detalhe ? ` — ${supressao.detalhe}` : ""
         }`;
-        if (microfoneReal) {
-          conferir(
-            supressao.motor === "neural",
-            `o filtro neural entra no caminho do microfone (${ondeParou})`
-          );
-        } else {
-          conferir(
-            supressao.motor === "sistema" || supressao.motor === "nativa",
-            `a recusa do filtro neural cai num supressor que funciona (${ondeParou})`
-          );
-        }
+        conferir(
+          supressao.motor === "neural",
+          `o filtro neural entra no caminho do microfone (${ondeParou})`
+        );
         // A porta em cima da rede neural come sílaba: o piso que ela mede
         // desaba para perto do silêncio digital. Ver `portaFazSentido`.
         conferir(
